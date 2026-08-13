@@ -1,0 +1,38 @@
+{
+    # Enable Caddy Admin API on internal network for devctl dynamic routing
+    admin 0.0.0.0:2019
+    
+    # Global options
+    auto_https disable_redirects
+    email admin@datakrib.com
+}
+
+# 1. Status & AI-Ops Dashboard Ingress
+status.dev-server.datakrib.com {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    reverse_proxy dashboard:8888
+}
+
+# 2. Wildcard Subdomain Handler (*.dev-server.datakrib.com)
+# Additional routes are dynamically added/updated/removed by devctl via Caddy Admin API
+*.dev-server.datakrib.com {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # Default fallback when an unexposed subdomain is accessed
+    respond "Service not found or inactive on dev-server.datakrib.com. Use 'devctl expose <service> <port>'." 404
+}

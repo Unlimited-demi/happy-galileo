@@ -1,0 +1,38 @@
+services:
+  # Example Application Service
+  # Notice: NO "ports:" section is specified.
+  # The service communicates securely via internal "dev-net" and is exposed dynamically by Caddy via devctl.
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vessel-api
+    restart: unless-stopped
+    environment:
+      - PORT=8000
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://user:pass@postgres:5432/db
+    networks:
+      - dev-net
+
+  # Internal Database (Never reachable from internet, only accessible by containers on dev-net)
+  postgres:
+    image: postgres:16-alpine
+    container_name: app-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=pass
+      - POSTGRES_DB=db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - dev-net
+
+volumes:
+  pgdata:
+
+networks:
+  dev-net:
+    name: dev-net
+    external: true

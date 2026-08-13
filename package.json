@@ -1,0 +1,15 @@
+{
+  "name": "ai-remote-workstation",
+  "version": "1.0.0",
+  "description": "Remote Agentic Development Workstation & AI-Ops Platform",
+  "main": "testing/runner.js",
+  "scripts": {
+    "test:playwright": "node testing/runner.js",
+    "setup:playwright": "npx playwright install --with-deps chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.44.0"
+  },
+  "devDependencies": {},
+  "private": true
+}

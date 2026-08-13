@@ -1,0 +1,83 @@
+---
+# ==============================================================================
+# Ansible Playbook: Multi-Server AI Remote Workstation Fleet Deployment
+# Deploys Docker, Caddy, Fail2ban, UFW, devctl, and AI-Ops across all company servers
+# ==============================================================================
+
+- name: Provision AI Remote Workstation Fleet
+  hosts: dev_fleet
+  become: true
+  vars:
+    project_repo: "https://github.com/yourcompany/happy-galileo.git"
+    install_dir: "/opt/happy-galileo"
+    base_domain_suffix: "datakrib.com"
+    admin_email: "devops@datakrib.com"
+
+  tasks:
+    - name: Ensure prerequisite packages are installed
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - git
+          - tmux
+          - ufw
+          - fail2ban
+          - python3
+          - python3-pip
+          - python3-venv
+          - jq
+        state: present
+        update_cache: yes
+
+    - name: Check if Docker is installed
+      command: docker --version
+      register: docker_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Install Docker Engine if missing
+      shell: "curl -fsSL https://get.docker.com | sh"
+      when: docker_check.rc != 0
+
+    - name: Ensure Docker service is enabled and started
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+
+    - name: Install Docker Compose plugin
+      apt:
+        name: docker-compose-plugin
+        state: present
+
+    - name: Ensure internal Docker network 'dev-net' exists
+      shell: "docker network inspect dev-net || docker network create dev-net"
+      changed_when: false
+
+    - name: Clone or update workstation repository
+      git:
+        repo: "{{ project_repo }}"
+        dest: "{{ install_dir }}"
+        version: main
+        force: yes
+
+    - name: Configure node-specific .env file
+      template:
+        src: "{{ install_dir }}/.env.example"
+        dest: "{{ install_dir }}/.env"
+        mode: '0600'
+
+    - name: Run server setup script
+      shell: "bash {{ install_dir }}/scripts/setup-server.sh"
+      environment:
+        BASE_DOMAIN: "{{ inventory_hostname }}.{{ base_domain_suffix }}"
+        DEVCTL_DOCKER_NETWORK: "dev-net"
+      register: setup_output
+
+    - name: Display Setup Diagnostic
+      debug:
+        var: setup_output.stdout_lines

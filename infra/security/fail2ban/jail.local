@@ -1,0 +1,23 @@
+[DEFAULT]
+bantime = 1h
+findtime = 10m
+maxretry = 5
+banaction = ufw
+
+# Protect SSH access
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 4
+bantime = 24h
+
+# Protect Caddy against automated exploit scanning (.env, phpmyadmin, etc.)
+[caddy-badbots]
+enabled = true
+port = http,https
+filter = caddy-badbots
+logpath = /var/log/caddy/access.log
+maxretry = 3
+bantime = 12h

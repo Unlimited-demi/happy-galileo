@@ -1,0 +1,70 @@
+services:
+  # 1. Caddy Reverse Proxy & TLS Ingress
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - dev-net
+
+  # 2. Status & Ops Web Dashboard
+  dashboard:
+    image: python:3.11-slim
+    container_name: devctl-dashboard
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - devctl_state:/root/.devctl
+      - ../devctl:/app/devctl
+      - ../ai_ops:/app/ai_ops
+      - ../dashboard:/app/dashboard
+    environment:
+      - BASE_DOMAIN=${BASE_DOMAIN:-dev-server.datakrib.com}
+      - CADDY_ADMIN_API=http://caddy:2019
+      - DEVCTL_DOCKER_NETWORK=dev-net
+      - DASHBOARD_HOST=0.0.0.0
+      - DASHBOARD_PORT=8888
+      - PYTHONPATH=/app
+    command: python3 /app/dashboard/app.py
+    networks:
+      - dev-net
+
+  # 3. AI-Ops Autonomous Monitoring & Escalation Daemon
+  ai-ops:
+    image: python:3.11-slim
+    container_name: ai-ops-daemon
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - devctl_state:/root/.devctl
+      - ../devctl:/app/devctl
+      - ../ai_ops:/app/ai_ops
+    environment:
+      - BASE_DOMAIN=${BASE_DOMAIN:-dev-server.datakrib.com}
+      - CADDY_ADMIN_API=http://caddy:2019
+      - DEVCTL_DOCKER_NETWORK=dev-net
+      - MONITOR_INTERVAL_SECONDS=15
+      - AUTO_REMEDIATION_ENABLED=true
+      - PYTHONPATH=/app
+    command: python3 /app/ai_ops/daemon.py
+    networks:
+      - dev-net
+
+volumes:
+  caddy_data:
+  caddy_config:
+  devctl_state:
+
+networks:
+  dev-net:
+    name: dev-net
+    external: true
