@@ -4,7 +4,7 @@ Implements tiered autonomous operations (Level 0 - Level 3) with strict safety b
 Uses Docker socket API directly (no docker CLI dependency).
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Set
 from devctl.core.config import Config
 from devctl.core.incident_bus import IncidentBus
 from ai_ops.docker_socket import DockerSocket
@@ -19,15 +19,27 @@ class RemediationEngine:
         self.incident_bus = IncidentBus()
         self.dossier_builder = DossierBuilder()
         self.restart_tracker: Dict[str, int] = {}
+        # In-memory dedup: set of service names with open incidents
+        # This is the PRIMARY dedup guard — prevents spam even if file I/O is slow
+        self._open_incidents: Set[str] = set()
+
+        # Seed from any existing incidents on disk
+        try:
+            existing = self.incident_bus.list_incidents(only_open=True)
+            for inc in existing:
+                svc = inc.get("service_name")
+                if svc:
+                    self._open_incidents.add(svc)
+        except Exception:
+            pass
 
     def handle_health_result(self, health: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process health result and execute appropriate tiered action.
 
-        Level 0: Healthy → Observe
+        Level 0: Healthy → Observe, clear incident tracking
         Level 1: Container stopped → Auto-restart
-        Level 2: Network disconnected → Reconnect to dev-net
-        Level 3: Application bug / repeated crash → Escalate to OpenCode with full Incident Dossier
+        Level 3: Application bug / repeated crash → Escalate to OpenCode
         """
         service_name = health.get("service_name", "")
         container_name = health.get("container_name", service_name)
@@ -40,9 +52,10 @@ class RemediationEngine:
         new_restarts = health.get("new_restarts", 0)
         oom_killed = health.get("oom_killed", False)
 
-        # Level 0: Healthy
+        # Level 0: Healthy — clear tracking
         if is_healthy:
             self.restart_tracker[service_name] = 0
+            self._open_incidents.discard(service_name)
             return {"level": 0, "action": "OBSERVE", "status": "HEALTHY"}
 
         reasons_str = "; ".join(failure_reasons) if failure_reasons else f"HTTP {http_status or 'DEAD'}"
@@ -62,9 +75,10 @@ class RemediationEngine:
                     "attempt": restarts + 1,
                 }
 
-        # Detect if this is a crash-loop (container auto-restarts but keeps crashing)
-        if new_restarts > 0 or oom_killed:
-            print(f"[Level 3] Container crash detected — restarts: {new_restarts}, OOM: {oom_killed}")
+        # ── DEDUP GUARD ──
+        # Only create ONE incident per service. Never spam.
+        if service_name in self._open_incidents:
+            return {"level": 3, "action": "ALREADY_REPORTED", "service": service_name}
 
         # Level 3: Application Bug → Escalate to OpenCode with Incident Dossier
         print(f"[Level 3] Building Incident Dossier for OpenCode...")
@@ -78,13 +92,6 @@ class RemediationEngine:
         )
         recommendation = self.dossier_builder.generate_recommendation(evidence)
 
-        # Check for existing open incident to avoid duplicates
-        existing_incidents = self.incident_bus.list_incidents(only_open=True)
-        for inc in existing_incidents:
-            if inc.get("service_name") == service_name:
-                print(f"[Level 3] Active incident already open: {inc['id']}")
-                return {"level": 3, "action": "ALREADY_REPORTED", "incident_id": inc["id"]}
-
         # Determine severity
         severity = "HIGH"
         if oom_killed:
@@ -94,7 +101,7 @@ class RemediationEngine:
         elif http_status and http_status >= 500:
             severity = "HIGH"
 
-        # Create new incident
+        # Create incident title
         title = f"Service '{service_name}' failing"
         if oom_killed:
             title += " — OOM killed (memory exhaustion)"
@@ -113,6 +120,9 @@ class RemediationEngine:
             evidence=evidence,
             recommendation=recommendation,
         )
+
+        # Mark in-memory dedup IMMEDIATELY
+        self._open_incidents.add(service_name)
 
         print(f"[INCIDENT CREATED] {incident['id']} — {title}")
         print(f"  Dossier: ~/.devctl/incidents/{incident['id']}.md")
