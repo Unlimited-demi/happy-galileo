@@ -5,11 +5,12 @@ The unified control interface for OpenCode, AI-Ops, and server administration.
 """
 
 import sys
+import json
 import argparse
 import socket
 from typing import Optional
 
-from devctl.core.config import Config
+from devctl.core.config import Config, BASE_DIR
 from devctl.core.caddy import CaddyManager
 from devctl.core.docker_mgr import DockerManager
 from devctl.core.domains import DomainRegistry
