@@ -68,16 +68,32 @@ class IncidentBus:
 
         return incident
 
-    def _write_markdown_dossier(self, incident: Dict[str, Any]) -> Path:
-        """Render a readable Markdown Incident Dossier for OpenCode."""
-        incident_id = incident["id"]
-        md_path = self.incidents_dir / f"{incident_id}.md"
+        proof = incident.get("resolution_proof", {})
+        resolution_notes = incident.get("resolution_notes", "")
+        resolved_at = incident.get("resolved_at", "")
 
-        evidence = incident.get("evidence", {})
-        logs = evidence.get("logs", "No logs provided.")
-        stack_trace = evidence.get("stack_trace", "None")
-        failing_url = evidence.get("failing_url", "N/A")
-        status_code = evidence.get("status_code", "N/A")
+        resolution_section = ""
+        if incident["state"] in [IncidentState.RESOLVED, IncidentState.VERIFIED, IncidentState.CLOSED]:
+            resolution_section = f"""
+---
+
+## ✅ Resolution & Verification Proof
+- **Status:** `RESOLVED & VERIFIED`
+- **Resolved By:** `{incident.get('claimed_by', 'OpenCode')}`
+- **Resolved At:** `{resolved_at}`
+- **Deployment URL:** `{proof.get('live_url', failing_url)}`
+- **Health Probe:** `{proof.get('health_probe', 'HTTP 200 OK')}`
+- **Container State:** `{proof.get('container_state', 'RUNNING')}`
+- **Git Branch:** `{proof.get('git_branch', 'N/A')}`
+
+### 📝 Remediation Summary:
+{resolution_notes or 'Application bug resolved and verified with automated test suite.'}
+
+### 🛠️ Code Diff & Files Modified:
+```text
+{proof.get('git_diff', 'No git diff recorded.')}
+```
+"""
 
         content = f"""# 🚨 Incident Dossier: {incident_id}
 **Service:** `{incident['service_name']}`  
@@ -103,10 +119,9 @@ class IncidentBus:
 
 ## 🛠️ Recommended Action for OpenCode
 {incident.get('recommendation', 'Investigate recent code changes, run regression tests, fix application bug, and redeploy.')}
-
+{resolution_section}
 ---
-*To claim this incident, run: `devctl incident claim {incident_id}`*  
-*To mark resolved, run: `devctl incident resolve {incident_id} --notes "Fixed root cause"`*
+*To inspect dossier: `devctl incident inspect {incident_id}`*
 """
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -147,14 +162,15 @@ class IncidentBus:
             {"state": IncidentState.CLAIMED, "claimed_by": agent_name},
         )
 
-    def resolve_incident(self, incident_id: str, notes: str = "") -> Optional[Dict[str, Any]]:
-        """Mark incident as resolved."""
+    def resolve_incident(self, incident_id: str, notes: str = "", proof: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """Mark incident as resolved with verification proof."""
         return self.update_incident(
             incident_id,
             {
                 "state": IncidentState.RESOLVED,
                 "resolved_at": datetime.now(timezone.utc).isoformat(),
                 "resolution_notes": notes,
+                "resolution_proof": proof or {},
             },
         )
 

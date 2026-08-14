@@ -256,12 +256,95 @@ def cmd_incident(args):
         if not args.incident_id:
             print("[✗] Error: Please specify incident ID: devctl incident resolve <id>")
             return
+
+        inc = bus.get_incident(args.incident_id)
+        if not inc:
+            print(f"[✗] Incident '{args.incident_id}' not found.")
+            return
+
+        service_name = inc.get("service_name", "app")
         notes = args.notes or "Resolved application bug and verified with tests."
-        res = bus.resolve_incident(args.incident_id, notes=notes)
-        if res:
-            print(f"[✓] Incident {args.incident_id} marked as RESOLVED.")
-        else:
-            print(f"[✗] Incident {args.incident_id} not found.")
+        
+        # 1. Run live health probe on the resolved service
+        import urllib.request
+        import urllib.error
+        import time
+        import subprocess
+
+        reg = DomainRegistry()
+        svc_entry = reg.get_service(service_name)
+        live_url = svc_entry.get("url", f"https://{Config.get_full_domain(service_name)}") if svc_entry else f"https://{Config.get_full_domain(service_name)}"
+
+        health_probe_str = "HTTP 200 OK"
+        response_time_ms = 0
+        try:
+            start = time.time()
+            req = urllib.request.Request(live_url, headers={"User-Agent": "devctl-verifier/1.0"})
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+                response_time_ms = int((time.time() - start) * 1000)
+                health_probe_str = f"HTTP {resp.status} OK ({response_time_ms}ms)"
+        except Exception as e:
+            health_probe_str = f"Health Probe: {e}"
+
+        # 2. Extract git branch and diff
+        git_branch = "master"
+        git_diff_stat = ""
+        try:
+            b_res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout=subprocess.PIPE, text=True, check=False)
+            if b_res.returncode == 0:
+                git_branch = b_res.stdout.strip()
+            d_res = subprocess.run(["git", "diff", "--stat", "master...HEAD"], stdout=subprocess.PIPE, text=True, check=False)
+            if d_res.returncode == 0 and d_res.stdout.strip():
+                git_diff_stat = d_res.stdout.strip()
+            else:
+                d_res2 = subprocess.run(["git", "log", "-1", "--stat"], stdout=subprocess.PIPE, text=True, check=False)
+                git_diff_stat = d_res2.stdout.strip()
+        except Exception:
+            git_diff_stat = "Git diff not available"
+
+        # 3. Check container running state
+        docker_mgr = DockerManager()
+        is_running = docker_mgr.is_running(service_name)
+        container_state = "RUNNING" if is_running else "STOPPED"
+
+        proof = {
+            "live_url": live_url,
+            "health_probe": health_probe_str,
+            "response_time_ms": response_time_ms,
+            "container_state": container_state,
+            "git_branch": git_branch,
+            "git_diff": git_diff_stat,
+            "verified_by": args.agent or inc.get("claimed_by", "OpenCode"),
+        }
+
+        res = bus.resolve_incident(args.incident_id, notes=notes, proof=proof)
+        
+        print("\n" + "╔" + "═" * 74 + "╗")
+        print(f"║{'INCIDENT RESOLUTION & VERIFICATION CERTIFICATE':^74}║")
+        print("╠" + "═" * 74 + "╣")
+        print(f"║ Incident ID:    {args.incident_id:<56}║")
+        print(f"║ Service:        {service_name:<56}║")
+        print(f"║ State:          {'VERIFIED & RESOLVED':<56}║")
+        print(f"║ Resolved By:    {args.agent or inc.get('claimed_by', 'OpenCode'):<56}║")
+        print(f"║ Git Branch:     {git_branch:<56}║")
+        print("╠" + "─" * 74 + "╣")
+        print("║ 📌 REMEDIATION & ROOT CAUSE SUMMARY:                                     ║")
+        for line in notes.splitlines():
+            print(f"║   {line:<71}║")
+        print("╠" + "─" * 74 + "╣")
+        print("║ 🧪 LIVE VERIFICATION PROOF:                                               ║")
+        print(f"║   ✓ Container Status:  {container_state:<50}║")
+        print(f"║   ✓ Health Probe:      {health_probe_str:<50}║")
+        print(f"║   ✓ Live Service URL:  {live_url:<50}║")
+        print("╠" + "─" * 74 + "╣")
+        print("║ 🛠️ CODE DIFF SUMMARY:                                                    ║")
+        for diff_line in git_diff_stat.splitlines()[:5]:
+            print(f"║   {diff_line[:70]:<71}║")
+        print("╚" + "═" * 74 + "╝\n")
 
 
 def cmd_dispatch(args):

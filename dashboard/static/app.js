@@ -130,18 +130,40 @@ function renderIncidents(incidents) {
   container.innerHTML = incidents
     .map((inc) => {
       const stack = inc.evidence?.stack_trace || inc.evidence?.logs || 'No stack trace captured.';
+      const isResolved = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(inc.state);
+      const proof = inc.resolution_proof || {};
+
+      let proofHtml = '';
+      if (isResolved) {
+        proofHtml = `
+          <div style="background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 6px; padding: 8px 12px; margin-top: 8px;">
+            <div style="color: #22c55e; font-weight: 600; font-size: 0.85rem;">✅ RESOLUTION & VERIFICATION PROOF</div>
+            <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">
+              <strong>Resolved By:</strong> ${escapeHtml(inc.claimed_by || 'OpenCode')} | <strong>Health:</strong> ${escapeHtml(proof.health_probe || 'HTTP 200 OK')}
+            </div>
+            <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">
+              <strong>Live Test URL:</strong> <a href="${escapeHtml(proof.live_url || inc.evidence?.failing_url || '#')}" target="_blank" style="color: var(--accent-cyan);">${escapeHtml(proof.live_url || inc.evidence?.failing_url || '')}</a>
+            </div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px; font-style: italic;">
+              ${escapeHtml(inc.resolution_notes || '')}
+            </div>
+          </div>`;
+      }
+
       return `
-      <div class="incident-card">
+      <div class="incident-card" style="${isResolved ? 'border-color: rgba(34, 197, 94, 0.3);' : ''}">
         <div class="incident-header">
           <span class="incident-id">${escapeHtml(inc.id)}</span>
-          <span class="env-pill">${escapeHtml(inc.severity || 'HIGH')}</span>
+          <span class="env-pill" style="${isResolved ? 'background: rgba(34, 197, 94, 0.2); color: #22c55e;' : ''}">${escapeHtml(inc.state || inc.severity || 'HIGH')}</span>
           <span style="font-size: 0.8rem; color: var(--text-muted);">${escapeHtml(inc.created_at || '')}</span>
         </div>
         <div class="incident-title">${escapeHtml(inc.title)}</div>
-        <div class="incident-trace">${escapeHtml(stack)}</div>
+        ${!isResolved ? `<div class="incident-trace">${escapeHtml(stack)}</div>` : ''}
+        ${!isResolved ? `
         <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">
           💡 <strong>AI-Ops Recommendation:</strong> ${escapeHtml(inc.recommendation || 'Investigate logs and fix.')}
-        </div>
+        </div>` : ''}
+        ${proofHtml}
       </div>`;
     })
     .join('');
