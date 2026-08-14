@@ -190,6 +190,24 @@ def cmd_discover(args):
     print("💡 All discovered services are now connected to dev-net and monitored by AI-Ops.\n")
 
 
+def cmd_heartbeat(args):
+    """Manually send and test telemetry heartbeat to Central Hub."""
+    from ai_ops.telemetry import FleetTelemetryStreamer
+    hub_url = args.hub or os.environ.get("CENTRAL_HUB_URL", "https://status.dev-server.datakrib.com/api/telemetry/ingest")
+    node_name = args.name or os.environ.get("NODE_NAME", "vm-02")
+    
+    print(f"[*] Sending telemetry heartbeat to: {hub_url}")
+    print(f"    Node Name: {node_name}")
+    
+    streamer = FleetTelemetryStreamer(hub_url=hub_url, node_name=node_name)
+    success = streamer.send_heartbeat()
+    
+    if success:
+        print(f"[✓] Heartbeat accepted (HTTP 200 OK)! Node '{node_name}' is now registered with Central Dashboard.")
+    else:
+        print(f"[✗] Failed to deliver heartbeat to Central Hub. Check network connection or hub URL.")
+
+
 def cmd_logs(args):
     """View container logs for a service."""
     service_name = args.service
@@ -566,6 +584,11 @@ def main():
     # discover
     subparsers.add_parser("discover", help="Auto-discover running Docker containers and index them into devctl")
 
+    # heartbeat
+    p_hb = subparsers.add_parser("heartbeat", help="Send and test telemetry heartbeat to Central Hub")
+    p_hb.add_argument("--hub", help="Central Hub URL override")
+    p_hb.add_argument("--name", help="Node name override")
+
     # doctor
     subparsers.add_parser("doctor", help="Check system health and prerequisites")
 
@@ -581,6 +604,7 @@ def main():
         "hide": cmd_hide,
         "list": cmd_list,
         "discover": cmd_discover,
+        "heartbeat": cmd_heartbeat,
         "logs": cmd_logs,
         "test": cmd_test,
         "incident": cmd_incident,
