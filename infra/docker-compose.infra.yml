@@ -1,4 +1,3 @@
-services:
   # 1. Caddy Reverse Proxy & TLS Ingress
   caddy:
     image: caddy:2-alpine
@@ -7,6 +6,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "127.0.0.1:2019:2019"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data

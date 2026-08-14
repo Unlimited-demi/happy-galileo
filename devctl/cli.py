@@ -282,7 +282,7 @@ def cmd_doctor(args):
     print(f"  [{'✓' if caddy_ok else '!'}] Caddy Admin API:      {'REACHABLE (' + Config.CADDY_ADMIN_API + ')' if caddy_ok else 'NOT REACHABLE (Start infra stack)'}")
 
     # 4. Wildcard DNS Test
-    test_host = f"health-check.{Config.DEV_NAMESPACE}.{Config.BASE_DOMAIN}"
+    test_host = Config.get_full_domain("health-check", "dev")
     try:
         ip = socket.gethostbyname(test_host)
         print(f"  [✓] Wildcard DNS:         RESOLVES ({test_host} -> {ip})")
