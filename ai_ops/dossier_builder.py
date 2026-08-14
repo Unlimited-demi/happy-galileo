@@ -50,19 +50,24 @@ class DossierBuilder:
 
         for line in lines:
             line_lower = line.lower().strip()
+            # Ignore repetitive health check polling logs
+            if "ai-ops-healthchecker" in line_lower or "get /health" in line_lower:
+                continue
+
             if any(kw in line_lower for kw in error_keywords):
                 capture = True
 
             if capture:
                 error_lines.append(line)
-                if len(error_lines) > 50:
+                if len(error_lines) >= 20:
                     break
 
         if error_lines:
             return "\n".join(error_lines)
 
-        # Return the last 30 lines if no specific keyword triggered
-        return "\n".join(lines[-30:])
+        # Return the last 15 lines if no specific keyword triggered
+        filtered_lines = [l for l in lines if "ai-ops-healthchecker" not in l.lower() and "get /health" not in l.lower()]
+        return "\n".join(filtered_lines[-15:])
 
     def build_evidence(
         self,

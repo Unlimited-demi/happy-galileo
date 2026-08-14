@@ -297,12 +297,14 @@ def cmd_incident(args):
             b_res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], stdout=subprocess.PIPE, text=True, check=False)
             if b_res.returncode == 0:
                 git_branch = b_res.stdout.strip()
-            d_res = subprocess.run(["git", "diff", "--stat", "master...HEAD"], stdout=subprocess.PIPE, text=True, check=False)
+
+            # Try diff against origin/master, or recent commit show stat
+            d_res = subprocess.run(["git", "diff", "--stat", "origin/master...HEAD"], stdout=subprocess.PIPE, text=True, check=False)
             if d_res.returncode == 0 and d_res.stdout.strip():
                 git_diff_stat = d_res.stdout.strip()
             else:
-                d_res2 = subprocess.run(["git", "log", "-1", "--stat"], stdout=subprocess.PIPE, text=True, check=False)
-                git_diff_stat = d_res2.stdout.strip()
+                d_res2 = subprocess.run(["git", "show", "--stat", "HEAD"], stdout=subprocess.PIPE, text=True, check=False)
+                git_diff_stat = d_res2.stdout.strip() if d_res2.returncode == 0 else ""
         except Exception:
             git_diff_stat = "Git diff not available"
 
