@@ -1,26 +1,29 @@
 """
 Health Checker module for AI-Ops.
 Probes containers DIRECTLY over the internal dev-net Docker network,
-not through the public HTTPS URL (which is unreachable from inside containers).
+inspects container state, and scans recent container logs for uncaught exceptions and 500 errors.
 """
 
 import urllib.request
 import urllib.error
 import time
-from typing import Dict, List, Any
+import re
+from typing import Dict, List, Any, Optional
 from devctl.core.config import Config
 from devctl.core.domains import DomainRegistry
 from ai_ops.docker_socket import DockerSocket
 
 
 class HealthChecker:
-    """Performs HTTP and container-level health inspections."""
+    """Performs HTTP, container-level, and log-based health inspections."""
 
     def __init__(self):
         self.docker = DockerSocket()
         self.registry = DomainRegistry()
         # Track previous restart counts to detect NEW restarts
         self._prev_restart_counts: Dict[str, int] = {}
+        # Track previous log length to only inspect fresh error logs
+        self._last_scanned_log_fingerprint: Dict[str, str] = {}
 
     def check_http_endpoint(self, url: str, timeout: int = 5) -> Dict[str, Any]:
         """Send HTTP probe to an internal container endpoint."""
@@ -55,6 +58,36 @@ class HealthChecker:
                 "error": str(e),
             }
 
+    def scan_recent_logs_for_errors(self, container_name: str, tail: int = 30) -> Optional[str]:
+        """Scan recent logs for uncaught exceptions, TypeError, 500s, or crashes."""
+        logs = self.docker.get_logs(container_name, tail=tail)
+        if not logs:
+            return None
+
+        error_patterns = [
+            r"TypeError:.*",
+            r"ReferenceError:.*",
+            r"Cannot read properties of.*",
+            r"UnhandledPromiseRejection.*",
+            r"\[ERROR\].*",
+            r"FATAL.*",
+            r"panic:.*",
+            r"PrismaClient.*",
+            r"ECONNREFUSED.*",
+        ]
+
+        matched_errors = []
+        for line in logs.splitlines():
+            for pat in error_patterns:
+                if re.search(pat, line, re.IGNORECASE):
+                    matched_errors.append(line.strip())
+                    break
+
+        if matched_errors:
+            # Return the most recent matched error line
+            return matched_errors[-1]
+        return None
+
     def check_service(self, service_info: Dict[str, Any]) -> Dict[str, Any]:
         """Perform comprehensive health check on a registered service."""
         service_name = service_info.get("service_name", "")
@@ -81,22 +114,25 @@ class HealthChecker:
         new_restarts = max(0, restart_count - prev_restarts)
         self._prev_restart_counts[service_name] = restart_count
 
-        # 2. HTTP probe DIRECTLY over internal Docker network (not public HTTPS)
-        #    e.g. http://chaos-api:3000/health or http://demo-app:80/
+        # 2. HTTP probe DIRECTLY over internal Docker network
         internal_url = f"http://{container_name}:{port}/health"
         http_result = self.check_http_endpoint(internal_url, timeout=Config.HTTP_TIMEOUT_SECONDS)
 
-        # If /health returns 404, fall back to probing the root URL
+        # If /health returns 404, fall back to probing root URL
         if http_result["status_code"] == 404:
             internal_url = f"http://{container_name}:{port}/"
             http_result = self.check_http_endpoint(internal_url, timeout=Config.HTTP_TIMEOUT_SECONDS)
 
-        # 3. Determine overall health
+        # 3. Log scanning for runtime application errors
+        log_error = self.scan_recent_logs_for_errors(container_name, tail=25)
+
+        # 4. Determine overall health
         is_healthy = (
             container_running
             and http_result["healthy"]
             and not oom_killed
             and new_restarts == 0
+            and log_error is None
         )
 
         # Build failure reasons
@@ -108,7 +144,9 @@ class HealthChecker:
         if oom_killed:
             failure_reasons.append("Container was OOM killed (memory exhaustion)")
         if new_restarts > 0:
-            failure_reasons.append(f"Container restarted {new_restarts} time(s) since last check (total: {restart_count})")
+            failure_reasons.append(f"Container restarted {new_restarts} time(s) (total: {restart_count})")
+        if log_error:
+            failure_reasons.append(f"Log Error: {log_error}")
 
         return {
             "service_name": service_name,
@@ -123,7 +161,7 @@ class HealthChecker:
             "oom_killed": oom_killed,
             "http_status": http_result["status_code"],
             "response_time_ms": http_result["duration_ms"],
-            "error": http_result["error"],
+            "error": http_result["error"] or log_error,
             "failure_reasons": failure_reasons,
             "timestamp": time.time(),
         }

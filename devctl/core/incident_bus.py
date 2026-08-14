@@ -165,7 +165,7 @@ class IncidentBus:
             try:
                 with open(file, "r", encoding="utf-8") as f:
                     inc = json.load(f)
-                    if only_open and inc.get("state") in [IncidentState.RESOLVED, IncidentState.CLOSED]:
+                    if only_open and inc.get("state") in [IncidentState.RESOLVED, IncidentState.CLOSED, IncidentState.VERIFIED]:
                         continue
                     incidents.append(inc)
             except Exception:
@@ -173,3 +173,14 @@ class IncidentBus:
         # Sort newest first
         incidents.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         return incidents
+
+    def purge_all_incidents(self) -> int:
+        """Delete all incident files. Returns count of deleted incidents."""
+        count = 0
+        for file in self.incidents_dir.glob("INC-*"):
+            try:
+                file.unlink()
+                count += 1
+            except Exception:
+                pass
+        return count

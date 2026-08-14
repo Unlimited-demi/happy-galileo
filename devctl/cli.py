@@ -247,6 +247,10 @@ def cmd_incident(args):
         else:
             print(f"[✗] Incident {args.incident_id} not found.")
 
+    elif subcmd == "purge":
+        deleted = bus.purge_all_incidents()
+        print(f"[✓] Purged {deleted} incident files.")
+
     elif subcmd == "resolve":
         if not args.incident_id:
             print("[✗] Error: Please specify incident ID: devctl incident resolve <id>")
@@ -325,7 +329,7 @@ def main():
 
     # incident
     p_incident = subparsers.add_parser("incident", help="Inspect and manage incident bus")
-    p_incident.add_argument("incident_cmd", nargs="?", choices=["list", "inspect", "claim", "resolve"], default="list")
+    p_incident.add_argument("incident_cmd", nargs="?", choices=["list", "inspect", "claim", "resolve", "purge"], default="list")
     p_incident.add_argument("incident_id", nargs="?", help="Incident ID")
     p_incident.add_argument("--all", action="store_true", help="Include resolved incidents")
     p_incident.add_argument("--agent", help="Agent claiming the incident")
