@@ -83,6 +83,14 @@ class CaddyManager:
 {domain} {{
     encode zstd gzip
 
+    log {{
+        output file /var/log/caddy/access.log {{
+            roll_size 10mb
+            roll_keep 5
+        }}
+        format json
+    }}
+
     header {{
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
