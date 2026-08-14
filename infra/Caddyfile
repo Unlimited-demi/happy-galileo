@@ -1,10 +1,7 @@
 {
-    # Enable Caddy Admin API on internal network for devctl dynamic routing
     admin 0.0.0.0:2019
     email unlimiteddemi@gmail.com
 
-    # On-Demand TLS automatically provisions valid HTTPS certificates via HTTP-01
-    # without needing complex DNS-01 API keys
     on_demand_tls {
         interval 2m
         burst 10
@@ -25,18 +22,13 @@ status.dev-server.datakrib.com {
     reverse_proxy dashboard:8888
 }
 
-# 2. Dynamic On-Demand TLS for all services on *.dev-server.datakrib.com
-# devctl dynamically injects reverse_proxy handlers via Caddy Admin API
-https:// {
+# 2. Dynamic HTTPS Ingress with On-Demand TLS
+# Dynamically routed services injected by devctl will match before this fallback
+:443 {
     tls {
         on_demand
     }
     encode zstd gzip
 
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "SAMEORIGIN"
-        Referrer-Policy "strict-origin-when-cross-origin"
-    }
+    respond "No active service exposed on this domain. Use 'devctl expose <service> <port>'." 404
 }
