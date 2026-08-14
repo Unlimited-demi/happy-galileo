@@ -119,3 +119,73 @@ class DomainRegistry:
         """List all registered services."""
         state = self._load_state()
         return list(state["services"].values())
+
+    def discover_and_index_containers(self) -> List[Dict[str, Any]]:
+        """
+        Auto-discover running Docker containers on the machine,
+        index their ports and locations, assign them domain routes,
+        and make them immediately monitorable by AI-Ops.
+        """
+        import subprocess
+        from devctl.core.docker_mgr import DockerManager
+        from devctl.core.caddy import CaddyManager
+
+        docker_mgr = DockerManager()
+        caddy_mgr = CaddyManager()
+        state = self._load_state()
+        registered = state.get("services", {})
+
+        # System/infra containers to skip
+        skip_names = {"caddy", "ai-ops-daemon", "devctl-dashboard"}
+        discovered = []
+
+        try:
+            # Query all running containers via docker inspect
+            cmd = ["docker", "ps", "--format", "{{.Names}}"]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=False)
+            if res.returncode != 0:
+                return []
+
+            container_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
+
+            for c_name in container_names:
+                if c_name in skip_names or c_name in registered:
+                    continue
+
+                info = docker_mgr.inspect_container(c_name)
+                if not info or not info.get("running"):
+                    continue
+
+                # Detect exposed ports
+                ports = docker_mgr.get_exposed_ports(c_name)
+                # Filter internal/DB ports unless it's an app port
+                app_ports = [p for p in ports if p not in [5432, 6379, 27017, 3306]]
+                port = app_ports[0] if app_ports else (ports[0] if ports else 80)
+
+                # Connect container to dev-net if not already connected
+                networks = info.get("networks", [])
+                if Config.DOCKER_NETWORK not in networks:
+                    docker_mgr.connect_network(c_name)
+
+                # Auto-generate domain and route
+                slug = self.sanitize_slug(c_name)
+                domain = Config.get_full_domain(slug, "dev")
+
+                # Register in state
+                entry = self.register(
+                    service_name=slug,
+                    container_name=c_name,
+                    port=port,
+                    domain=domain,
+                    env="dev",
+                    metadata={"auto_discovered": True, "detected_ports": ports},
+                )
+
+                # Add dynamic Caddy route & SSL
+                caddy_mgr.add_route(domain=domain, upstream_host=c_name, upstream_port=port)
+                discovered.append(entry)
+
+        except Exception:
+            pass
+
+        return discovered

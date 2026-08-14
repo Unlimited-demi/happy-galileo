@@ -170,6 +170,26 @@ def cmd_list(args):
     print("=" * 95 + "\n")
 
 
+def cmd_discover(args):
+    """Auto-discover running Docker containers and index them into devctl."""
+    print("\n🔍 Scanning server for running Docker containers...")
+    registry = DomainRegistry()
+    discovered = registry.discover_and_index_containers()
+
+    if not discovered:
+        print("[✓] All running containers are already indexed and monitored.")
+        return
+
+    print(f"\n[✓] Successfully discovered and indexed {len(discovered)} new container(s):")
+    print("=" * 80)
+    print(f"{'CONTAINER':<20} {'PORT':<8} {'ASSIGNED DOMAIN / HTTPS URL':<45}")
+    print("=" * 80)
+    for d in discovered:
+        print(f"{d['container_name']:<20} {d['port']:<8} {d['url']:<45}")
+    print("=" * 80)
+    print("💡 All discovered services are now connected to dev-net and monitored by AI-Ops.\n")
+
+
 def cmd_logs(args):
     """View container logs for a service."""
     service_name = args.service
@@ -543,6 +563,9 @@ def main():
     p_dispatch.add_argument("--no-tmux", action="store_true", help="Run OpenCode directly in the current interactive terminal instead of tmux")
     p_dispatch.add_argument("--dry-run", action="store_true", help="Print prompt and checkout branch without invoking opencode CLI")
 
+    # discover
+    subparsers.add_parser("discover", help="Auto-discover running Docker containers and index them into devctl")
+
     # doctor
     subparsers.add_parser("doctor", help="Check system health and prerequisites")
 
@@ -557,6 +580,7 @@ def main():
         "expose": cmd_expose,
         "hide": cmd_hide,
         "list": cmd_list,
+        "discover": cmd_discover,
         "logs": cmd_logs,
         "test": cmd_test,
         "incident": cmd_incident,
