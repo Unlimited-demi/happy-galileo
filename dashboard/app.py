@@ -38,6 +38,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
+        # Caddy On-Demand TLS Permission Verification
+        if path == "/api/ask":
+            params = parse_qs(parsed.query)
+            domain = params.get("domain", [""])[0].lower()
+            # Allow any domain ending with our base domain (e.g. dev-server.datakrib.com)
+            if domain.endswith(Config.BASE_DOMAIN):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"OK")
+            else:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"Forbidden Domain")
+            return
+
         # API Endpoints
         if path == "/api/status":
             checker = HealthChecker()
