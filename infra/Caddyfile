@@ -1,14 +1,9 @@
 {
-    admin 0.0.0.0:2019
     email unlimiteddemi@gmail.com
-
-    # Security permission module: validates domain before issuing on-demand SSL certificate
-    on_demand_tls {
-        ask http://dashboard:8888/api/ask
-    }
+    admin 0.0.0.0:2019
 }
 
-# 1. Status & AI-Ops Dashboard Ingress
+# 1. Base Status Dashboard
 status.dev-server.datakrib.com {
     encode zstd gzip
 
@@ -22,13 +17,5 @@ status.dev-server.datakrib.com {
     reverse_proxy dashboard:8888
 }
 
-# 2. Dynamic HTTPS Ingress with On-Demand TLS
-# Dynamically routed services injected by devctl will match before this fallback
-:443 {
-    tls {
-        on_demand
-    }
-    encode zstd gzip
-
-    respond "No active service exposed on this domain. Use 'devctl expose <service> <port>'." 404
-}
+# 2. Dynamic Service Routes managed by devctl
+import /etc/caddy/conf.d/*.caddy

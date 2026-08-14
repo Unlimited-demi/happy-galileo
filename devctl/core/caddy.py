@@ -1,61 +1,69 @@
 """
-Caddy Admin API integration for dynamic reverse proxy management.
-Adds, updates, lists, and removes routes dynamically without restarting Caddy.
+Caddy reverse proxy management for devctl.
+Manages standard dynamic site configurations under conf.d and reloads Caddy seamlessly.
+Caddy automatically provisions individual SSL certificates for each domain without complex on-demand policies.
 """
 
+import subprocess
 import json
 import urllib.request
 import urllib.error
+from pathlib import Path
 from typing import Dict, List, Any, Optional
-from .config import Config
+from .config import Config, BASE_DIR
+
+CONF_DIR = BASE_DIR / "infra" / "conf.d"
+CONF_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class CaddyManager:
-    """Manages dynamic routes and reverse proxies via Caddy's Admin API."""
+    """Manages Caddy site configurations and reloads."""
 
-    def __init__(self, api_url: Optional[str] = None):
-        self.api_url = (api_url or Config.CADDY_ADMIN_API).rstrip("/")
+    def __init__(self, conf_dir: Optional[Path] = None):
+        self.conf_dir = conf_dir or CONF_DIR
+        self.conf_dir.mkdir(parents=True, exist_ok=True)
 
-    def _api_request(
-        self, method: str, path: str, data: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """Send an HTTP request to Caddy's Admin API."""
-        url = f"{self.api_url}{path}"
-        headers = {"Content-Type": "application/json"}
-        req_data = json.dumps(data).encode("utf-8") if data is not None else None
-
-        req = urllib.request.Request(url, data=req_data, headers=headers, method=method)
+    def reload_caddy(self) -> Dict[str, Any]:
+        """Reload Caddy configuration via Docker or API."""
         try:
+            res = subprocess.run(
+                ["docker", "exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if res.returncode == 0:
+                return {"success": True, "method": "docker_exec"}
+        except Exception:
+            pass
+
+        # Fallback: Caddy Admin API reload
+        try:
+            req = urllib.request.Request(
+                f"{Config.CADDY_ADMIN_API}/load",
+                headers={"Content-Type": "text/caddyfile"},
+                data=b"",
+                method="POST",
+            )
             with urllib.request.urlopen(req, timeout=5) as response:
-                body = response.read().decode("utf-8")
-                return {
-                    "success": True,
-                    "status_code": response.status,
-                    "data": json.loads(body) if body else {},
-                }
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8") if e.fp else str(e)
-            return {
-                "success": False,
-                "status_code": e.code,
-                "error": f"HTTP {e.code}: {err_body}",
-            }
+                return {"success": response.status < 400, "method": "admin_api"}
         except Exception as e:
-            return {"success": False, "status_code": 0, "error": str(e)}
+            return {"success": False, "error": str(e)}
 
     def check_health(self) -> bool:
-        """Check if Caddy Admin API is reachable and responding."""
-        res = self._api_request("GET", "/config/")
-        return res.get("success", False)
-
-    def get_http_server_name(self) -> str:
-        """Discover the active HTTP server name in Caddy config (e.g. srv0)."""
-        res = self._api_request("GET", "/config/apps/http/servers")
-        if res.get("success") and isinstance(res.get("data"), dict):
-            keys = list(res["data"].keys())
-            if keys:
-                return keys[0]
-        return "srv0"
+        """Check if Caddy container is running and healthy."""
+        try:
+            res = subprocess.run(
+                ["docker", "inspect", "--format", "{{.State.Running}}", "caddy"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            return res.stdout.strip().lower() == "true"
+        except Exception:
+            return False
 
     def add_route(
         self,
@@ -65,66 +73,55 @@ class CaddyManager:
         route_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Dynamically create or update a reverse proxy route in Caddy with highest priority.
+        Create a clean standard Caddy site block and reload Caddy.
+        Caddy automatically requests a Let's Encrypt / ZeroSSL certificate for this domain.
         """
-        route_id = route_id or domain.replace(".", "_")
-        upstream = f"{upstream_host}:{upstream_port}"
+        service_slug = domain.split(".")[0].lower()
+        conf_file = self.conf_dir / f"{service_slug}.caddy"
 
-        # JSON route definition compatible with Caddy v2 HTTP server
-        route_payload = {
-            "@id": route_id,
-            "match": [{"host": [domain]}],
-            "handle": [
-                {
-                    "handler": "reverse_proxy",
-                    "upstreams": [{"dial": upstream}],
-                    "headers": {
-                        "request": {
-                            "set": {
-                                "X-Forwarded-Proto": ["https"],
-                                "X-Forwarded-Host": [domain],
-                            }
-                        }
-                    },
-                }
-            ],
-            "terminal": True,
+        caddy_content = f"""# Auto-generated by devctl for {service_slug}
+{domain} {{
+    encode zstd gzip
+
+    header {{
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }}
+
+    reverse_proxy {upstream_host}:{upstream_port}
+}}
+"""
+        with open(conf_file, "w", encoding="utf-8") as f:
+            f.write(caddy_content)
+
+        reload_res = self.reload_caddy()
+        return {
+            "success": True,
+            "domain": domain,
+            "conf_file": str(conf_file),
+            "reloaded": reload_res.get("success", True),
         }
 
-        # Check if route ID already exists, if so PUT (update)
-        check = self._api_request("GET", f"/id/{route_id}")
-        if check.get("success"):
-            return self._api_request("PUT", f"/id/{route_id}", route_payload)
-
-        # Prepend route to index 0 of routes array for instant match priority
-        server_name = self.get_http_server_name()
-        res = self._api_request(
-            "PUT", f"/config/apps/http/servers/{server_name}/routes/0", route_payload
-        )
-        if not res.get("success"):
-            # Fallback: append or direct by ID
-            res = self._api_request(
-                "POST", f"/config/apps/http/servers/{server_name}/routes", route_payload
-            )
-            if not res.get("success"):
-                return self._api_request("PUT", f"/id/{route_id}", route_payload)
-        return res
-
     def remove_route(self, domain: str, route_id: Optional[str] = None) -> Dict[str, Any]:
-        """Delete a dynamic route from Caddy."""
-        route_id = route_id or domain.replace(".", "_")
-        res = self._api_request("DELETE", f"/id/{route_id}")
-        return res
+        """Delete site config and reload Caddy."""
+        service_slug = domain.split(".")[0].lower()
+        conf_file = self.conf_dir / f"{service_slug}.caddy"
 
-    def get_route(self, domain: str, route_id: Optional[str] = None) -> Dict[str, Any]:
-        """Fetch route definition by ID."""
-        route_id = route_id or domain.replace(".", "_")
-        return self._api_request("GET", f"/id/{route_id}")
+        if conf_file.exists():
+            conf_file.unlink()
+
+        reload_res = self.reload_caddy()
+        return {
+            "success": True,
+            "domain": domain,
+            "reloaded": reload_res.get("success", True),
+        }
 
     def list_routes(self) -> List[Dict[str, Any]]:
-        """Retrieve all currently registered routes from Caddy."""
-        server_name = self.get_http_server_name()
-        res = self._api_request("GET", f"/config/apps/http/servers/{server_name}/routes")
-        if res.get("success") and isinstance(res.get("data"), list):
-            return res["data"]
-        return []
+        """List active configuration snippets."""
+        routes = []
+        for file in self.conf_dir.glob("*.caddy"):
+            routes.append({"file": file.name, "service": file.stem})
+        return routes
