@@ -52,21 +52,33 @@
 
     <!-- Navigation Tabs -->
     <nav class="nav-tabs">
-      <button class="tab-btn active" data-tab="services">Services & Ingress</button>
+      <button class="tab-btn active" data-tab="fleet">🌐 Multi-Server Fleet</button>
+      <button class="tab-btn" data-tab="services">Local Services</button>
       <button class="tab-btn" data-tab="incidents">Incidents & Dossiers <span class="tab-badge" id="badge-incidents" style="display: none;">0</span></button>
       <button class="tab-btn" data-tab="screenshots">Visual Tests</button>
     </nav>
 
-    <!-- Tab 1: Services List -->
-    <main id="tab-services" class="tab-content active">
+    <!-- Tab 0: Multi-Server Fleet (Grouped by VM / Server) -->
+    <main id="tab-fleet" class="tab-content active">
       <div class="section-header">
-        <h2>Live Services</h2>
+        <h2>Enterprise Server Fleet Matrix</h2>
+        <span class="hint-text">All monitored VMs, microservices, and exact container image versions</span>
+      </div>
+      <div id="fleet-container" class="fleet-node-list">
+        <div class="loading-state">Aggregating multi-server fleet telemetry...</div>
+      </div>
+    </main>
+
+    <!-- Tab 1: Services List -->
+    <section id="tab-services" class="tab-content">
+      <div class="section-header">
+        <h2>Local Node Services</h2>
         <span class="hint-text">Exposed dynamically over internal dev-net</span>
       </div>
       <div class="service-grid" id="service-list">
         <div class="loading-state">Scanning active services...</div>
       </div>
-    </main>
+    </section>
 
     <!-- Tab 2: Incidents List -->
     <section id="tab-incidents" class="tab-content">

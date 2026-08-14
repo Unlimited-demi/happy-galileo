@@ -2,7 +2,7 @@
  * AI-Ops & Dev Status Dashboard Frontend Client
  */
 
-let activeTab = 'services';
+let activeTab = 'fleet';
 
 document.addEventListener('DOMContentLoaded', () => {
   setupTabs();
@@ -20,7 +20,8 @@ function setupTabs() {
 
       tab.classList.add('active');
       activeTab = tab.dataset.tab;
-      document.getElementById(`tab-${activeTab}`).classList.add('active');
+      const target = document.getElementById(`tab-${activeTab}`);
+      if (target) target.classList.add('active');
     });
   });
 }
@@ -28,19 +29,21 @@ function setupTabs() {
 function setupRefresh() {
   document.getElementById('refresh-btn').addEventListener('click', () => {
     fetchData();
-    showToast('Refreshed status data.');
+    showToast('Refreshed fleet status data.');
   });
 }
 
 async function fetchData() {
   try {
-    const [statusRes, incidentsRes, screenshotsRes] = await Promise.all([
-      fetch('/api/status').then((r) => r.json()),
-      fetch('/api/incidents').then((r) => r.json()),
-      fetch('/api/screenshots').then((r) => r.json()),
+    const [statusRes, incidentsRes, screenshotsRes, fleetRes] = await Promise.all([
+      fetch('/api/status').then((r) => r.json()).catch(() => ({})),
+      fetch('/api/incidents').then((r) => r.json()).catch(() => ({})),
+      fetch('/api/screenshots').then((r) => r.json()).catch(() => ({})),
+      fetch('/api/fleet/nodes').then((r) => r.json()).catch(() => ({})),
     ]);
 
-    renderOverview(statusRes, incidentsRes);
+    renderOverview(statusRes, incidentsRes, fleetRes);
+    renderFleet(fleetRes.nodes || []);
     renderServices(statusRes.services || []);
     renderIncidents(incidentsRes.incidents || []);
     renderScreenshots(screenshotsRes.screenshots || []);
@@ -49,7 +52,7 @@ async function fetchData() {
   }
 }
 
-function renderOverview(status, incidentsData) {
+function renderOverview(status, incidentsData, fleetData) {
   if (status.base_domain) {
     document.getElementById('wildcard-scope').textContent = `*.${status.base_domain}`;
   }
@@ -57,8 +60,17 @@ function renderOverview(status, incidentsData) {
     document.getElementById('network-badge').textContent = status.network;
   }
 
-  document.getElementById('count-services').textContent = status.services?.length || 0;
-  document.getElementById('count-containers').textContent = status.total_containers || 0;
+  // Calculate totals across fleet if available
+  const nodes = fleetData.nodes || [];
+  let totalServices = status.services?.length || 0;
+  let totalContainers = status.total_containers || 0;
+  if (nodes.length > 1) {
+    totalServices = nodes.reduce((acc, n) => acc + (n.services?.length || 0), 0);
+    totalContainers = nodes.reduce((acc, n) => acc + (n.containers_count || 0), 0);
+  }
+
+  document.getElementById('count-services').textContent = totalServices;
+  document.getElementById('count-containers').textContent = totalContainers;
 
   const openCount = status.open_incidents_count || 0;
   const incElement = document.getElementById('count-incidents');
@@ -73,13 +85,98 @@ function renderOverview(status, incidentsData) {
   }
 }
 
+function renderFleet(nodes) {
+  const container = document.getElementById('fleet-container');
+  if (!container) return;
+
+  if (!nodes || nodes.length === 0) {
+    container.innerHTML = `<div class="empty-state">No servers connected to fleet telemetry yet.</div>`;
+    return;
+  }
+
+  container.innerHTML = nodes
+    .map((node) => {
+      const isOnline = node.online ?? true;
+      const statusHtml = isOnline
+        ? `<span class="node-status-online">● ONLINE</span>`
+        : `<span class="node-status-offline">○ OFFLINE</span>`;
+
+      const services = node.services || [];
+      let rowsHtml = '';
+      if (services.length === 0) {
+        rowsHtml = `<tr><td colspan="6" style="text-align:center; color: var(--text-muted); padding: 20px;">No exposed services on this server. Run <code>devctl discover</code> to index containers.</td></tr>`;
+      } else {
+        rowsHtml = services
+          .map((s) => {
+            const isHealthy = s.healthy ?? true;
+            const statusColor = isHealthy ? 'var(--accent-green)' : 'var(--accent-red)';
+            const statusLabel = isHealthy ? '● Healthy' : '▲ Unhealthy';
+            const img = s.image || 'app:latest';
+            const ver = s.version || 'latest';
+
+            return `
+            <tr>
+              <td>
+                <strong>${escapeHtml(s.service_name)}</strong>
+                <span class="env-pill" style="margin-left: 6px;">${escapeHtml(s.env || 'dev')}</span>
+              </td>
+              <td><span class="image-name-text">${escapeHtml(img)}</span></td>
+              <td><span class="version-tag-badge">${escapeHtml(ver)}</span></td>
+              <td><code>${escapeHtml(String(s.port || '80'))}</code></td>
+              <td><span style="color: ${statusColor}; font-weight: 600;">${statusLabel}</span></td>
+              <td>
+                <a href="${escapeHtml(s.url || '#')}" target="_blank" class="service-direct-link">
+                  ${escapeHtml(s.url || '')}
+                </a>
+              </td>
+            </tr>`;
+          })
+          .join('');
+      }
+
+      return `
+      <div class="fleet-server-card">
+        <div class="server-header">
+          <div class="server-info-title">
+            <span class="server-name">🖥️ ${escapeHtml(node.node_name)}</span>
+            <span class="server-domain">*.${escapeHtml(node.base_domain || 'dev-server.datakrib.com')}</span>
+            ${statusHtml}
+          </div>
+          <div class="server-meta">
+            <span>📦 <strong>${services.length}</strong> Services</span>
+            <span>🐳 <strong>${node.containers_count || services.length}</strong> Containers</span>
+            ${node.open_incidents_count ? `<span style="color: var(--accent-red); font-weight:700;">🚨 ${node.open_incidents_count} Open Incident(s)</span>` : ''}
+          </div>
+        </div>
+        <div class="fleet-table-container">
+          <table class="fleet-table">
+            <thead>
+              <tr>
+                <th>Service Name</th>
+                <th>Docker Image</th>
+                <th>Version / Tag</th>
+                <th>Port</th>
+                <th>Health Status</th>
+                <th>Live HTTPS URL</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+    })
+    .join('');
+}
+
 function renderServices(services) {
   const container = document.getElementById('service-list');
   if (!services || services.length === 0) {
     container.innerHTML = `
       <div class="empty-state">
-        No active services exposed yet.<br>
-        Run <code>devctl expose &lt;service&gt; &lt;port&gt;</code> to register one.
+        No active services exposed yet on this node.<br>
+        Run <code>devctl expose &lt;service&gt; &lt;port&gt;</code> or <code>devctl discover</code> to register.
       </div>`;
     return;
   }
@@ -98,22 +195,17 @@ function renderServices(services) {
           <div class="service-title">
             <span class="service-name">${escapeHtml(s.service_name)}</span>
             <span class="env-pill">${escapeHtml(s.env || 'dev')}</span>
+            <span class="version-tag-badge">${escapeHtml(s.version || 'latest')}</span>
           </div>
-          <div class="health-status-badge ${statusClass}">
-            ${statusText}
-          </div>
+          <div class="status-indicator ${statusClass}">${statusText}</div>
         </div>
-
-        <div class="card-url-row">
-          <a href="${escapeHtml(s.url)}" target="_blank" rel="noopener noreferrer" class="service-url">
-            ${escapeHtml(s.url)}
-          </a>
+        <div class="card-meta">
+          <span>Image: <code class="image-name-text">${escapeHtml(s.image || 'app:latest')}</code></span>
+          <span>Port: <code>${escapeHtml(String(s.port))}</code></span>
+        </div>
+        <div class="card-url-box">
+          <a href="${escapeHtml(s.url)}" target="_blank" class="service-url">${escapeHtml(s.url)}</a>
           <button class="copy-btn" onclick="copyToClipboard('${escapeHtml(s.url)}')">Copy</button>
-        </div>
-
-        <div class="card-meta-row">
-          <span>Container: <strong>${escapeHtml(s.container_name || s.service_name)}:${s.port || ''}</strong></span>
-          <span>Restarts: <strong>${s.restart_count ?? 0}</strong></span>
         </div>
       </div>`;
     })

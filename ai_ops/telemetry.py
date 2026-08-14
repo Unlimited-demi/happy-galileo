@@ -45,16 +45,45 @@ class FleetTelemetryStreamer:
         open_incidents = self.bus.list_incidents(only_open=True)
         resolved_incidents = [i for i in self.bus.list_incidents(only_open=False) if i.get("state") == "RESOLVED"]
 
-        # Collect basic system memory & load if available
         mem_info = {}
         try:
             with open("/proc/meminfo", "r") as f:
                 for line in f:
                     parts = line.split(":")
                     if parts[0] in ["MemTotal", "MemAvailable", "MemFree"]:
-                        mem_info[parts[0]] = int(parts[1].strip().split()[0]) // 1024  # In MB
+                        mem_info[parts[0]] = int(parts[1].strip().split()[0]) // 1024
         except Exception:
             pass
+
+        # Build container lookup map by name
+        container_map = {}
+        for c in containers:
+            c_image = c.get("Image", "unknown")
+            version_tag = c_image.split(":")[-1] if ":" in c_image else "latest"
+            names = c.get("Names", [])
+            for n in names:
+                clean_name = n.lstrip("/")
+                container_map[clean_name] = {
+                    "image": c_image,
+                    "version": version_tag,
+                    "status": c.get("Status", "RUNNING"),
+                    "state": c.get("State", "running"),
+                    "id": c.get("Id", "")[:12],
+                }
+
+        # Enrich registered services with container image & version
+        enriched_services = []
+        for svc in services:
+            c_name = svc.get("container_name", svc.get("service_name"))
+            c_info = container_map.get(c_name, {})
+            enriched = {
+                **svc,
+                "image": c_info.get("image", svc.get("image", "custom/app:latest")),
+                "version": c_info.get("version", "latest"),
+                "container_status": c_info.get("status", "RUNNING"),
+                "container_id": c_info.get("id", ""),
+            }
+            enriched_services.append(enriched)
 
         return {
             "node_name": self.node_name,
@@ -62,8 +91,8 @@ class FleetTelemetryStreamer:
             "timestamp": time.time(),
             "status": "ONLINE",
             "containers_count": len(containers),
-            "services_count": len(services),
-            "services": services,
+            "services_count": len(enriched_services),
+            "services": enriched_services,
             "open_incidents_count": len(open_incidents),
             "open_incidents": open_incidents[:10],
             "resolved_incidents_count": len(resolved_incidents),

@@ -65,8 +65,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             incidents = bus.list_incidents(only_open=True)
 
             # Query Docker Engine API via Unix socket directly
-            # (python:3.11-slim doesn't have the docker CLI binary)
             total_containers = 0
+            container_map = {}
             try:
                 import http.client
                 conn = http.client.HTTPConnection("localhost")
@@ -74,26 +74,62 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     __import__('socket').AF_UNIX, __import__('socket').SOCK_STREAM
                 )
                 conn.sock.connect("/var/run/docker.sock")
-                conn.request("GET", "/containers/json")
+                conn.request("GET", "/containers/json?all=1")
                 resp = conn.getresponse()
                 if resp.status == 200:
                     container_data = json.loads(resp.read().decode())
                     total_containers = len(container_data)
+                    for c in container_data:
+                        c_img = c.get("Image", "unknown")
+                        v_tag = c_img.split(":")[-1] if ":" in c_img else "latest"
+                        for n in c.get("Names", []):
+                            clean_n = n.lstrip("/")
+                            container_map[clean_n] = {
+                                "image": c_img,
+                                "version": v_tag,
+                                "status": c.get("Status", "RUNNING"),
+                                "state": c.get("State", "running"),
+                                "id": c.get("Id", "")[:12],
+                            }
                 conn.close()
             except Exception:
                 total_containers = 0
 
-            # Merge service info with latest health probe
+            # Merge service info with container versions and health probe
             merged_services = []
             health_map = {h["service_name"]: h for h in health_results}
 
             for svc in services:
                 name = svc["service_name"]
+                c_name = svc.get("container_name", name)
+                c_info = container_map.get(c_name, {})
                 h_info = health_map.get(name, {})
-                merged = {**svc, **h_info}
+                merged = {
+                    **svc,
+                    **h_info,
+                    "image": c_info.get("image", svc.get("image", "app:latest")),
+                    "version": c_info.get("version", "latest"),
+                    "container_status": c_info.get("status", "RUNNING"),
+                    "container_id": c_info.get("id", ""),
+                }
                 merged_services.append(merged)
 
+            # Auto-register local node into FLEET_STORE
+            local_node_name = os.environ.get("NODE_NAME", "vm-01 (Primary)")
+            FLEET_STORE[local_node_name] = {
+                "node_name": local_node_name,
+                "base_domain": Config.BASE_DOMAIN,
+                "timestamp": time.time(),
+                "status": "ONLINE",
+                "containers_count": total_containers,
+                "services_count": len(merged_services),
+                "services": merged_services,
+                "open_incidents_count": len(incidents),
+                "online": True,
+            }
+
             self._send_json({
+                "node_name": local_node_name,
                 "base_domain": Config.BASE_DOMAIN,
                 "network": Config.DOCKER_NETWORK,
                 "services": merged_services,
@@ -130,10 +166,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         elif path == "/api/fleet/nodes":
             nodes_list = list(FLEET_STORE.values())
-            # Clean up stale nodes older than 2 minutes
             current_time = time.time()
             for n in nodes_list:
-                n["online"] = (current_time - n.get("timestamp", 0)) < 60
+                # Mark offline if no heartbeat in 90 seconds
+                n["online"] = (current_time - n.get("timestamp", 0)) < 90
             self._send_json({"nodes": nodes_list, "total_nodes": len(nodes_list)})
             return
 
