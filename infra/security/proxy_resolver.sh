@@ -40,7 +40,65 @@ BASE_DOMAIN=${BASE_DOMAIN}
 EOF
 fi
 
-if [ "$HAS_NGINX" = true ]; then
+# Check for Mailcow Dockerized Nginx
+MAILCOW_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i 'nginx.*mailcow\|mailcow.*nginx' | head -n 1 || true)
+
+if [ -n "$MAILCOW_CONTAINER" ]; then
+    echo "⚡ Detected active Mailcow Nginx container: ${MAILCOW_CONTAINER}"
+    echo "   Configuring Mailcow to forward *.${BASE_DOMAIN} to devctl Caddy..."
+
+    # Find Mailcow directory from docker inspect mounts
+    MAILCOW_NGINX_CONF_DIR=""
+    POSSIBLE_DIRS=(
+        "/opt/mailcow-dockerized/data/conf/nginx"
+        "/opt/mailcow/data/conf/nginx"
+        "/root/mailcow-dockerized/data/conf/nginx"
+    )
+    for d in "${POSSIBLE_DIRS[@]}"; do
+        if [ -d "$d" ]; then
+            MAILCOW_NGINX_CONF_DIR="$d"
+            break
+        fi
+    done
+
+    if [ -z "$MAILCOW_NGINX_CONF_DIR" ]; then
+        # Inspect container mount for /etc/nginx/conf.d
+        DETECTED_DIR=$(docker inspect "$MAILCOW_CONTAINER" 2>/dev/null | grep -B 2 -A 5 '"Destination": "/etc/nginx/conf.d"' | grep '"Source"' | head -n 1 | awk -F'"' '{print $4}' || true)
+        if [ -n "$DETECTED_DIR" ] && [ -d "$DETECTED_DIR" ]; then
+            MAILCOW_NGINX_CONF_DIR="$DETECTED_DIR"
+        fi
+    fi
+
+    if [ -n "$MAILCOW_NGINX_CONF_DIR" ]; then
+        CONF_FILE="${MAILCOW_NGINX_CONF_DIR}/devctl_wildcard.conf"
+        cat << EOF > "$CONF_FILE"
+# Auto-configured by devctl for wildcard development routing
+server {
+    listen 80;
+    listen 443 ssl;
+    server_name *.${BASE_DOMAIN} ${BASE_DOMAIN};
+
+    ssl_certificate /etc/ssl/mail/cert.pem;
+    ssl_certificate_key /etc/ssl/mail/key.pem;
+
+    location / {
+        proxy_pass http://172.17.0.1:${INTERNAL_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+        echo "[*] Wrote Mailcow Nginx route to: ${CONF_FILE}"
+        docker exec "$MAILCOW_CONTAINER" nginx -s reload 2>/dev/null || docker restart "$MAILCOW_CONTAINER" 2>/dev/null || true
+        echo "[✓] Mailcow Nginx reloaded successfully."
+    fi
+
+elif [ "$HAS_NGINX" = true ]; then
     echo "⚡ Detected active Nginx on host."
     echo "   Configuring Nginx reverse-proxy pass to Caddy on port ${INTERNAL_PORT}..."
 

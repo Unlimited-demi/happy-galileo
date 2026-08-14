@@ -135,8 +135,9 @@ class DomainRegistry:
         state = self._load_state()
         registered = state.get("services", {})
 
-        # System/infra containers to skip
-        skip_names = {"caddy", "ai-ops-daemon", "devctl-dashboard"}
+        # System/infra and internal mail daemon containers to skip from auto-web-exposing
+        skip_exact = {"caddy", "ai-ops-daemon", "devctl-dashboard"}
+        skip_keywords = ["dovecot", "postfix", "rspamd", "clamd", "unbound", "netfilter", "php-fpm", "acme-mailcow", "solr-mailcow", "dockerapi-mailcow"]
         discovered = []
 
         try:
@@ -149,7 +150,10 @@ class DomainRegistry:
             container_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
 
             for c_name in container_names:
-                if c_name in skip_names or c_name in registered:
+                c_lower = c_name.lower()
+                if c_name in skip_exact or c_name in registered:
+                    continue
+                if any(kw in c_lower for kw in skip_keywords):
                     continue
 
                 info = docker_mgr.inspect_container(c_name)
