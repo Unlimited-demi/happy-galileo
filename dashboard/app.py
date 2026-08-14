@@ -104,9 +104,27 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         elif path == "/api/incidents":
             bus = IncidentBus()
             params = parse_qs(parsed.query)
-            only_open = params.get("all", ["false"])[0] != "true"
+            only_open = params.get("all", ["true"])[0] != "true"
             incidents = bus.list_incidents(only_open=only_open)
             self._send_json({"incidents": incidents})
+            return
+
+        elif path.startswith("/api/incidents/"):
+            inc_id = path[len("/api/incidents/"):]
+            bus = IncidentBus()
+            inc = bus.get_incident(inc_id)
+            if not inc:
+                self._send_json({"error": "Incident not found"}, status=404)
+                return
+            md_path = bus.incidents_dir / f"{inc_id}.md"
+            md_text = ""
+            if md_path.exists():
+                try:
+                    md_text = md_path.read_text(encoding="utf-8")
+                except Exception:
+                    pass
+            inc["markdown_dossier"] = md_text
+            self._send_json({"incident": inc})
             return
 
         elif path == "/api/screenshots":
