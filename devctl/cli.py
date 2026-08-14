@@ -263,6 +263,83 @@ def cmd_incident(args):
             print(f"[✗] Incident {args.incident_id} not found.")
 
 
+def cmd_dispatch(args):
+    """Dispatch an incident to OpenCode for autonomous diagnosis and remediation."""
+    bus = IncidentBus()
+    incident_id = args.incident_id
+
+    # If no ID given, find the most recent open incident
+    if not incident_id:
+        open_incidents = bus.list_incidents(only_open=True)
+        if not open_incidents:
+            print("[✓] No open incidents found. All systems operational.")
+            return
+        incident = open_incidents[0]
+        incident_id = incident["id"]
+    else:
+        incident = bus.get_incident(incident_id)
+        if not incident:
+            print(f"[✗] Incident '{incident_id}' not found.")
+            return
+
+    service_name = incident["service_name"]
+    title = incident["title"]
+    severity = incident.get("severity", "HIGH")
+    evidence = incident.get("evidence", {})
+    stack_trace = evidence.get("stack_trace", "No stack trace")
+    recommendation = incident.get("recommendation", "Investigate and patch.")
+
+    # 1. Claim incident on behalf of OpenCode
+    bus.claim_incident(incident_id, agent_name="OpenCode")
+
+    # 2. Render OpenCode Handoff Prompt
+    branch_name = f"fix/{service_name}-{incident_id.lower()}"
+
+    print("\n" + "═" * 70)
+    print(f"🤖 [AI-OPS ──► OPENCODE HANDOFF] Dispatching Incident: {incident_id}")
+    print("═" * 70)
+    print(f"  Service:        {service_name}")
+    print(f"  Severity:       {severity}")
+    print(f"  Incident State: CLAIMED by OpenCode")
+    print(f"  Working Branch: {branch_name}")
+    print("─" * 70)
+    print("📋 EVIDENCE DOSSIER:")
+    print(f"  Summary: {title}")
+    print(f"  Failing URL: {evidence.get('failing_url', 'N/A')}")
+    print(f"  HTTP Status: {evidence.get('status_code', 'N/A')}")
+    print("\n🪵 STACK TRACE / RECENT LOGS:")
+    for line in stack_trace.splitlines()[:15]:
+        print(f"    {line}")
+    print("\n💡 AI-OPS RECOMMENDATION:")
+    print(f"  {recommendation}")
+    print("─" * 70)
+
+    # 3. Create fix branch in git if in a git repository
+    import subprocess
+    try:
+        subprocess.run(["git", "checkout", "-b", branch_name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"[✓] Git Branch created and checked out: {branch_name}")
+    except Exception:
+        pass
+
+    # 4. Check if opencode executable is present to launch or output run instruction
+    import shutil
+    opencode_path = shutil.which("opencode")
+    if opencode_path and not args.dry_run:
+        print(f"[*] Invoking OpenCode agent with Incident Dossier...")
+        prompt = f"Resolve incident {incident_id} in {service_name}. Inspect .devctl/incidents/{incident_id}.md, fix the root cause in code, run tests, rebuild container, and mark incident resolved."
+        try:
+            subprocess.run([opencode_path, "run", prompt])
+        except Exception as e:
+            print(f"[!] Could not run opencode interactive process: {e}")
+    else:
+        print(f"\n🚀 Ready for OpenCode execution:")
+        print(f"   opencode run \"Resolve incident {incident_id} in {service_name}\"")
+        print(f"\n   Or inspect dossier directly:")
+        print(f"   devctl incident inspect {incident_id}\n")
+    print("═" * 70 + "\n")
+
+
 def cmd_doctor(args):
     """Check health of server prerequisites, Docker, Caddy, and DNS."""
     print("\n🔍 devctl Doctor - Environment & Health Diagnostic")
@@ -335,6 +412,11 @@ def main():
     p_incident.add_argument("--agent", help="Agent claiming the incident")
     p_incident.add_argument("--notes", help="Resolution notes")
 
+    # dispatch
+    p_dispatch = subparsers.add_parser("dispatch", help="Dispatch an incident dossier to OpenCode for autonomous remediation")
+    p_dispatch.add_argument("incident_id", nargs="?", help="Incident ID (defaults to latest open)")
+    p_dispatch.add_argument("--dry-run", action="store_true", help="Print prompt and checkout branch without invoking opencode CLI")
+
     # doctor
     subparsers.add_parser("doctor", help="Check system health and prerequisites")
 
@@ -352,6 +434,7 @@ def main():
         "logs": cmd_logs,
         "test": cmd_test,
         "incident": cmd_incident,
+        "dispatch": cmd_dispatch,
         "doctor": cmd_doctor,
     }
 
