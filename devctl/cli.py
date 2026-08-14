@@ -357,9 +357,11 @@ def cmd_dispatch(args):
             session_name = f"opencode-{service_name}"
             print(f"[*] Launching OpenCode inside persistent tmux session: '{session_name}'...")
             subprocess.run(["tmux", "kill-session", "-t", session_name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            # Run OpenCode directly from the scoped service directory
-            tmux_cmd = f"cd {svc_dir} && {opencode_path} run {json.dumps(prompt)}"
-            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, tmux_cmd], check=False)
+            # 1. Create persistent interactive tmux window with working directory
+            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", str(svc_dir)], check=False)
+            # 2. Send OpenCode command directly into the tmux shell
+            send_cmd = f"{opencode_path} run {json.dumps(prompt)}"
+            subprocess.run(["tmux", "send-keys", "-t", session_name, send_cmd, "C-m"], check=False)
             print(f"\n[✓] OpenCode Agent is actively diagnosing '{service_name}' in the background!")
             print(f"    To watch OpenCode live:     tmux attach -t {session_name}")
             print(f"    To detach from view:        Press Ctrl+B then D")
