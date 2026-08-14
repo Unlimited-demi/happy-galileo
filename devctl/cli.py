@@ -325,13 +325,26 @@ def cmd_dispatch(args):
     # 4. Check if opencode executable is present to launch or output run instruction
     import shutil
     opencode_path = shutil.which("opencode")
+    tmux_path = shutil.which("tmux")
+
     if opencode_path and not args.dry_run:
-        print(f"[*] Invoking OpenCode agent with Incident Dossier...")
         prompt = f"Resolve incident {incident_id} in {service_name}. Inspect .devctl/incidents/{incident_id}.md, fix the root cause in code, run tests, rebuild container, and mark incident resolved."
-        try:
-            subprocess.run([opencode_path, "run", prompt])
-        except Exception as e:
-            print(f"[!] Could not run opencode interactive process: {e}")
+        
+        if tmux_path and (args.tmux or args.background):
+            session_name = f"opencode-{service_name}"
+            print(f"[*] Launching OpenCode inside persistent tmux session: '{session_name}'...")
+            # Kill any existing session with same name to avoid conflict
+            subprocess.run(["tmux", "kill-session", "-t", session_name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, f"{opencode_path} run \"{prompt}\""], check=False)
+            print(f"\n[✓] OpenCode Agent is actively fixing the issue in the background!")
+            print(f"    To watch OpenCode live:     tmux attach -t {session_name}")
+            print(f"    To detach from view:        Press Ctrl+B then D")
+        else:
+            print(f"[*] Launching OpenCode agent live with Incident Dossier...\n")
+            try:
+                subprocess.run([opencode_path, "run", prompt])
+            except Exception as e:
+                print(f"[!] OpenCode process completed or interrupted: {e}")
     else:
         print(f"\n🚀 Ready for OpenCode execution:")
         print(f"   opencode run \"Resolve incident {incident_id} in {service_name}\"")
@@ -415,6 +428,7 @@ def main():
     # dispatch
     p_dispatch = subparsers.add_parser("dispatch", help="Dispatch an incident dossier to OpenCode for autonomous remediation")
     p_dispatch.add_argument("incident_id", nargs="?", help="Incident ID (defaults to latest open)")
+    p_dispatch.add_argument("--tmux", action="store_true", help="Run OpenCode inside a persistent background tmux session")
     p_dispatch.add_argument("--dry-run", action="store_true", help="Print prompt and checkout branch without invoking opencode CLI")
 
     # doctor
