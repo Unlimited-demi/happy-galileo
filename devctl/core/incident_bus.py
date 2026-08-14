@@ -68,6 +68,17 @@ class IncidentBus:
 
         return incident
 
+    def _write_markdown_dossier(self, incident: Dict[str, Any]) -> Path:
+        """Render a readable Markdown Incident Dossier for OpenCode."""
+        incident_id = incident["id"]
+        md_path = self.incidents_dir / f"{incident_id}.md"
+
+        evidence = incident.get("evidence", {})
+        logs = evidence.get("logs", "No logs provided.")
+        stack_trace = evidence.get("stack_trace", "None")
+        failing_url = evidence.get("failing_url", "N/A")
+        status_code = evidence.get("status_code", "N/A")
+
         proof = incident.get("resolution_proof", {})
         resolution_notes = incident.get("resolution_notes", "")
         resolved_at = incident.get("resolved_at", "")
