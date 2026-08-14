@@ -17,14 +17,35 @@ class DomainRegistry:
         self.state_file = state_file or Config.STATE_FILE
 
     def _load_state(self) -> Dict[str, Any]:
-        """Load state from JSON file."""
-        if not self.state_file.exists():
-            return {"services": {}, "updated_at": None}
-        try:
-            with open(self.state_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {"services": {}, "updated_at": None}
+        """Load state from JSON file with legacy fallback."""
+        state = {"services": {}, "updated_at": None}
+        if self.state_file.exists():
+            try:
+                with open(self.state_file, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+            except Exception:
+                state = {"services": {}, "updated_at": None}
+
+        # If empty, check legacy state locations and migrate
+        if not state.get("services"):
+            from pathlib import Path
+            legacy_paths = [
+                Path("/root/.devctl/state.json"),
+                Path.home() / ".devctl" / "state.json",
+                Path("/home/oldroot/.devctl/state.json"),
+            ]
+            for leg in legacy_paths:
+                if leg.exists() and leg != self.state_file:
+                    try:
+                        with open(leg, "r", encoding="utf-8") as f:
+                            leg_data = json.load(f)
+                            if leg_data.get("services"):
+                                state["services"] = leg_data["services"]
+                                self._save_state(state)
+                                break
+                    except Exception:
+                        pass
+        return state
 
     def _save_state(self, state: Dict[str, Any]) -> None:
         """Save state atomically to JSON file."""
