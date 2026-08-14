@@ -8,26 +8,36 @@ set -e
 
 BASE_DOMAIN="${1:-dev-server.suburban.ng}"
 INTERNAL_PORT="${2:-8080}"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 echo "[*] Inspecting port 80 and 443 bindings on host..."
 
-PORT_80_PROCESS=$(ss -tulpn | grep ':80 ' || true)
-PORT_443_PROCESS=$(ss -tulpn | grep ':443 ' || true)
+PORT_80_PROCESS=$(ss -tulpn 2>/dev/null | grep ':80 ' || true)
+PORT_443_PROCESS=$(ss -tulpn 2>/dev/null | grep ':443 ' || true)
 
 HAS_NGINX=false
 HAS_APACHE=false
-HAS_STANDALONE_CADDY=false
+HAS_PORT_CONFLICT=false
 
-if echo "$PORT_80_PROCESS" | grep -iq "nginx" || command -v nginx &>/dev/null && systemctl is-active --quiet nginx; then
+if echo "$PORT_80_PROCESS" | grep -iq "nginx" || command -v nginx &>/dev/null && systemctl is-active --quiet nginx 2>/dev/null; then
     HAS_NGINX=true
-fi
-
-if echo "$PORT_80_PROCESS" | grep -iq "apache\|httpd" || command -v apache2 &>/dev/null && systemctl is-active --quiet apache2; then
+    HAS_PORT_CONFLICT=true
+elif echo "$PORT_80_PROCESS" | grep -iq "apache\|httpd" || command -v apache2 &>/dev/null && systemctl is-active --quiet apache2 2>/dev/null; then
     HAS_APACHE=true
+    HAS_PORT_CONFLICT=true
+elif [ -n "$PORT_80_PROCESS" ]; then
+    # Port 80 is occupied by some other process/container
+    HAS_PORT_CONFLICT=true
 fi
 
-if echo "$PORT_80_PROCESS" | grep -iq "caddy" && ! docker ps --format '{{.Names}}' | grep -q "^caddy$"; then
-    HAS_STANDALONE_CADDY=true
+if [ "$HAS_PORT_CONFLICT" = true ]; then
+    echo "⚡ Port 80 is in use on this server. Configuring Caddy on internal port ${INTERNAL_PORT}..."
+    mkdir -p "${PROJECT_DIR}/infra"
+    cat << EOF > "${PROJECT_DIR}/infra/.env"
+CADDY_HTTP_PORT=${INTERNAL_PORT}
+CADDY_HTTPS_PORT=8443
+BASE_DOMAIN=${BASE_DOMAIN}
+EOF
 fi
 
 if [ "$HAS_NGINX" = true ]; then
@@ -80,9 +90,10 @@ elif [ "$HAS_APACHE" = true ]; then
 </VirtualHost>
 EOF
     a2ensite "devctl_${BASE_DOMAIN//./_}.conf" 2>/dev/null || true
-    systemctl reload apache2 || true
+    systemctl reload apache2 2>/dev/null || true
     echo "[✓] Apache reloaded successfully."
 
-else
-    echo "[✓] No host reverse proxy conflicts detected. Caddy will bind directly to 80/443."
+elif [ "$HAS_PORT_CONFLICT" = false ]; then
+    echo "[✓] No host port conflicts detected. Caddy will bind directly to 80/443."
+    rm -f "${PROJECT_DIR}/infra/.env" 2>/dev/null || true
 fi

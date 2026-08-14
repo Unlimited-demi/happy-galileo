@@ -121,8 +121,16 @@ chmod +x /usr/local/bin/devctl
 chmod +x "${PROJECT_DIR}/devctl/cli.py"
 
 echo "[8/8] Starting Infrastructure Stack (Caddy + AI-Ops + Status Dashboard)..."
+if [ -f "${PROJECT_DIR}/infra/security/proxy_resolver.sh" ]; then
+  bash "${PROJECT_DIR}/infra/security/proxy_resolver.sh" "${BASE_DOMAIN}"
+fi
+
 cd "${PROJECT_DIR}/infra"
-docker compose -f docker-compose.infra.yml up -d
+if [ -f "${PROJECT_DIR}/infra/.env" ]; then
+  docker compose -f docker-compose.infra.yml --env-file .env up -d
+else
+  docker compose -f docker-compose.infra.yml up -d
+fi
 
 echo ""
 echo "========================================================"
