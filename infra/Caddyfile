@@ -1,11 +1,6 @@
 {
     admin 0.0.0.0:2019
     email unlimiteddemi@gmail.com
-
-    on_demand_tls {
-        interval 2m
-        burst 10
-    }
 }
 
 # 1. Status & AI-Ops Dashboard Ingress
