@@ -1,0 +1,18 @@
+{
+  "name": "chaos-api",
+  "version": "1.0.0",
+  "description": "Production-grade Node.js API with WebSocket support — used to stress-test AI-Ops detection and remediation",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "cors": "^2.8.5",
+    "helmet": "^8.0.0",
+    "morgan": "^1.10.0",
+    "uuid": "^10.0.0",
+    "ws": "^8.18.0"
+  }
+}
