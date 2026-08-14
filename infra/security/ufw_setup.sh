@@ -15,8 +15,9 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# Detect active SSH port
-SSH_PORT=$(grep "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
+# Detect active SSH port (default to 22 if commented or unspecified)
+SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk '{print $2}' | tail -n 1 || true)
+SSH_PORT="${SSH_PORT:-22}"
 
 # Set default policies
 ufw default deny incoming
@@ -24,7 +25,7 @@ ufw default allow outgoing
 
 # Allow SSH
 echo "✓ Allowing SSH on port ${SSH_PORT}..."
-ufw allow ${SSH_PORT}/tcp comment "SSH Remote Workstation Access"
+ufw allow "${SSH_PORT}/tcp" comment "SSH Remote Workstation Access" || ufw allow OpenSSH
 
 # Allow Web Ingress (Caddy only)
 echo "✓ Allowing HTTP (80) and HTTPS (443)..."
