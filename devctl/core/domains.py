@@ -157,19 +157,21 @@ class DomainRegistry:
                     continue
 
                 info = docker_mgr.inspect_container(c_name)
-                if not info or not info.get("running"):
+                if not info:
+                    continue
+
+                state_info = info.get("State", {})
+                if not state_info.get("Running", False):
                     continue
 
                 # Detect exposed ports
-                ports = docker_mgr.get_exposed_ports(c_name)
+                ports = docker_mgr.detect_ports(c_name)
                 # Filter internal/DB ports unless it's an app port
                 app_ports = [p for p in ports if p not in [5432, 6379, 27017, 3306]]
                 port = app_ports[0] if app_ports else (ports[0] if ports else 80)
 
                 # Connect container to dev-net if not already connected
-                networks = info.get("networks", [])
-                if Config.DOCKER_NETWORK not in networks:
-                    docker_mgr.connect_network(c_name)
+                docker_mgr.connect_to_network(c_name)
 
                 # Auto-generate domain and route
                 slug = self.sanitize_slug(c_name)
@@ -189,7 +191,8 @@ class DomainRegistry:
                 caddy_mgr.add_route(domain=domain, upstream_host=c_name, upstream_port=port)
                 discovered.append(entry)
 
-        except Exception:
+        except Exception as e:
+            print(f"[!] Discovery error: {e}")
             pass
 
         return discovered
