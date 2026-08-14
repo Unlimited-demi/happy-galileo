@@ -1,26 +1,28 @@
 # ==============================================================================
-# Ansible Fleet Inventory Example
-# Define all company servers, developers, GPU boxes, and staging environments
+# Ansible Multi-Server Fleet Inventory (20+ VMs)
+# ==============================================================================
+# Configure all your target VM IPs, hostnames, and domain namespaces below.
+# Deploy all servers in parallel:
+#   ansible-playbook -i infra/ansible/inventory.ini infra/ansible/playbook.yml
 # ==============================================================================
 
 [dev_fleet]
-# Format: <node_slug> ansible_host=<IP> ansible_user=<SSH_USER> base_domain=<FQDN>
-
-# General Development Nodes
-node1 ansible_host=198.51.100.10 ansible_user=root base_domain=dev-server.datakrib.com
-node2 ansible_host=198.51.100.11 ansible_user=root base_domain=node2.datakrib.com
-
-# Dedicated GPU / AI Inference Workstation
-gpu-box ansible_host=198.51.100.20 ansible_user=root base_domain=gpu.datakrib.com
-
-# Developer Personal Isolated Devboxes
-# Wildcard: *.john.dev.datakrib.com
-dev-john ansible_host=198.51.100.30 ansible_user=root base_domain=john.dev.datakrib.com
-dev-sarah ansible_host=198.51.100.31 ansible_user=root base_domain=sarah.dev.datakrib.com
-
-# Shared Staging / QA Environment
-staging-box ansible_host=198.51.100.40 ansible_user=root base_domain=staging.datakrib.com
+# Node 1 - Core Services
+vm-01 ansible_host=10.0.1.10 node_name=auth-vm base_domain=auth.dev.suburban.datakrib.com
+# Node 2 - Billing & Payments
+vm-02 ansible_host=10.0.1.11 node_name=billing-vm base_domain=billing.dev.suburban.datakrib.com
+# Node 3 - Machine Learning & Inference
+vm-03 ansible_host=10.0.1.12 node_name=ml-vm base_domain=ml.dev.suburban.datakrib.com
+# Node 4 - Notification & WebSockets
+vm-04 ansible_host=10.0.1.13 node_name=ws-vm base_domain=ws.dev.suburban.datakrib.com
+# Node 5 - Analytics & Reporting
+vm-05 ansible_host=10.0.1.14 node_name=analytics-vm base_domain=analytics.dev.suburban.datakrib.com
+# ... Add up to 20+ nodes here
 
 [dev_fleet:vars]
+ansible_user=root
+ansible_ssh_private_key_file=~/.ssh/id_rsa
 ansible_python_interpreter=/usr/bin/python3
-admin_email=devops@datakrib.com
+project_repo=https://github.com/Unlimited-demi/happy-galileo.git
+central_hub_url=https://status.dev-server.datakrib.com/api/telemetry/ingest
+fleet_key=suburban-fleet-secret-key-2026

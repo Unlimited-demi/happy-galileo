@@ -17,6 +17,7 @@ from devctl.core.incident_bus import IncidentBus
 from ai_ops.health_checker import HealthChecker
 
 STATIC_DIR = Path(__file__).parent / "static"
+FLEET_STORE = {}
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
@@ -127,6 +128,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._send_json({"incident": inc})
             return
 
+        elif path == "/api/fleet/nodes":
+            nodes_list = list(FLEET_STORE.values())
+            # Clean up stale nodes older than 2 minutes
+            current_time = time.time()
+            for n in nodes_list:
+                n["online"] = (current_time - n.get("timestamp", 0)) < 60
+            self._send_json({"nodes": nodes_list, "total_nodes": len(nodes_list)})
+            return
+
         elif path == "/api/screenshots":
             screenshots = []
             if Config.SCREENSHOTS_DIR.exists():
@@ -161,6 +171,26 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         # Serve static assets
         super().do_GET()
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path == "/api/telemetry/ingest":
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_length).decode("utf-8")
+                payload = json.loads(body)
+                node_name = payload.get("node_name", "unknown")
+                payload["received_at"] = time.time()
+                payload["client_ip"] = self.client_address[0]
+                FLEET_STORE[node_name] = payload
+                self._send_json({"status": "received", "node": node_name})
+            except Exception as e:
+                self._send_json({"error": str(e)}, status=400)
+            return
+
+        self.send_error(404, "Endpoint not found")
 
 
 def run_dashboard(port: int = Config.DASHBOARD_PORT, host: str = Config.DASHBOARD_HOST):
