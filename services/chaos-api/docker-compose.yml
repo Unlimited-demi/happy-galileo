@@ -1,13 +1,34 @@
 services:
+  # 1. PostgreSQL Database Service (Zero Public Host Ports)
+  chaos-db:
+    image: postgres:16-alpine
+    container_name: chaos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chaos_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chaos_pass123}
+      POSTGRES_DB: ${POSTGRES_DB:-chaos_db}
+    volumes:
+      - chaos_pgdata:/var/lib/postgresql/data
+    networks:
+      - dev-net
+
+  # 2. Chaos API Service
   chaos-api:
     build: .
     container_name: chaos-api
     restart: unless-stopped
+    depends_on:
+      - chaos-db
     environment:
       - PORT=3000
       - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL:-postgresql://chaos_user:chaos_pass123@chaos-db:5432/chaos_db?schema=public}
     networks:
       - dev-net
+
+volumes:
+  chaos_pgdata:
 
 networks:
   dev-net:

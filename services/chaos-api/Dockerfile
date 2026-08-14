@@ -2,17 +2,25 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install dependencies first (Docker layer caching)
-COPY package.json ./
-RUN npm install --production
+# Install OpenSSL required by Prisma engine on Alpine Linux
+RUN apk add --no-cache openssl libc6-compat
 
-# Copy application code
+# Install dependencies
+COPY package.json ./
+RUN npm install
+
+# Copy Prisma schema & generate client
+COPY prisma ./prisma/
+RUN npx prisma generate
+
+# Copy application source
 COPY . .
 
 EXPOSE 3000
 
-# Run as non-root for security
+# Non-root user for security
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN chown -R appuser:appgroup /app
 USER appuser
 
 CMD ["node", "server.js"]
