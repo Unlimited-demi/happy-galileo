@@ -10,8 +10,10 @@ import signal
 import sys
 from datetime import datetime, timezone
 from devctl.core.config import Config
+from devctl.core.domains import DomainRegistry
 from ai_ops.health_checker import HealthChecker
 from ai_ops.remediation import RemediationEngine
+from ai_ops.telemetry import FleetTelemetryStreamer
 
 
 class AIOpsDaemon:
@@ -20,6 +22,8 @@ class AIOpsDaemon:
     def __init__(self):
         self.health_checker = HealthChecker()
         self.remediation_engine = RemediationEngine()
+        self.telemetry = FleetTelemetryStreamer()
+        self.registry = DomainRegistry()
         self.running = True
         self.cycle_count = 0
 
@@ -69,11 +73,19 @@ class AIOpsDaemon:
         print(f"   Poll Interval:      {Config.MONITOR_INTERVAL_SECONDS}s")
         print(f"   Auto-Remediation:   {'ENABLED' if Config.AUTO_REMEDIATION_ENABLED else 'DISABLED'}")
         print(f"   Max Auto-Restarts:  {Config.MAX_AUTO_RESTARTS}")
+        print(f"   Fleet Telemetry:    {'STREAMING' if self.telemetry.hub_url else 'STANDALONE'}")
         print("=" * 65)
+
+        # Start telemetry streamer thread
+        self.telemetry.start_background()
 
         while self.running:
             try:
+                # Periodically auto-discover new containers every 4 cycles
+                if self.cycle_count % 4 == 0:
+                    self.registry.discover_and_index_containers()
                 self.run_cycle()
+                self.telemetry.send_heartbeat()
             except Exception as e:
                 print(f"[!] Error in AI-Ops monitoring cycle: {e}")
                 import traceback
