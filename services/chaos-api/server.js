@@ -80,6 +80,7 @@ app.get('/', (req, res) => {
     status: 'Production Ready',
     endpoints: {
       health: 'GET /health',
+      fault_injection: 'GET /api/chaos/inject?type=crash|null_pointer|db_error',
       users: 'GET/POST /api/users, GET/PUT/DELETE /api/users/:id',
       tasks: 'GET/POST /api/tasks, GET/PUT/DELETE /api/tasks/:id',
       analytics: 'GET /api/analytics',
@@ -87,6 +88,29 @@ app.get('/', (req, res) => {
       websocket: 'ws://host/ws',
     },
   });
+});
+
+// ──────────────────────────────────────────────
+// Fault Injection Simulator (for AI-Ops Testing)
+// ──────────────────────────────────────────────
+app.get('/api/chaos/inject', (req, res) => {
+  const faultType = req.query.type || 'null_pointer';
+  console.log(`[CHAOS SIMULATOR] Injecting intentional fault: ${faultType}`);
+
+  if (faultType === 'null_pointer') {
+    const uninitialized = undefined;
+    const val = uninitialized.profile.settings; // Throws TypeError
+    return res.json({ val });
+  } else if (faultType === 'db_error') {
+    console.error('[ERROR] PrismaClientInitializationError: Can\'t reach database server at `postgres:5432`');
+    return res.status(500).json({ error: 'Database connection refused' });
+  } else if (faultType === 'crash') {
+    console.error('[FATAL] Uncaught Exception: Fatal process panic triggered by chaos simulation');
+    setTimeout(() => process.exit(1), 100);
+    return res.status(500).json({ error: 'Process terminating' });
+  } else {
+    return res.status(400).json({ error: 'Unknown fault type. Use: null_pointer, db_error, or crash' });
+  }
 });
 
 // ──────────────────────────────────────────────
