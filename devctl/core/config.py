@@ -9,7 +9,7 @@ from typing import Dict, Any
 
 # Base directories
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-DEVCTL_STATE_DIR = Path(os.environ.get("DEVCTL_STATE_DIR", Path.home() / ".devctl"))
+DEVCTL_STATE_DIR = Path(os.environ.get("DEVCTL_STATE_DIR", BASE_DIR / ".devctl"))
 INCIDENTS_DIR = DEVCTL_STATE_DIR / "incidents"
 SCREENSHOTS_DIR = DEVCTL_STATE_DIR / "screenshots"
 LOGS_DIR = DEVCTL_STATE_DIR / "logs"

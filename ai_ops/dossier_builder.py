@@ -123,15 +123,22 @@ class DossierBuilder:
                 "3. Profile heap usage with --inspect flag. "
                 "4. Fix the leak, rebuild, and redeploy."
             )
-        elif "cannot read properties" in stack or "typeerror" in stack or "undefined" in stack:
+        elif "prismaclientinitializationerror" in stack or "database server at" in stack or "econnrefused" in stack or "connection refused" in stack:
             return (
-                "Application runtime bug detected (TypeError / null reference). "
-                "1. Review the stack trace to identify the failing file and line number. "
-                "2. Add null checks or fix the data flow. "
-                "3. Checkout a fix branch, patch the code, run tests. "
-                "4. Rebuild and redeploy the container."
+                "Database connection or Prisma initialization failure detected. "
+                "1. Verify DATABASE_URL in docker-compose.yml and .env. "
+                "2. Check if the database container (chaos-db) is running on dev-net: docker ps | grep chaos-db. "
+                "3. Ensure PostgreSQL credentials (user, password, db name) match across services. "
+                "4. If on Alpine Linux, ensure openssl is installed in Dockerfile (apk add --no-cache openssl)."
             )
-        elif "econnrefused" in stack or "connection refused" in stack:
+        elif "openssl" in stack and ("missing" in stack or "unable to require" in stack):
+            return (
+                "Prisma Engine OpenSSL runtime dependency error detected on Alpine Linux. "
+                "1. Add 'RUN apk add --no-cache openssl libc6-compat' to the Dockerfile. "
+                "2. Ensure prisma/schema.prisma includes binaryTargets = ['native', 'linux-musl-openssl-3.0.x']. "
+                "3. Run npx prisma generate and rebuild the Docker image."
+            )
+        elif "cannot read properties" in stack or "typeerror" in stack or "undefined" in stack:
             return (
                 "Upstream dependency connection failure. "
                 "1. Check if the database/Redis/external service is running. "

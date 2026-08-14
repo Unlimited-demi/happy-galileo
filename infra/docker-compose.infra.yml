@@ -25,7 +25,7 @@ services:
     working_dir: /app
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /root/.devctl:/root/.devctl
+      - ../.devctl:/app/.devctl
       - ../devctl:/app/devctl
       - ../ai_ops:/app/ai_ops
       - ../dashboard:/app/dashboard
@@ -33,6 +33,7 @@ services:
       - BASE_DOMAIN=${BASE_DOMAIN:-dev-server.datakrib.com}
       - CADDY_ADMIN_API=http://caddy:2019
       - DEVCTL_DOCKER_NETWORK=dev-net
+      - DEVCTL_STATE_DIR=/app/.devctl
       - DASHBOARD_HOST=0.0.0.0
       - DASHBOARD_PORT=8888
       - PYTHONPATH=/app
@@ -48,13 +49,14 @@ services:
     working_dir: /app
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /root/.devctl:/root/.devctl
+      - ../.devctl:/app/.devctl
       - ../devctl:/app/devctl
       - ../ai_ops:/app/ai_ops
     environment:
       - BASE_DOMAIN=${BASE_DOMAIN:-dev-server.datakrib.com}
       - CADDY_ADMIN_API=http://caddy:2019
       - DEVCTL_DOCKER_NETWORK=dev-net
+      - DEVCTL_STATE_DIR=/app/.devctl
       - MONITOR_INTERVAL_SECONDS=15
       - AUTO_REMEDIATION_ENABLED=true
       - PYTHONPATH=/app

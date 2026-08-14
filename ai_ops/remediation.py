@@ -101,16 +101,25 @@ class RemediationEngine:
         elif http_status and http_status >= 500:
             severity = "HIGH"
 
-        # Create incident title
-        title = f"Service '{service_name}' failing"
+        # Create incident title with accurate failure trigger
+        log_errors = [r for r in failure_reasons if r.startswith("Log Error:")]
         if oom_killed:
-            title += " — OOM killed (memory exhaustion)"
+            title = f"Service '{service_name}' failing — OOM killed (memory exhaustion)"
         elif new_restarts > 0:
-            title += f" — crashed and restarted {new_restarts}x"
-        elif http_status:
-            title += f" — HTTP {http_status}"
+            title = f"Service '{service_name}' failing — crashed and restarted {new_restarts}x"
+        elif log_errors:
+            err_summary = log_errors[0].replace("Log Error:", "").strip()
+            # Clean summary for title
+            if "PrismaClientInitializationError" in err_summary:
+                title = f"Service '{service_name}' database error — PrismaClientInitializationError"
+            elif "TypeError" in err_summary:
+                title = f"Service '{service_name}' runtime error — TypeError exception"
+            else:
+                title = f"Service '{service_name}' runtime error — {err_summary[:55]}"
+        elif http_status and http_status >= 400:
+            title = f"Service '{service_name}' failing — HTTP {http_status}"
         else:
-            title += " — unreachable"
+            title = f"Service '{service_name}' health probe failure"
 
         incident = self.incident_bus.create_incident(
             service_name=service_name,
