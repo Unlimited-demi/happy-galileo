@@ -58,12 +58,29 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             checker = HealthChecker()
             registry = DomainRegistry()
             bus = IncidentBus()
-            docker_mgr = DockerManager()
 
             services = registry.list_services()
             health_results = checker.check_all_services()
             incidents = bus.list_incidents(only_open=True)
-            containers = docker_mgr.list_containers()
+
+            # Query Docker Engine API via Unix socket directly
+            # (python:3.11-slim doesn't have the docker CLI binary)
+            total_containers = 0
+            try:
+                import http.client
+                conn = http.client.HTTPConnection("localhost")
+                conn.sock = __import__('socket').socket(
+                    __import__('socket').AF_UNIX, __import__('socket').SOCK_STREAM
+                )
+                conn.sock.connect("/var/run/docker.sock")
+                conn.request("GET", "/containers/json")
+                resp = conn.getresponse()
+                if resp.status == 200:
+                    container_data = json.loads(resp.read().decode())
+                    total_containers = len(container_data)
+                conn.close()
+            except Exception:
+                total_containers = 0
 
             # Merge service info with latest health probe
             merged_services = []
@@ -80,7 +97,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 "network": Config.DOCKER_NETWORK,
                 "services": merged_services,
                 "open_incidents_count": len(incidents),
-                "total_containers": len(containers),
+                "total_containers": total_containers,
             })
             return
 

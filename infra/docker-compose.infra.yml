@@ -24,7 +24,7 @@ services:
     working_dir: /app
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - devctl_state:/root/.devctl
+      - /root/.devctl:/root/.devctl
       - ../devctl:/app/devctl
       - ../ai_ops:/app/ai_ops
       - ../dashboard:/app/dashboard
@@ -47,7 +47,7 @@ services:
     working_dir: /app
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - devctl_state:/root/.devctl
+      - /root/.devctl:/root/.devctl
       - ../devctl:/app/devctl
       - ../ai_ops:/app/ai_ops
     environment:
@@ -64,7 +64,6 @@ services:
 volumes:
   caddy_data:
   caddy_config:
-  devctl_state:
 
 networks:
   dev-net:
