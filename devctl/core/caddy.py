@@ -48,6 +48,15 @@ class CaddyManager:
         res = self._api_request("GET", "/config/")
         return res.get("success", False)
 
+    def get_http_server_name(self) -> str:
+        """Discover the active HTTP server name in Caddy config (e.g. srv0)."""
+        res = self._api_request("GET", "/config/apps/http/servers")
+        if res.get("success") and isinstance(res.get("data"), dict):
+            keys = list(res["data"].keys())
+            if keys:
+                return keys[0]
+        return "srv0"
+
     def add_route(
         self,
         domain: str,
@@ -56,8 +65,7 @@ class CaddyManager:
         route_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Dynamically create or update a reverse proxy route in Caddy.
-        Example: domain='myapp.dev.example.com' -> upstream='myapp:3000'
+        Dynamically create or update a reverse proxy route in Caddy with highest priority.
         """
         route_id = route_id or domain.replace(".", "_")
         upstream = f"{upstream_host}:{upstream_port}"
@@ -83,20 +91,24 @@ class CaddyManager:
             "terminal": True,
         }
 
-        # Check if route ID already exists, if so PUT (update), else POST (append)
+        # Check if route ID already exists, if so PUT (update)
         check = self._api_request("GET", f"/id/{route_id}")
         if check.get("success"):
             return self._api_request("PUT", f"/id/{route_id}", route_payload)
-        else:
-            # Append route to default HTTP app server routes
-            # Standard path: /config/apps/http/servers/srv0/routes
+
+        # Prepend route to index 0 of routes array for instant match priority
+        server_name = self.get_http_server_name()
+        res = self._api_request(
+            "PUT", f"/config/apps/http/servers/{server_name}/routes/0", route_payload
+        )
+        if not res.get("success"):
+            # Fallback: append or direct by ID
             res = self._api_request(
-                "POST", "/config/apps/http/servers/srv0/routes", route_payload
+                "POST", f"/config/apps/http/servers/{server_name}/routes", route_payload
             )
             if not res.get("success"):
-                # Fallback: create by ID directly
                 return self._api_request("PUT", f"/id/{route_id}", route_payload)
-            return res
+        return res
 
     def remove_route(self, domain: str, route_id: Optional[str] = None) -> Dict[str, Any]:
         """Delete a dynamic route from Caddy."""
@@ -111,7 +123,8 @@ class CaddyManager:
 
     def list_routes(self) -> List[Dict[str, Any]]:
         """Retrieve all currently registered routes from Caddy."""
-        res = self._api_request("GET", "/config/apps/http/servers/srv0/routes")
+        server_name = self.get_http_server_name()
+        res = self._api_request("GET", f"/config/apps/http/servers/{server_name}/routes")
         if res.get("success") and isinstance(res.get("data"), list):
             return res["data"]
         return []

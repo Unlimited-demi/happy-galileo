@@ -1,10 +1,14 @@
 {
     # Enable Caddy Admin API on internal network for devctl dynamic routing
     admin 0.0.0.0:2019
-    
-    # Global options
-    auto_https disable_redirects
-    email admin@datakrib.com
+    email unlimiteddemi@gmail.com
+
+    # On-Demand TLS automatically provisions valid HTTPS certificates via HTTP-01
+    # without needing complex DNS-01 API keys
+    on_demand_tls {
+        interval 2m
+        burst 10
+    }
 }
 
 # 1. Status & AI-Ops Dashboard Ingress
@@ -21,9 +25,12 @@ status.dev-server.datakrib.com {
     reverse_proxy dashboard:8888
 }
 
-# 2. Wildcard Subdomain Handler (*.dev-server.datakrib.com)
-# Additional routes are dynamically added/updated/removed by devctl via Caddy Admin API
-*.dev-server.datakrib.com {
+# 2. Dynamic On-Demand TLS for all services on *.dev-server.datakrib.com
+# devctl dynamically injects reverse_proxy handlers via Caddy Admin API
+https:// {
+    tls {
+        on_demand
+    }
     encode zstd gzip
 
     header {
@@ -32,7 +39,4 @@ status.dev-server.datakrib.com {
         X-Frame-Options "SAMEORIGIN"
         Referrer-Policy "strict-origin-when-cross-origin"
     }
-
-    # Default fallback when an unexposed subdomain is accessed
-    respond "Service not found or inactive on dev-server.datakrib.com. Use 'devctl expose <service> <port>'." 404
 }
