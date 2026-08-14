@@ -322,32 +322,55 @@ def cmd_dispatch(args):
     except Exception:
         pass
 
-    # 4. Check if opencode executable is present to launch or output run instruction
+    # 4. Resolve target service directory
+    svc_dir = BASE_DIR / "services" / service_name
+    if not svc_dir.exists():
+        svc_dir = BASE_DIR
+
+    dossier_file = Config.INCIDENTS_DIR / f"{incident_id}.md"
+
+    # Construct strict scoped prompt for OpenCode
+    prompt = (
+        f"URGENT INCIDENT REMEDIATION: {incident_id} ({service_name})\n"
+        f"1. Read evidence dossier: {dossier_file}\n"
+        f"2. SCOPE CONSTRAINT: Only investigate and modify code inside directory: {svc_dir}\n"
+        f"   (STRICT: Do NOT modify ai_ops/, devctl/, or infra/ infrastructure code).\n"
+        f"3. You are already on fix branch: {branch_name}\n"
+        f"4. Implement the fix in source code and rebuild: cd {svc_dir} && docker compose up -d --build\n"
+        f"5. Verify with: devctl test {service_name}\n"
+        f"6. Mark resolved: devctl incident resolve {incident_id} --notes 'Fixed {service_name} root cause and verified with tests.'"
+    )
+
+    print(f"[*] Target Service Directory Scoped: {svc_dir}")
+
+    # 5. Check if opencode executable is present to launch
     import shutil
     opencode_path = shutil.which("opencode")
     tmux_path = shutil.which("tmux")
 
     if opencode_path and not args.dry_run:
-        prompt = f"Resolve incident {incident_id} in {service_name}. Inspect .devctl/incidents/{incident_id}.md, fix the root cause in code, run tests, rebuild container, and mark incident resolved."
+        # Default to tmux if available so user can disconnect safely
+        use_tmux = bool(tmux_path) and not args.no_tmux
         
-        if tmux_path and (args.tmux or args.background):
+        if use_tmux:
             session_name = f"opencode-{service_name}"
             print(f"[*] Launching OpenCode inside persistent tmux session: '{session_name}'...")
-            # Kill any existing session with same name to avoid conflict
             subprocess.run(["tmux", "kill-session", "-t", session_name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, f"{opencode_path} run \"{prompt}\""], check=False)
-            print(f"\n[✓] OpenCode Agent is actively fixing the issue in the background!")
+            # Run OpenCode directly from the scoped service directory
+            tmux_cmd = f"cd {svc_dir} && {opencode_path} run {json.dumps(prompt)}"
+            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, tmux_cmd], check=False)
+            print(f"\n[✓] OpenCode Agent is actively diagnosing '{service_name}' in the background!")
             print(f"    To watch OpenCode live:     tmux attach -t {session_name}")
             print(f"    To detach from view:        Press Ctrl+B then D")
         else:
             print(f"[*] Launching OpenCode agent live with Incident Dossier...\n")
             try:
-                subprocess.run([opencode_path, "run", prompt])
+                subprocess.run([opencode_path, "run", prompt], cwd=str(svc_dir))
             except Exception as e:
                 print(f"[!] OpenCode process completed or interrupted: {e}")
     else:
         print(f"\n🚀 Ready for OpenCode execution:")
-        print(f"   opencode run \"Resolve incident {incident_id} in {service_name}\"")
+        print(f"   cd {svc_dir} && opencode run \"Resolve incident {incident_id} in {service_name}\"")
         print(f"\n   Or inspect dossier directly:")
         print(f"   devctl incident inspect {incident_id}\n")
     print("═" * 70 + "\n")
@@ -428,7 +451,8 @@ def main():
     # dispatch
     p_dispatch = subparsers.add_parser("dispatch", help="Dispatch an incident dossier to OpenCode for autonomous remediation")
     p_dispatch.add_argument("incident_id", nargs="?", help="Incident ID (defaults to latest open)")
-    p_dispatch.add_argument("--tmux", action="store_true", help="Run OpenCode inside a persistent background tmux session")
+    p_dispatch.add_argument("--tmux", action="store_true", help="Explicitly force tmux background session")
+    p_dispatch.add_argument("--no-tmux", action="store_true", help="Run OpenCode directly in the current interactive terminal instead of tmux")
     p_dispatch.add_argument("--dry-run", action="store_true", help="Print prompt and checkout branch without invoking opencode CLI")
 
     # doctor
