@@ -88,6 +88,35 @@ class HealthChecker:
             return matched_errors[-1]
         return None
 
+    # Ports that are known to NOT speak HTTP — databases, caches, mail protocols
+    NON_HTTP_PORTS = {
+        3306, 5432, 6379, 11211, 27017, 5672, 15672,  # mysql, postgres, redis, memcached, mongo, rabbitmq
+        25, 110, 143, 465, 587, 993, 995, 4190,        # SMTP, POP3, IMAP, SIEVE (mail)
+    }
+
+    # Container image names that are known non-HTTP internal services
+    NON_HTTP_IMAGES = {
+        "mariadb", "mysql", "postgres", "redis", "memcached", "mongo", "mongodb",
+        "rabbitmq", "nats", "elasticsearch", "opensearch", "zookeeper", "kafka",
+        "dovecot", "postfix", "rspamd", "clamd", "olefy", "solr", "unbound",
+        "watchdog", "acme", "certdumper", "ofelia", "dockerize",
+    }
+
+    def _is_non_http_service(self, service_info: Dict[str, Any]) -> bool:
+        """Determine if a service is a non-HTTP internal service (DB, cache, mail daemon)."""
+        port = int(service_info.get("port", 80))
+        if port in self.NON_HTTP_PORTS:
+            return True
+
+        # Check container image name for known non-HTTP software
+        container_name = service_info.get("container_name", service_info.get("service_name", ""))
+        image = service_info.get("image", container_name).lower()
+        for keyword in self.NON_HTTP_IMAGES:
+            if keyword in image or keyword in container_name.lower():
+                return True
+
+        return False
+
     def check_service(self, service_info: Dict[str, Any]) -> Dict[str, Any]:
         """Perform comprehensive health check on a registered service."""
         service_name = service_info.get("service_name", "")
@@ -114,22 +143,31 @@ class HealthChecker:
         new_restarts = max(0, restart_count - prev_restarts)
         self._prev_restart_counts[service_name] = restart_count
 
-        # 2. HTTP probe DIRECTLY over internal Docker network
-        internal_url = f"http://{container_name}:{port}/health"
-        http_result = self.check_http_endpoint(internal_url, timeout=Config.HTTP_TIMEOUT_SECONDS)
+        # 2. Determine if this is a non-HTTP service
+        is_non_http = self._is_non_http_service(service_info)
 
-        # If /health returns 404, fall back to probing root URL
-        if http_result["status_code"] == 404:
-            internal_url = f"http://{container_name}:{port}/"
+        http_result = {"healthy": True, "status_code": 0, "duration_ms": 0, "error": None}
+        internal_url = f"tcp://{container_name}:{port}" if is_non_http else f"http://{container_name}:{port}/"
+
+        if not is_non_http:
+            # HTTP probe DIRECTLY over internal Docker network
+            internal_url = f"http://{container_name}:{port}/health"
             http_result = self.check_http_endpoint(internal_url, timeout=Config.HTTP_TIMEOUT_SECONDS)
+
+            # If /health returns 404, fall back to probing root URL
+            if http_result["status_code"] == 404:
+                internal_url = f"http://{container_name}:{port}/"
+                http_result = self.check_http_endpoint(internal_url, timeout=Config.HTTP_TIMEOUT_SECONDS)
 
         # 3. Log scanning for runtime application errors
         log_error = self.scan_recent_logs_for_errors(container_name, tail=25)
 
         # 4. Determine overall health
+        # Non-HTTP services: healthy if container is running and no OOM/restarts
+        # HTTP services: also require HTTP probe to pass
         is_healthy = (
             container_running
-            and http_result["healthy"]
+            and (is_non_http or http_result["healthy"])
             and not oom_killed
             and new_restarts == 0
             and log_error is None
@@ -139,7 +177,7 @@ class HealthChecker:
         failure_reasons = []
         if not container_running:
             failure_reasons.append(f"Container '{container_name}' is not running (state: {container_state})")
-        if not http_result["healthy"]:
+        if not is_non_http and not http_result["healthy"]:
             failure_reasons.append(f"HTTP probe to {internal_url} failed: {http_result['error']}")
         if oom_killed:
             failure_reasons.append("Container was OOM killed (memory exhaustion)")
@@ -163,6 +201,7 @@ class HealthChecker:
             "response_time_ms": http_result["duration_ms"],
             "error": http_result["error"] or log_error,
             "failure_reasons": failure_reasons,
+            "check_mode": "container-only" if is_non_http else "http+container",
             "timestamp": time.time(),
         }
 
