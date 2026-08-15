@@ -1,12 +1,30 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Node Agent Turnkey Setup Script (for multi-server fleet)
-# Installs: Docker, Caddy, Fail2ban, UFW, devctl, AI-Ops Sentry, and Fleet Telemetry
+# NODE AGENT Setup Script (for remote servers joining the fleet)
+# Purpose: Sets up a REMOTE server to be monitored by the Central Hub.
+#          Installs AI-Ops agent, devctl, OpenCode, auto-discovers existing
+#          containers, and streams telemetry to the Central Fleet Dashboard.
+#
+# What it installs:
+#   - Docker & Docker Compose (if not present)
+#   - Node.js & Playwright (for visual testing)
+#   - OpenCode CLI (autonomous code remediation agent)
+#   - devctl CLI (service management)
+#   - Caddy reverse proxy (internal, respects existing Nginx/Apache/Mailcow)
+#   - AI-Ops monitoring daemon (container state + log scanning)
+#   - Fleet Telemetry Streamer (streams health data to Central Hub)
+#
+# Usage:
+#   curl -sSL https://raw.githubusercontent.com/Unlimited-demi/happy-galileo/master/scripts/setup-node.sh | \
+#     sudo bash -s -- \
+#       --node-name "vm2" \
+#       --domain "vm2.dev-server.datakrib.com" \
+#       --hub-url "https://status.dev-server.datakrib.com/api/telemetry/ingest"
 # ==============================================================================
 
 set -e
 
-NODE_NAME="${NODE_NAME:-$(hostname)}"
+NODE_NAME="${NODE_NAME:-$(hostname -s)}"
 BASE_DOMAIN="${BASE_DOMAIN:-dev-server.datakrib.com}"
 CENTRAL_HUB_URL="${CENTRAL_HUB_URL:-}"
 FLEET_KEY="${FLEET_KEY:-default-fleet-key}"
@@ -25,28 +43,50 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 echo "========================================================"
-echo "🚀 Installing AI-Ops Node Agent on: ${NODE_NAME}"
-echo "   Domain Scope:       *.${BASE_DOMAIN}"
-echo "   Central Hub URL:    ${CENTRAL_HUB_URL:-None (Standalone)}"
+echo "📡 Setting up FLEET NODE AGENT: ${NODE_NAME}"
+echo "   Domain Scope:     *.${BASE_DOMAIN}"
+echo "   Central Hub:      ${CENTRAL_HUB_URL:-None (Standalone)}"
+echo "   Role:             NODE AGENT (Monitor + Stream Telemetry)"
 echo "========================================================"
 
 if [ "$EUID" -ne 0 ]; then
-  echo "❌ Please run as root: sudo bash scripts/setup-node.sh"
+  echo "❌ Please run as root"
   exit 1
 fi
 
 export DEBIAN_FRONTEND=noninteractive
 export BASE_DOMAIN
 
-# 1. Ensure git & curl are available
-if ! command -v git &>/dev/null || ! command -v curl &>/dev/null; then
-  echo "[1/4] Installing prerequisite git & curl..."
-  apt-get update -y
-  apt-get install -y git curl
-fi
+# ── Step 1: Prerequisites ──
+echo "[1/8] Installing prerequisites..."
+apt-get update -y
+apt-get install -y \
+  apt-transport-https \
+  ca-certificates \
+  curl \
+  gnupg \
+  git \
+  tmux \
+  ufw \
+  fail2ban \
+  python3 \
+  python3-pip \
+  python3-venv \
+  jq
 
-# 2. Clone or update repository into /opt/happy-galileo
-echo "[2/4] Fetching workstation codebase..."
+# ── Step 2: Docker ──
+echo "[2/8] Installing Docker & Docker Compose..."
+if ! command -v docker &> /dev/null; then
+  curl -fsSL https://get.docker.com -o get-docker.sh
+  sh get-docker.sh
+  rm get-docker.sh
+  systemctl enable docker
+  systemctl start docker
+fi
+apt-get install -y docker-compose-plugin 2>/dev/null || true
+
+# ── Step 3: Clone Codebase ──
+echo "[3/8] Fetching workstation codebase..."
 if [ ! -d "${INSTALL_DIR}" ]; then
   mkdir -p /opt
   git clone "${REPO_URL}" "${INSTALL_DIR}"
@@ -56,35 +96,108 @@ else
   git reset --hard origin/master || true
 fi
 
-# 3. Run proxy resolver to auto-detect existing Nginx/Apache
+# ── Step 4: Node.js + OpenCode ──
+echo "[4/8] Installing Node.js, Playwright & OpenCode..."
+if ! command -v node &> /dev/null; then
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  apt-get install -y nodejs
+fi
+
+cd "${INSTALL_DIR}"
+if [ -f "package.json" ]; then
+  npm install 2>/dev/null || true
+  npx playwright install-deps chromium 2>/dev/null || true
+  npx playwright install chromium 2>/dev/null || true
+fi
+
+# Install OpenCode for autonomous remediation
+if ! command -v opencode &> /dev/null; then
+  echo "[*] Installing OpenCode CLI..."
+  npm install -g opencode-ai 2>/dev/null || npm install -g @opencode/cli 2>/dev/null || echo "[!] OpenCode not found in npm. Install manually."
+fi
+
+# ── Step 5: Docker network ──
+echo "[5/8] Creating internal Docker network 'dev-net'..."
+docker network inspect dev-net &>/dev/null || docker network create dev-net
+
+# ── Step 6: devctl CLI ──
+echo "[6/8] Installing devctl CLI..."
+VENV_DIR="/opt/devctl-venv"
+python3 -m venv "${VENV_DIR}"
+"${VENV_DIR}/bin/pip" install --upgrade pip
+if [ -f "${INSTALL_DIR}/requirements.txt" ]; then
+  "${VENV_DIR}/bin/pip" install -r "${INSTALL_DIR}/requirements.txt"
+fi
+
+cat << EOF > /usr/local/bin/devctl
+#!/usr/bin/env bash
+export PYTHONPATH="/opt/happy-galileo:\${PYTHONPATH}"
+export BASE_DOMAIN="\${BASE_DOMAIN:-${BASE_DOMAIN}}"
+export NODE_NAME="\${NODE_NAME:-${NODE_NAME}}"
+export CENTRAL_HUB_URL="\${CENTRAL_HUB_URL:-${CENTRAL_HUB_URL}}"
+export FLEET_KEY="\${FLEET_KEY:-${FLEET_KEY}}"
+export CADDY_ADMIN_API="\${CADDY_ADMIN_API:-http://127.0.0.1:2019}"
+export DEVCTL_DOCKER_NETWORK="\${DEVCTL_DOCKER_NETWORK:-dev-net}"
+exec /opt/devctl-venv/bin/python3 /opt/happy-galileo/devctl/cli.py "\$@"
+EOF
+chmod +x /usr/local/bin/devctl
+chmod +x "${INSTALL_DIR}/devctl/cli.py"
+
+# ── Step 7: Resolve proxy conflicts & firewall ──
+echo "[7/8] Resolving proxy conflicts & hardening firewall..."
 if [ -f "${INSTALL_DIR}/infra/security/proxy_resolver.sh" ]; then
   bash "${INSTALL_DIR}/infra/security/proxy_resolver.sh" "${BASE_DOMAIN}"
 fi
+if [ -f "${INSTALL_DIR}/infra/security/ufw_setup.sh" ]; then
+  bash "${INSTALL_DIR}/infra/security/ufw_setup.sh" 2>/dev/null || true
+fi
 
-# 4. Run full workstation setup
-echo "[3/4] Running core infrastructure & security setup..."
-bash "${INSTALL_DIR}/scripts/setup-server.sh" --domain "${BASE_DOMAIN}"
+# ── Step 8: Start Infrastructure ──
+echo "[8/8] Starting Node Agent Stack (Caddy + AI-Ops + Dashboard)..."
 
-# 5. Configure Telemetry streamer if Central Hub URL provided
-if [ -n "${CENTRAL_HUB_URL}" ]; then
-  echo "[4/4] Configuring Fleet Telemetry Streamer..."
-  cat << EOF > "${INSTALL_DIR}/.env.node"
-NODE_NAME=${NODE_NAME}
+# Write node .env with telemetry configuration
+cat << EOF > "${INSTALL_DIR}/infra/.env"
 BASE_DOMAIN=${BASE_DOMAIN}
+NODE_NAME=${NODE_NAME}
 CENTRAL_HUB_URL=${CENTRAL_HUB_URL}
 FLEET_KEY=${FLEET_KEY}
 EOF
-fi
 
-# 6. Auto-discover any existing Docker containers on this machine
-if command -v devctl &>/dev/null; then
-  devctl discover 2>/dev/null || true
+cd "${INSTALL_DIR}/infra"
+docker compose -f docker-compose.infra.yml --env-file .env up -d
+
+# ── Auto-discover existing containers ──
+echo ""
+echo "[*] Auto-discovering existing Docker containers on this server..."
+sleep 3
+devctl discover 2>/dev/null || true
+
+# ── Send initial heartbeat to Central Hub ──
+if [ -n "${CENTRAL_HUB_URL}" ]; then
+  echo "[*] Sending initial telemetry heartbeat to Central Hub..."
+  devctl heartbeat --name "${NODE_NAME}" --hub "${CENTRAL_HUB_URL}" 2>/dev/null || true
 fi
 
 echo ""
 echo "========================================================"
-echo "🎉 Node Agent Setup Complete for ${NODE_NAME}!"
-echo "   Public Wildcard: *.${BASE_DOMAIN}"
-echo "   Dashboard:       https://status.${BASE_DOMAIN}"
-echo "   devctl CLI:      /usr/local/bin/devctl"
+echo "🎉 Node Agent Setup Complete: ${NODE_NAME}"
 echo "========================================================"
+echo "• Role:              NODE AGENT"
+echo "• Public Wildcard:   *.${BASE_DOMAIN}"
+echo "• Local Dashboard:   https://status.${BASE_DOMAIN}"
+echo "• Central Hub:       ${CENTRAL_HUB_URL:-Not configured (standalone)}"
+echo "• Internal Network:  dev-net"
+echo "• devctl CLI:        /usr/local/bin/devctl"
+echo "• OpenCode:          $(command -v opencode 2>/dev/null || echo 'Not installed')"
+echo "========================================================"
+echo ""
+echo "📊 Monitoring: AI-Ops is now watching all containers via:"
+echo "   • Docker container state (running/stopped/restarting)"
+echo "   • Docker HEALTHCHECK status"
+echo "   • Container log scanning for errors & exceptions"
+echo "   • OOM kill detection"
+echo "   • Restart loop detection"
+echo ""
+
+# Run doctor
+devctl doctor
