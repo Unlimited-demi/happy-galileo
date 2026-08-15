@@ -45,12 +45,12 @@ class RemediationEngine:
         container_name = health.get("container_name", service_name)
         is_healthy = health.get("healthy", False)
         container_running = health.get("container_running", False)
-        http_status = health.get("http_status")
         url = health.get("url", "")
-        error_msg = health.get("error")
+        log_error = health.get("log_error")
         failure_reasons = health.get("failure_reasons", [])
         new_restarts = health.get("new_restarts", 0)
         oom_killed = health.get("oom_killed", False)
+        docker_health = health.get("docker_health", "none")
 
         # Level 0: Healthy — clear tracking
         if is_healthy:
@@ -58,7 +58,7 @@ class RemediationEngine:
             self._open_incidents.discard(service_name)
             return {"level": 0, "action": "OBSERVE", "status": "HEALTHY"}
 
-        reasons_str = "; ".join(failure_reasons) if failure_reasons else f"HTTP {http_status or 'DEAD'}"
+        reasons_str = "; ".join(failure_reasons) if failure_reasons else "Container unhealthy"
         print(f"\n[AI-Ops ALERT] Unhealthy: {service_name} — {reasons_str}")
 
         # Level 1: Container crashed or stopped → Auto-restart
@@ -85,9 +85,9 @@ class RemediationEngine:
         evidence = self.dossier_builder.build_evidence(
             service_name=service_name,
             container_name=container_name,
-            http_status=http_status,
+            http_status=None,
             failing_url=url,
-            error_message=error_msg,
+            error_message=log_error or reasons_str,
             failure_reasons=failure_reasons,
         )
         recommendation = self.dossier_builder.generate_recommendation(evidence)
@@ -98,28 +98,30 @@ class RemediationEngine:
             severity = "CRITICAL"
         elif new_restarts >= 3:
             severity = "CRITICAL"
-        elif http_status and http_status >= 500:
+        elif docker_health == "unhealthy":
             severity = "HIGH"
 
-        # Create incident title with accurate failure trigger
-        log_errors = [r for r in failure_reasons if r.startswith("Log Error:")]
+        # Create incident title from actual failure cause
         if oom_killed:
             title = f"Service '{service_name}' failing — OOM killed (memory exhaustion)"
         elif new_restarts > 0:
             title = f"Service '{service_name}' failing — crashed and restarted {new_restarts}x"
-        elif log_errors:
-            err_summary = log_errors[0].replace("Log Error:", "").strip()
-            # Clean summary for title
+        elif not container_running:
+            title = f"Service '{service_name}' container stopped or exited"
+        elif docker_health == "unhealthy":
+            title = f"Service '{service_name}' Docker HEALTHCHECK reports unhealthy"
+        elif log_error:
+            err_summary = log_error.strip()
             if "PrismaClientInitializationError" in err_summary:
                 title = f"Service '{service_name}' database error — PrismaClientInitializationError"
             elif "TypeError" in err_summary:
                 title = f"Service '{service_name}' runtime error — TypeError exception"
+            elif "ECONNREFUSED" in err_summary:
+                title = f"Service '{service_name}' connection refused — dependency down"
             else:
-                title = f"Service '{service_name}' runtime error — {err_summary[:55]}"
-        elif http_status and http_status >= 400:
-            title = f"Service '{service_name}' failing — HTTP {http_status}"
+                title = f"Service '{service_name}' log error — {err_summary[:60]}"
         else:
-            title = f"Service '{service_name}' health probe failure"
+            title = f"Service '{service_name}' health check failure"
 
         incident = self.incident_bus.create_incident(
             service_name=service_name,
@@ -143,3 +145,4 @@ class RemediationEngine:
             "incident_id": incident["id"],
             "dossier": f"{incident['id']}.md",
         }
+
