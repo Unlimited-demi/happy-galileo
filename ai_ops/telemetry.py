@@ -94,8 +94,10 @@ class FleetTelemetryStreamer:
             "services_count": len(enriched_services),
             "services": enriched_services,
             "open_incidents_count": len(open_incidents),
-            "open_incidents": open_incidents[:10],
+            "open_incidents": open_incidents[:20],
             "resolved_incidents_count": len(resolved_incidents),
+            "resolved_incidents": resolved_incidents[:20],
+            "all_incidents": (open_incidents + resolved_incidents)[:30],
             "memory_mb": mem_info,
         }
 

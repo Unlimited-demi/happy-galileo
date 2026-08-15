@@ -64,22 +64,23 @@ function renderOverview(status, incidentsData, fleetData) {
   const nodes = fleetData.nodes || [];
   let totalServices = status.services?.length || 0;
   let totalContainers = status.total_containers || 0;
-  if (nodes.length > 1) {
+  let totalOpenIncidents = status.open_incidents_count || 0;
+  if (nodes.length > 0) {
     totalServices = nodes.reduce((acc, n) => acc + (n.services?.length || 0), 0);
     totalContainers = nodes.reduce((acc, n) => acc + (n.containers_count || 0), 0);
+    totalOpenIncidents = nodes.reduce((acc, n) => acc + (n.open_incidents_count || 0), 0);
   }
 
   document.getElementById('count-services').textContent = totalServices;
   document.getElementById('count-containers').textContent = totalContainers;
 
-  const openCount = status.open_incidents_count || 0;
   const incElement = document.getElementById('count-incidents');
-  incElement.textContent = openCount;
+  incElement.textContent = totalOpenIncidents;
 
   const badge = document.getElementById('badge-incidents');
-  if (openCount > 0) {
+  if (totalOpenIncidents > 0) {
     badge.style.display = 'inline-block';
-    badge.textContent = openCount;
+    badge.textContent = totalOpenIncidents;
   } else {
     badge.style.display = 'none';
   }
@@ -228,7 +229,39 @@ function renderIncidents(incidents) {
     .map((inc) => {
       const stack = inc.evidence?.stack_trace || inc.evidence?.logs || 'No stack trace captured.';
       const isResolved = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(inc.state);
+      const isClaimed = inc.state === 'CLAIMED';
+      const isInvestigating = inc.state === 'INVESTIGATING';
       const proof = inc.resolution_proof || {};
+      const sourceNode = inc.source_node || 'local';
+
+      // State color and label
+      let stateBg, stateColor, stateIcon;
+      if (isResolved) {
+        stateBg = 'rgba(34, 197, 94, 0.15)'; stateColor = '#22c55e'; stateIcon = '✅';
+      } else if (isClaimed) {
+        stateBg = 'rgba(245, 158, 11, 0.15)'; stateColor = '#f59e0b'; stateIcon = '🔧';
+      } else if (isInvestigating) {
+        stateBg = 'rgba(56, 189, 248, 0.15)'; stateColor = '#38bdf8'; stateIcon = '🔍';
+      } else {
+        stateBg = 'rgba(239, 68, 68, 0.15)'; stateColor = '#ef4444'; stateIcon = '🚨';
+      }
+
+      // Progress bar for active remediation
+      let progressHtml = '';
+      if (!isResolved) {
+        const stateProgress = { 'DETECTED': 10, 'INVESTIGATING': 35, 'CLAIMED': 60, 'FIXED': 85 };
+        const pct = stateProgress[inc.state] || 10;
+        progressHtml = `
+          <div style="margin-top: 8px;">
+            <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 3px;">
+              <span>${stateIcon} Remediation Progress</span>
+              <span>${pct}%</span>
+            </div>
+            <div style="background: rgba(255,255,255,0.06); border-radius: 4px; height: 6px; overflow: hidden;">
+              <div style="width: ${pct}%; height: 100%; background: ${stateColor}; border-radius: 4px; transition: width 0.3s;"></div>
+            </div>
+          </div>`;
+      }
 
       let proofHtml = '';
       if (isResolved) {
@@ -251,15 +284,19 @@ function renderIncidents(incidents) {
       <div class="incident-card" style="${isResolved ? 'border-color: rgba(34, 197, 94, 0.3);' : ''}">
         <div class="incident-header">
           <span class="incident-id">${escapeHtml(inc.id)}</span>
-          <span class="env-pill" style="${isResolved ? 'background: rgba(34, 197, 94, 0.2); color: #22c55e;' : ''}">${escapeHtml(inc.state || inc.severity || 'HIGH')}</span>
+          <span class="env-pill" style="background: ${stateBg}; color: ${stateColor};">${stateIcon} ${escapeHtml(inc.state || 'DETECTED')}</span>
+          <span class="env-pill" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8;">🖥️ ${escapeHtml(sourceNode)}</span>
           <span style="font-size: 0.8rem; color: var(--text-muted);">${escapeHtml(inc.created_at || '')}</span>
         </div>
-        <div class="incident-title">${escapeHtml(inc.title)}</div>
+        <div class="incident-title">
+          <strong>${escapeHtml(inc.service_name || '')}</strong> — ${escapeHtml(inc.title)}
+        </div>
         ${!isResolved ? `<div class="incident-trace">${escapeHtml(stack)}</div>` : ''}
         ${!isResolved ? `
         <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">
           💡 <strong>AI-Ops Recommendation:</strong> ${escapeHtml(inc.recommendation || 'Investigate logs and fix.')}
         </div>` : ''}
+        ${progressHtml}
         ${proofHtml}
         <button class="view-dossier-btn" onclick="openIncidentModal('${escapeHtml(inc.id)}')">
           📄 View Full Report & Verification Proof

@@ -126,8 +126,28 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 bus = IncidentBus()
                 params = parse_qs(parsed.query)
                 only_open = params.get("all", ["true"])[0] != "true"
-                incidents = bus.list_incidents(only_open=only_open)
-                self._send_json({"incidents": incidents})
+                local_incidents = bus.list_incidents(only_open=only_open)
+
+                # Tag local incidents with their source node
+                local_node_name = os.environ.get("NODE_NAME", "vm-01 (Primary)")
+                for inc in local_incidents:
+                    inc["source_node"] = local_node_name
+
+                # Merge incidents from all remote fleet nodes
+                all_incidents = list(local_incidents)
+                for node_name, node_data in FLEET_STORE.items():
+                    if node_name == local_node_name:
+                        continue
+                    remote_incidents = node_data.get("open_incidents", [])
+                    for rinc in remote_incidents:
+                        rinc["source_node"] = node_name
+                        if only_open and rinc.get("state") in ["RESOLVED", "CLOSED", "VERIFIED"]:
+                            continue
+                        all_incidents.append(rinc)
+
+                # Sort newest first
+                all_incidents.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+                self._send_json({"incidents": all_incidents})
                 return
 
             elif path.startswith("/api/incidents/"):
