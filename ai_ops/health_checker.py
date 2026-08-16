@@ -10,46 +10,11 @@ from typing import Dict, List, Any, Optional
 from devctl.core.config import Config
 from devctl.core.domains import DomainRegistry
 from ai_ops.docker_socket import DockerSocket
+from ai_ops.classifier import AnomalyClassifier
 
 
 class HealthChecker:
     """Monitors container health via Docker state and log error scanning."""
-
-    # High-confidence fatal application error patterns
-    ERROR_PATTERNS = [
-        r"Traceback \(most recent call last\)",
-        r"UnhandledPromiseRejection.*",
-        r"TypeError:.*",
-        r"ReferenceError:.*",
-        r"SyntaxError:.*",
-        r"Cannot read properties of.*",
-        r"panic:.*",
-        r"Segmentation fault",
-        r"OOMKilled",
-        r"out of memory",
-        r"killed\s+process",
-        r"PrismaClient.*Error",
-        r"FATAL:\s+password authentication failed",
-        r"FATAL:\s+Role\s+.*does not exist",
-        r"FATAL:\s+database\s+.*does not exist",
-        r"Error:\s+adapting config using caddyfile:.*",
-        r"CRITICAL:\s+.*",
-    ]
-
-    # Lines to explicitly ignore (routine HTTP access logs, proxy traffic, scan attempts)
-    IGNORE_PATTERNS = [
-        r'"\s*(?:GET|POST|PUT|DELETE|HEAD|OPTIONS|CONNECT)\s+.*"\s+[23]\d\d\s+',
-        r'handled request.*"status":\s*[23]\d\d',
-        r'AI-Ops ALERT',
-        r'Cycle #\d+',
-        r'Connection reset by peer',
-        r'unexpected eof while reading',
-        r'connection with http server terminated incorrectly',
-        r'syslog-ng starting up',
-        r'statistics: max connection',
-        r'DISCONNECT',
-        r'PASS NEW',
-    ]
 
     def __init__(self):
         self.docker = DockerSocket()
@@ -59,11 +24,6 @@ class HealthChecker:
 
     def scan_logs_for_errors(self, container_name: str, tail: int = 40) -> Optional[str]:
         """Scan recent container logs for runtime errors, crashes, and exceptions."""
-        # Never flag self-daemons via log inspection
-        c_lower = container_name.lower()
-        if any(self_kw in c_lower for self_kw in ["ai-ops-daemon", "devctl-dashboard", "caddy"]):
-            return None
-
         logs = self.docker.get_logs(container_name, tail=tail)
         if not logs:
             return None
@@ -74,19 +34,10 @@ class HealthChecker:
             return None
         self._prev_log_hashes[container_name] = log_hash
 
-        matched_errors = []
-        for line in logs.splitlines():
-            # Skip routine access logs and scanner notices
-            if any(re.search(ign, line, re.IGNORECASE) for ign in self.IGNORE_PATTERNS):
-                continue
-            for pat in self.ERROR_PATTERNS:
-                if re.search(pat, line, re.IGNORECASE):
-                    matched_errors.append(line.strip())
-                    break
-
-        if matched_errors:
-            # Return the most recent error (last match)
-            return matched_errors[-1]
+        result = AnomalyClassifier.classify_log_error(container_name, logs)
+        if result:
+            err_snippet, err_category = result
+            return f"[{err_category}] {err_snippet}"
         return None
 
     def check_container(self, service_info: Dict[str, Any]) -> Dict[str, Any]:

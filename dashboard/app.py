@@ -332,6 +332,30 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_json({"status": "received", "node": node_name})
                 return
 
+            elif path.startswith("/api/incidents/") and path.endswith("/dispatch"):
+                # Extract incident_id: /api/incidents/<id>/dispatch
+                parts = path.strip("/").split("/")
+                if len(parts) >= 3:
+                    inc_id = parts[1]
+                    from ai_ops.dispatcher import IncidentDispatcher
+                    dispatcher = IncidentDispatcher()
+                    result = dispatcher.dispatch(inc_id)
+                    self._send_json(result, status=200 if result.get("success") else 400)
+                    return
+
+            elif path == "/api/incidents/purge":
+                bus = IncidentBus()
+                deleted = 0
+                if bus.incidents_dir.exists():
+                    for f in list(bus.incidents_dir.glob("*.json")) + list(bus.incidents_dir.glob("*.md")):
+                        try:
+                            f.unlink()
+                            deleted += 1
+                        except Exception:
+                            pass
+                self._send_json({"status": "purged", "deleted_files": deleted})
+                return
+
             self.send_error(404, "Endpoint not found")
         except Exception as e:
             import traceback

@@ -230,6 +230,32 @@ function App() {
     return status.open_incidents_count || 0;
   }, [nodes, status]);
 
+  const handleDispatch = async (incId) => {
+    try {
+      showToast('🚀 Dispatching OpenCode remediation worker...');
+      const res = await fetch(`/api/incidents/${incId}/dispatch`, { method: 'POST' }).then((r) => r.json());
+      if (res.success) {
+        showToast(`⚡ OpenCode dispatched for ${res.fix_branch || incId}!`);
+        fetchData();
+      } else {
+        showToast(`⚠️ Dispatch: ${res.message || res.error || 'Failed'}`);
+      }
+    } catch (e) {
+      showToast(`⚠️ Network error: ${e.message}`);
+    }
+  };
+
+  const handlePurge = async () => {
+    try {
+      showToast('🧹 Purging test incident dossiers...');
+      const res = await fetch('/api/incidents/purge', { method: 'POST' }).then((r) => r.json());
+      showToast(`✓ Cleared ${res.deleted_files || 0} incident dossier(s).`);
+      fetchData();
+    } catch (e) {
+      showToast(`⚠️ Purge error: ${e.message}`);
+    }
+  };
+
   return React.createElement(
     motion.div,
     { className: 'app-wrapper', initial: 'hidden', animate: 'visible', variants: fadeInVariants },
@@ -280,44 +306,44 @@ function App() {
         { className: 'kpi-card', whileHover: 'hover', whileTap: 'tap', variants: cardSpringVariants },
         React.createElement(
           'div',
-          { className: 'kpi-content' },
-          React.createElement('span', { className: 'kpi-label' }, 'Total Nodes'),
-          React.createElement('span', { className: 'kpi-value' }, nodes.length > 0 ? nodes.length : 1)
+          null,
+          React.createElement('div', { className: 'kpi-label' }, 'Total Nodes'),
+          React.createElement('div', { className: 'kpi-value' }, nodes.length > 0 ? nodes.length : 1)
         ),
-        React.createElement('div', { className: 'kpi-icon-box kpi-icon-cyan' }, React.createElement(Icons.Server, { size: 22 }))
+        React.createElement('div', { className: 'kpi-icon-box' }, React.createElement(Icons.Server, { size: 20, className: 'kpi-icon-emerald' }))
       ),
       React.createElement(
         motion.div,
         { className: 'kpi-card', whileHover: 'hover', whileTap: 'tap', variants: cardSpringVariants },
         React.createElement(
           'div',
-          { className: 'kpi-content' },
-          React.createElement('span', { className: 'kpi-label' }, 'Monitored Containers'),
-          React.createElement('span', { className: 'kpi-value' }, totalContainers)
+          null,
+          React.createElement('div', { className: 'kpi-label' }, 'Monitored Containers'),
+          React.createElement('div', { className: 'kpi-value' }, totalContainers)
         ),
-        React.createElement('div', { className: 'kpi-icon-box kpi-icon-indigo' }, React.createElement(Icons.Cpu, { size: 22 }))
+        React.createElement('div', { className: 'kpi-icon-box' }, React.createElement(Icons.Cpu, { size: 20, className: 'kpi-icon-cyan' }))
       ),
       React.createElement(
         motion.div,
         { className: 'kpi-card', whileHover: 'hover', whileTap: 'tap', variants: cardSpringVariants },
         React.createElement(
           'div',
-          { className: 'kpi-content' },
-          React.createElement('span', { className: 'kpi-label' }, 'Active Services'),
-          React.createElement('span', { className: 'kpi-value' }, totalServices)
+          null,
+          React.createElement('div', { className: 'kpi-label' }, 'Active Services'),
+          React.createElement('div', { className: 'kpi-value' }, totalServices)
         ),
-        React.createElement('div', { className: 'kpi-icon-box kpi-icon-emerald' }, React.createElement(Icons.Globe, { size: 22 }))
+        React.createElement('div', { className: 'kpi-icon-box' }, React.createElement(Icons.Globe, { size: 20, className: 'kpi-icon-emerald' }))
       ),
       React.createElement(
         motion.div,
         { className: 'kpi-card', whileHover: 'hover', whileTap: 'tap', variants: cardSpringVariants },
         React.createElement(
           'div',
-          { className: 'kpi-content' },
-          React.createElement('span', { className: 'kpi-label' }, 'Open Incidents'),
-          React.createElement('span', { className: 'kpi-value', style: { color: openIncidentsCount > 0 ? 'var(--accent-rose)' : 'inherit' } }, openIncidentsCount)
+          null,
+          React.createElement('div', { className: 'kpi-label' }, 'Open Incidents'),
+          React.createElement('div', { className: 'kpi-value', style: { color: openIncidentsCount > 0 ? 'var(--accent-rose)' : 'var(--text-primary)' } }, openIncidentsCount)
         ),
-        React.createElement('div', { className: 'kpi-icon-box kpi-icon-rose' }, React.createElement(Icons.AlertTriangle, { size: 22 }))
+        React.createElement('div', { className: 'kpi-icon-box' }, React.createElement(Icons.AlertTriangle, { size: 20, className: openIncidentsCount > 0 ? 'kpi-icon-rose' : 'kpi-icon-muted' }))
       )
     ),
 
@@ -365,7 +391,7 @@ function App() {
         { key: activeTab, initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -6 }, transition: { duration: 0.2 } },
         activeTab === 'fleet' && React.createElement(FleetMatrixView, { nodes: nodes.length > 0 ? nodes : [status], onCopy: showToast }),
         activeTab === 'services' && React.createElement(ServiceDirectoryView, { nodes: nodes.length > 0 ? nodes : [status], filter: serviceFilter, setFilter: setServiceFilter, onCopy: showToast }),
-        activeTab === 'incidents' && React.createElement(IncidentConsoleView, { incidents, onSelect: setSelectedIncident }),
+        activeTab === 'incidents' && React.createElement(IncidentConsoleView, { incidents, onSelect: setSelectedIncident, onDispatch: handleDispatch, onPurge: handlePurge }),
         activeTab === 'reports' && React.createElement(HealthDigestView, { nodes: nodes.length > 0 ? nodes : [status], incidents })
       )
     ),
@@ -374,7 +400,7 @@ function App() {
     React.createElement(
       AnimatePresence,
       null,
-      selectedIncident && React.createElement(IncidentModal, { incident: selectedIncident, onClose: () => setSelectedIncident(null), onCopy: showToast })
+      selectedIncident && React.createElement(IncidentModal, { incident: selectedIncident, onClose: () => setSelectedIncident(null), onCopy: showToast, onDispatch: handleDispatch })
     ),
 
     // ── 6. Toast Notification ──
@@ -650,7 +676,7 @@ function ServiceDirectoryView({ nodes, filter, setFilter, onCopy }) {
 }
 
 // ── COMPONENT: IncidentConsoleView ──
-function IncidentConsoleView({ incidents, onSelect }) {
+function IncidentConsoleView({ incidents, onSelect, onDispatch, onPurge }) {
   if (!incidents || incidents.length === 0) {
     return React.createElement(
       'div',
@@ -660,80 +686,151 @@ function IncidentConsoleView({ incidents, onSelect }) {
     );
   }
 
+  const openCount = incidents.filter((i) => !['RESOLVED', 'VERIFIED', 'CLOSED'].includes(i.state)).length;
+
   return React.createElement(
     'div',
-    { className: 'incidents-container' },
-    incidents.map((inc) => {
-      const isResolved = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(inc.state);
-      const isClaimed = inc.state === 'CLAIMED';
-      const stack = inc.evidence?.stack_trace || inc.evidence?.logs || 'No stack trace captured.';
-      const pct = isResolved ? 100 : isClaimed ? 60 : 20;
-
-      return React.createElement(
+    null,
+    // Action header bar for incidents
+    React.createElement(
+      'div',
+      { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' } },
+      React.createElement(
         'div',
-        { key: inc.id, className: `incident-card ${isResolved ? 'resolved' : ''}` },
-        React.createElement(
+        { style: { fontSize: '0.85rem', color: 'var(--text-muted)' } },
+        `Showing ${incidents.length} incident(s) • ${openCount} actionable open`
+      ),
+      React.createElement(
+        'button',
+        {
+          className: 'btn-secondary',
+          onClick: onPurge,
+          style: { padding: '6px 12px', fontSize: '0.78rem' },
+        },
+        React.createElement(Icons.ShieldAlert, { size: 14 }),
+        'Purge / Clear Stale Dossiers'
+      )
+    ),
+
+    React.createElement(
+      'div',
+      { className: 'incidents-container' },
+      incidents.map((inc) => {
+        const isResolved = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(inc.state);
+        const isClaimed = inc.state === 'CLAIMED';
+        const stack = inc.evidence?.stack_trace || inc.evidence?.logs || 'No stack trace captured.';
+        const pct = isResolved ? 100 : isClaimed ? 60 : 20;
+
+        return React.createElement(
           'div',
-          { className: 'incident-top' },
+          { key: inc.id, className: `incident-card ${isResolved ? 'resolved' : ''}` },
           React.createElement(
             'div',
-            { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-            React.createElement('span', { className: 'incident-id-badge' }, inc.id),
+            { className: 'incident-top' },
             React.createElement(
-              'span',
-              {
-                style: {
-                  fontSize: '0.72rem',
-                  fontWeight: '700',
-                  padding: '2px 8px',
-                  borderRadius: '4px',
-                  background: isResolved ? 'var(--accent-emerald-subtle)' : 'var(--accent-rose-subtle)',
-                  color: isResolved ? 'var(--accent-emerald)' : 'var(--accent-rose)',
+              'div',
+              { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+              React.createElement('span', { className: 'incident-id-badge' }, inc.id),
+              React.createElement(
+                'span',
+                {
+                  style: {
+                    fontSize: '0.72rem',
+                    fontWeight: '700',
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    background: isResolved
+                      ? 'var(--accent-emerald-subtle)'
+                      : isClaimed
+                      ? 'var(--accent-amber-subtle)'
+                      : 'var(--accent-rose-subtle)',
+                    color: isResolved
+                      ? 'var(--accent-emerald)'
+                      : isClaimed
+                      ? 'var(--accent-amber)'
+                      : 'var(--accent-rose)',
+                  },
                 },
-              },
-              inc.state || 'DETECTED'
+                isClaimed ? `CLAIMED (${inc.claimed_by || 'OpenCode'})` : inc.state || 'DETECTED'
+              ),
+              React.createElement('span', { className: 'port-code-badge' }, inc.source_node || 'Primary Node')
             ),
-            React.createElement('span', { className: 'port-code-badge' }, inc.source_node || 'Primary Node')
+            React.createElement('span', { style: { fontSize: '0.75rem', color: 'var(--text-muted)' } }, inc.created_at || '')
           ),
-          React.createElement('span', { style: { fontSize: '0.75rem', color: 'var(--text-muted)' } }, inc.created_at || '')
-        ),
-        React.createElement('div', { className: 'incident-title-text' }, `${inc.service_name ? `[${inc.service_name}] ` : ''}${inc.title}`),
-        !isResolved && React.createElement('div', { className: 'trace-code-box' }, stack),
-        React.createElement(
-          'div',
-          null,
+          React.createElement('div', { className: 'incident-title-text' }, `${inc.service_name ? `[${inc.service_name}] ` : ''}${inc.title}`),
+          !isResolved && React.createElement('div', { className: 'trace-code-box' }, stack),
           React.createElement(
             'div',
-            { style: { display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)' } },
-            React.createElement('span', null, 'Remediation Pipeline'),
-            React.createElement('span', null, `${pct}%`)
+            null,
+            React.createElement(
+              'div',
+              { style: { display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)' } },
+              React.createElement('span', null, isClaimed ? 'Remediation: In Progress (OpenCode)' : 'Remediation Pipeline'),
+              React.createElement('span', null, `${pct}%`)
+            ),
+            React.createElement(
+              'div',
+              { className: 'progress-track' },
+              React.createElement('div', {
+                className: 'progress-bar-fill',
+                style: {
+                  width: `${pct}%`,
+                  background: isResolved
+                    ? 'var(--accent-emerald)'
+                    : isClaimed
+                    ? 'var(--accent-amber)'
+                    : 'var(--accent-rose)',
+                },
+              })
+            )
           ),
           React.createElement(
             'div',
-            { className: 'progress-track' },
-            React.createElement('div', {
-              className: 'progress-bar-fill',
-              style: { width: `${pct}%`, background: isResolved ? 'var(--accent-emerald)' : 'var(--accent-rose)' },
-            })
+            { style: { display: 'flex', gap: '8px', marginTop: '4px' } },
+            React.createElement(
+              'button',
+              {
+                className: 'btn-secondary',
+                onClick: () => onSelect(inc),
+                style: { flex: 1 },
+              },
+              React.createElement(Icons.FileText, { size: 14 }),
+              'Diagnostic Dossier'
+            ),
+            !isResolved &&
+              React.createElement(
+                'button',
+                {
+                  className: 'btn-primary',
+                  onClick: () => onDispatch && onDispatch(inc.id),
+                  style: {
+                    background: isClaimed ? 'var(--accent-amber)' : 'var(--accent-indigo)',
+                    color: '#fff',
+                    padding: '6px 12px',
+                    fontSize: '0.78rem',
+                    fontWeight: '600',
+                    borderRadius: '6px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  },
+                },
+                React.createElement(Icons.Terminal, { size: 14 }),
+                isClaimed ? 'Re-Dispatch' : '⚡ Dispatch OpenCode'
+              )
           )
-        ),
-        React.createElement(
-          'button',
-          {
-            className: 'btn-secondary',
-            onClick: () => onSelect(inc),
-          },
-          React.createElement(Icons.FileText, { size: 14 }),
-          'View Diagnostic Dossier'
-        )
-      );
-    })
+        );
+      })
+    )
   );
 }
 
 // ── COMPONENT: IncidentModal ──
-function IncidentModal({ incident, onClose, onCopy }) {
+function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
   const isResolved = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(incident.state);
+  const isClaimed = incident.state === 'CLAIMED';
   const evidence = incident.evidence || {};
   const stack = evidence.stack_trace || evidence.logs || 'No stack trace captured.';
 
