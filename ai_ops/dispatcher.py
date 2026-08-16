@@ -174,3 +174,44 @@ REMEDIATION WORKFLOW CONTRACT (AGENTS.md):
                 "status": "DISPATCHED",
                 "message": f"Incident claimed and prepared in branch {fix_branch}.",
             }
+
+    @classmethod
+    def get_worker_status(cls, incident_id: str) -> Dict[str, Any]:
+        """Fetch real-time worker logs and status for a dispatched incident."""
+        session_name = f"opencode-{incident_id}"
+        logs = ""
+        is_running = False
+
+        # 1. Try capturing from live tmux session
+        try:
+            check = subprocess.run(["tmux", "has-session", "-t", session_name], capture_output=True)
+            if check.returncode == 0:
+                is_running = True
+                capture = subprocess.run(["tmux", "capture-pane", "-p", "-t", session_name], capture_output=True, text=True)
+                logs = capture.stdout.strip()
+        except Exception:
+            pass
+
+        # 2. Check local worker log file if exists
+        bus = IncidentBus()
+        log_file = bus.incidents_dir / f"{incident_id}-worker.log"
+        if log_file.exists():
+            try:
+                with open(log_file, "r", encoding="utf-8") as f:
+                    file_logs = f.read().strip()
+                    if file_logs:
+                        logs = (logs + "\n" + file_logs) if logs else file_logs
+            except Exception:
+                pass
+
+        if not logs:
+            logs = f"=== OpenCode Remediation Session: {session_name} ===\nStatus: Initialized and claimed.\nTarget Workspace: /opt/happy-galileo\nGit Fix Branch: fix/{incident_id}\n\nTo view or control live terminal via SSH:\n  tmux attach -t {session_name}"
+
+        return {
+            "incident_id": incident_id,
+            "session_name": session_name,
+            "is_running": is_running,
+            "status": "RUNNING" if is_running else "DISPATCHED",
+            "logs": logs,
+        }
+

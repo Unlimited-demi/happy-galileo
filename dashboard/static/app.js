@@ -848,13 +848,36 @@ function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
   const isClaimed = incident.state === 'CLAIMED';
   const evidence = incident.evidence || {};
   const stack = evidence.stack_trace || evidence.logs || 'No stack trace captured.';
+  
+  const [modalTab, setModalTab] = useState(isClaimed ? 'worker' : 'dossier'); // 'dossier' or 'worker'
+  const [workerInfo, setWorkerInfo] = useState({ logs: 'Loading agent stream...', status: 'DISPATCHED' });
+
+  useEffect(() => {
+    let interval = null;
+    const fetchLogs = () => {
+      fetch(`/api/incidents/${incident.id}/worker-logs?t=${Date.now()}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data && data.logs) setWorkerInfo(data);
+        })
+        .catch(() => {});
+    };
+
+    fetchLogs();
+    if (modalTab === 'worker') {
+      interval = setInterval(fetchLogs, 2500);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [incident.id, modalTab]);
 
   return React.createElement(
     motion.div,
     { className: 'modal-backdrop', onClick: onClose, initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } },
     React.createElement(
       motion.div,
-      { className: 'modal-dialog', onClick: (e) => e.stopPropagation(), variants: modalVariants, initial: 'hidden', animate: 'visible', exit: 'exit' },
+      { className: 'modal-dialog', onClick: (e) => e.stopPropagation(), variants: modalVariants, initial: 'hidden', animate: 'visible', exit: 'exit', style: { maxWidth: '780px' } },
       React.createElement(
         'div',
         { className: 'modal-header' },
@@ -862,35 +885,119 @@ function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
           'div',
           { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
           React.createElement(Icons.AlertTriangle, { size: 20, className: isResolved ? 'kpi-icon-emerald' : 'kpi-icon-rose' }),
-          React.createElement('span', { style: { fontWeight: '700', fontSize: '1.05rem' } }, `Incident Dossier: ${incident.id}`)
+          React.createElement('span', { style: { fontWeight: '700', fontSize: '1.05rem' } }, `Incident: ${incident.id}`)
         ),
-        React.createElement('button', { className: 'btn-secondary', onClick: onClose }, 'Close')
+        React.createElement(
+          'div',
+          { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
+          !isResolved && React.createElement(
+            'button',
+            {
+              className: 'btn-primary',
+              onClick: () => onDispatch && onDispatch(incident.id),
+              style: { padding: '4px 10px', fontSize: '0.75rem' },
+            },
+            React.createElement(Icons.Terminal, { size: 12 }),
+            isClaimed ? 'Re-Dispatch' : '⚡ Dispatch'
+          ),
+          React.createElement('button', { className: 'btn-secondary', onClick: onClose }, 'Close')
+        )
       ),
+
+      // Sub-tabs: Diagnostic Dossier vs Live Worker Console
+      React.createElement(
+        'div',
+        { style: { display: 'flex', gap: '8px', padding: '0 24px', borderBottom: '1px solid var(--border-subtle)' } },
+        React.createElement(
+          'button',
+          {
+            className: `tab-btn ${modalTab === 'dossier' ? 'active' : ''}`,
+            onClick: () => setModalTab('dossier'),
+            style: { padding: '10px 14px', fontSize: '0.85rem' },
+          },
+          React.createElement(Icons.FileText, { size: 14 }),
+          'Diagnostic Dossier'
+        ),
+        React.createElement(
+          'button',
+          {
+            className: `tab-btn ${modalTab === 'worker' ? 'active' : ''}`,
+            onClick: () => setModalTab('worker'),
+            style: { padding: '10px 14px', fontSize: '0.85rem', color: isClaimed ? 'var(--accent-amber)' : 'inherit' },
+          },
+          React.createElement(Icons.Terminal, { size: 14 }),
+          '⚡ Live OpenCode Activity Stream',
+          isClaimed && React.createElement('span', { className: 'pulse-dot', style: { width: '6px', height: '6px', marginLeft: '6px' } })
+        )
+      ),
+
       React.createElement(
         'div',
         { className: 'modal-body' },
-        React.createElement(
-          'div',
-          null,
-          React.createElement('div', { style: { fontWeight: '700', fontSize: '1.1rem', marginBottom: '4px' } }, incident.title),
-          React.createElement('div', { style: { fontSize: '0.8rem', color: 'var(--text-muted)' } }, `Service: ${incident.service_name} | Node: ${incident.source_node || 'Primary'} | Timestamp: ${incident.created_at}`)
-        ),
-        React.createElement(
-          'div',
-          null,
-          React.createElement('div', { style: { fontSize: '0.78rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '6px' } }, 'Error Stack Trace / Logs'),
-          React.createElement('div', { className: 'trace-code-box', style: { maxHeight: '240px' } }, stack)
-        ),
-        React.createElement(
-          'div',
-          null,
-          React.createElement('div', { style: { fontSize: '0.78rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '6px' } }, 'AI-Ops Diagnostic Recommendation'),
+        modalTab === 'dossier' &&
           React.createElement(
-            'div',
-            { style: { background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-subtle)', padding: '14px', borderRadius: '8px', fontSize: '0.85rem' } },
-            incident.recommendation || 'Investigate container runtime logs and apply targeted patch.'
+            React.Fragment,
+            null,
+            React.createElement(
+              'div',
+              null,
+              React.createElement('div', { style: { fontWeight: '700', fontSize: '1.1rem', marginBottom: '4px' } }, incident.title),
+              React.createElement('div', { style: { fontSize: '0.8rem', color: 'var(--text-muted)' } }, `Service: ${incident.service_name} | Node: ${incident.source_node || 'Primary'} | Timestamp: ${incident.created_at}`)
+            ),
+            React.createElement(
+              'div',
+              null,
+              React.createElement('div', { style: { fontSize: '0.78rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '6px' } }, 'Error Stack Trace / Logs'),
+              React.createElement('div', { className: 'trace-code-box', style: { maxHeight: '240px' } }, stack)
+            ),
+            React.createElement(
+              'div',
+              null,
+              React.createElement('div', { style: { fontSize: '0.78rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '6px' } }, 'AI-Ops Diagnostic Recommendation'),
+              React.createElement(
+                'div',
+                { style: { background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-subtle)', padding: '14px', borderRadius: '8px', fontSize: '0.85rem' } },
+                incident.recommendation || 'Investigate container runtime logs and apply targeted patch.'
+              )
+            )
+          ),
+
+        modalTab === 'worker' &&
+          React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(
+              'div',
+              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-surface-elevated)', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-subtle)' } },
+              React.createElement(
+                'div',
+                null,
+                React.createElement('div', { style: { fontSize: '0.75rem', color: 'var(--text-muted)' } }, 'Active Tmux Session'),
+                React.createElement('div', { style: { fontFamily: 'monospace', fontWeight: '700', color: 'var(--accent-indigo)' } }, `opencode-${incident.id}`)
+              ),
+              React.createElement(
+                'button',
+                {
+                  className: 'btn-secondary',
+                  onClick: () => onCopy && onCopy(`tmux attach -t opencode-${incident.id}`),
+                  style: { fontSize: '0.75rem', padding: '4px 8px' },
+                },
+                React.createElement(Icons.Copy, { size: 12 }),
+                'Copy SSH Attach Command'
+              )
+            ),
+            React.createElement(
+              'div',
+              null,
+              React.createElement(
+                'div',
+                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' } },
+                React.createElement('div', { style: { fontSize: '0.78rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase' } }, 'Live Terminal / Output Stream'),
+                React.createElement('span', { style: { fontSize: '0.72rem', color: 'var(--accent-emerald)', fontWeight: '600' } }, '● Auto-polling 2.5s')
+              ),
+              React.createElement('div', { className: 'trace-code-box', style: { maxHeight: '280px', minHeight: '160px', background: '#07090e', color: '#a6accd' } }, workerInfo.logs || 'No output from worker session.')
+            )
           )
-        )
       )
     )
   );

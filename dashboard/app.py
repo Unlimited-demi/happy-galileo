@@ -284,9 +284,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                     "type": img.stem,
                                     "file_name": img.name,
                                     "url_path": f"/screenshots/{svc_name}/{img.name}",
-                                })
+                                    })
                 self._send_json({"screenshots": screenshots})
                 return
+
+            elif path.startswith("/api/incidents/") and path.endswith("/worker-logs"):
+                # Extract inc_id: /api/incidents/<id>/worker-logs
+                inc_id = path[len("/api/incidents/"): -len("/worker-logs")].strip("/")
+                if inc_id:
+                    from ai_ops.dispatcher import IncidentDispatcher
+                    status_info = IncidentDispatcher.get_worker_status(inc_id)
+                    self._send_json(status_info)
+                    return
 
             # Serve screenshots directory dynamically
             elif path.startswith("/screenshots/"):
