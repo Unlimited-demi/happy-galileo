@@ -1,4 +1,4 @@
-const { useState, useEffect, useMemo } = React;
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
 // Framer Motion Primitives
 const MotionLib = window.Motion || window.framerMotion || {};
