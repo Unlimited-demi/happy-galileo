@@ -31,8 +31,9 @@ COPY devctl /app/devctl
 COPY ai_ops /app/ai_ops
 COPY dashboard /app/dashboard
 
-# Copy compiled frontend from Stage 1 into dashboard/dist
-COPY --from=frontend-builder /build/../dist /app/dashboard/dist
+# Copy compiled frontend from Stage 1 into dashboard/dist and dashboard/static
+COPY --from=frontend-builder /build/dist /app/dashboard/dist
+COPY --from=frontend-builder /build/dist /app/dashboard/static
 
 ENV PYTHONPATH=/app
 ENV DASHBOARD_HOST=0.0.0.0

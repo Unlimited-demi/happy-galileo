@@ -40,8 +40,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         except Exception:
             return True
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
+    def __init__(self, *args, directory=None, **kwargs):
+        if directory is None:
+            dist_dir = Path(__file__).resolve().parent / "dist"
+            static_dir = Path(__file__).resolve().parent / "static"
+            directory = str(dist_dir) if dist_dir.exists() and (dist_dir / "index.html").exists() else str(static_dir)
+        super().__init__(*args, directory=str(directory), **kwargs)
 
     # Explicit MIME map — prevents system mimetypes from returning text/html for .js
     MIME_OVERRIDES = {
@@ -454,12 +458,8 @@ def run_dashboard(port: int = Config.DASHBOARD_PORT, host: str = Config.DASHBOAR
     static_dir = Path(__file__).resolve().parent / "static"
     serve_dir = str(dist_dir) if dist_dir.exists() and (dist_dir / "index.html").exists() else str(static_dir)
 
-    class CustomDashboardHandler(DashboardHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=serve_dir, **kwargs)
-
     server_address = (host, port)
-    httpd = ThreadingHTTPServer(server_address, CustomDashboardHandler)
+    httpd = ThreadingHTTPServer(server_address, DashboardHandler)
     print(f"🚀 AI-Ops & Multi-Server Fleet Dashboard serving from '{serve_dir}' at http://{host}:{port}")
     try:
         httpd.serve_forever()
