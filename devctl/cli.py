@@ -178,12 +178,18 @@ def cmd_list(args):
 
 def cmd_discover(args):
     """Auto-discover running Docker containers and index them into devctl with AI inference."""
-    print("\n🔍 Scanning server & performing AI architectural inference on Docker containers...")
+    force = getattr(args, "force", False)
+    if force:
+        print("\n🔄 Force refreshing container state & reverse proxy domain detection...")
+    else:
+        print("\n🔍 Scanning server & performing AI architectural inference on Docker containers...")
+    
     registry = DomainRegistry()
-    discovered = registry.discover_and_index_containers(use_ai=True)
+    discovered = registry.discover_and_index_containers(use_ai=True, force=force)
 
-    if not discovered:
+    if not discovered and not force:
         print("[✓] All running containers are already indexed and monitored.")
+        print("    Tip: Run 'devctl discover --force' or 'devctl reindex' to force refresh.")
         return
 
     print(f"\n[✓] Successfully indexed {len(discovered)} container(s) with AI role & workspace classification:")
@@ -627,7 +633,11 @@ def main():
     p_dispatch.add_argument("--dry-run", action="store_true", help="Print prompt and checkout branch without invoking opencode CLI")
 
     # discover
-    subparsers.add_parser("discover", help="Auto-discover running Docker containers and index them into devctl")
+    p_discover = subparsers.add_parser("discover", help="Auto-discover running Docker containers and index them into devctl")
+    p_discover.add_argument("--force", "-f", action="store_true", help="Force re-discovery & flush old cached state")
+
+    # reindex
+    subparsers.add_parser("reindex", help="Flush old cached state and re-index all containers with reverse proxy domain detection")
 
     # heartbeat
     p_hb = subparsers.add_parser("heartbeat", help="Send and test telemetry heartbeat to Central Hub")
@@ -649,6 +659,7 @@ def main():
         "hide": cmd_hide,
         "list": cmd_list,
         "discover": cmd_discover,
+        "reindex": lambda a: cmd_discover(argparse.Namespace(force=True)),
         "heartbeat": cmd_heartbeat,
         "logs": cmd_logs,
         "test": cmd_test,

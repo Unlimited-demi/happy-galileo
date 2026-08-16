@@ -186,12 +186,19 @@ class DomainRegistry:
 
     def detect_existing_domains(self):
         """
-        Scan ALL reverse proxy configs to detect real domain-to-container mappings.
-        Checks: host nginx, host caddy, container-mounted configs, Docker labels (traefik, caddy-docker-proxy).
+        Scan ALL reverse proxy configs and container environments to detect real domain-to-container mappings.
+        Checks:
+        1. Mailcow mailcow.conf (MAILCOW_HOSTNAME) & Mailcow Nginx configs.
+        2. Container mounted Caddyfiles & Nginx confs (including upstreams).
+        3. Container environment variables (MAILCOW_HOSTNAME, VIRTUAL_HOST, APP_URL, DOMAIN).
+        4. Docker labels (Traefik, Caddy, Virtual Host).
+        5. Host /etc/nginx and /etc/caddy configs.
         Returns: dict of container_name -> {"domain": str, "source": str}
         """
         import glob
+        import os
         import subprocess
+        from pathlib import Path
         domains = {}  # container_name -> {"domain": ..., "source": ...}
 
         # 1. Scan host nginx configs
@@ -210,13 +217,12 @@ class DomainRegistry:
             except Exception:
                 continue
 
-        # 2. Scan host Caddy configs (our own conf.d + global Caddyfile)
+        # 2. Scan host Caddy configs
         caddy_paths = glob.glob('/etc/caddy/conf.d/*.caddy') + glob.glob('/etc/caddy/Caddyfile')
         for conf_path in caddy_paths:
             try:
                 with open(conf_path, 'r') as f:
                     content = f.read()
-                # Match "domain.com { ... reverse_proxy container:port }"
                 blocks = re.findall(r'(\S+\.\S+)\s*\{[^}]*reverse_proxy\s+(\S+)', content, re.DOTALL)
                 for domain, upstream in blocks:
                     container = upstream.split(":")[0].strip()
@@ -225,56 +231,131 @@ class DomainRegistry:
             except Exception:
                 continue
 
-        # 3. Scan Docker container labels for traefik / caddy-docker-proxy
+        # 3. Deep Container Inspection (Env Vars, Mounts, Compose Workspaces, Labels)
         try:
             cmd = ["docker", "ps", "--format", "{{.Names}}"]
             res = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=False)
             if res.returncode == 0:
                 from devctl.core.docker_mgr import DockerManager
                 docker_mgr = DockerManager()
-                for c_name in [n.strip() for n in res.stdout.splitlines() if n.strip()]:
+                all_container_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
+
+                for c_name in all_container_names:
                     info = docker_mgr.inspect_container(c_name)
                     if not info:
                         continue
-                    labels = info.get("Config", {}).get("Labels", {}) or {}
+                    
+                    config = info.get("Config", {})
+                    labels = config.get("Labels", {}) or {}
+                    env_vars = config.get("Env", []) or []
+                    mounts = info.get("Mounts", []) or []
 
-                    # Traefik labels: traefik.http.routers.*.rule = Host(`domain`)
+                    # A. Environment Variables Inspection
+                    env_dict = {}
+                    for e in env_vars:
+                        if "=" in e:
+                            k, v = e.split("=", 1)
+                            env_dict[k] = v.strip()
+
+                    # Check Mailcow hostname
+                    if "MAILCOW_HOSTNAME" in env_dict and env_dict["MAILCOW_HOSTNAME"]:
+                        mc_host = env_dict["MAILCOW_HOSTNAME"].strip()
+                        # Assign domain to Mailcow Nginx entrypoint
+                        domains[c_name] = {"domain": mc_host, "source": "env:MAILCOW_HOSTNAME"}
+                        for other in all_container_names:
+                            if "nginx-mailcow" in other or "sogo-mailcow" in other:
+                                domains[other] = {"domain": mc_host, "source": "env:MAILCOW_HOSTNAME"}
+
+                    # Check standard web domain environment variables
+                    for d_key in ["VIRTUAL_HOST", "DOMAIN", "DOMAINS", "SERVER_NAME", "APP_DOMAIN"]:
+                        if d_key in env_dict and env_dict[d_key]:
+                            val = env_dict[d_key].split(",")[0].split()[0].strip()
+                            if "." in val and not val.startswith("http"):
+                                domains[c_name] = {"domain": val, "source": f"env:{d_key}"}
+
+                    for u_key in ["APP_URL", "PUBLIC_URL", "NEXT_PUBLIC_APP_URL", "BASE_URL", "SITE_URL"]:
+                        if u_key in env_dict and env_dict[u_key]:
+                            from urllib.parse import urlparse
+                            try:
+                                p_url = urlparse(env_dict[u_key])
+                                if p_url.hostname and "." in p_url.hostname:
+                                    domains[c_name] = {"domain": p_url.hostname, "source": f"env:{u_key}"}
+                            except Exception:
+                                pass
+
+                    # B. Check Docker Compose Workspace for mailcow.conf or Caddyfile
+                    compose_work_dir = labels.get("com.docker.compose.project.working_dir")
+                    if compose_work_dir and os.path.exists(compose_work_dir):
+                        # Check mailcow.conf
+                        mc_conf = Path(compose_work_dir) / "mailcow.conf"
+                        if mc_conf.exists():
+                            try:
+                                with open(mc_conf, "r") as f:
+                                    for line in f:
+                                        if line.strip().startswith("MAILCOW_HOSTNAME="):
+                                            mc_domain = line.strip().split("=")[1].strip()
+                                            if mc_domain:
+                                                if "nginx" in c_name or "sogo" in c_name or "mailcow" in c_name:
+                                                    domains[c_name] = {"domain": mc_domain, "source": "mailcow.conf"}
+                            except Exception:
+                                pass
+
+                        # Check Caddyfile in workspace (e.g. AniVault Caddyfile)
+                        for cf_path in [Path(compose_work_dir) / "Caddyfile", Path(compose_work_dir) / "caddy" / "Caddyfile"]:
+                            if cf_path.exists():
+                                try:
+                                    with open(cf_path, "r") as f:
+                                        cf_text = f.read()
+                                    # Extract domain and reverse_proxy blocks
+                                    cf_blocks = re.findall(r'([a-zA-Z0-9\.\-]+(?:datakrib\.com|[a-zA-Z0-9\-]+\.[a-zA-Z]{2,}))\s*\{([^}]+)\}', cf_text)
+                                    for cf_dom, cf_body in cf_blocks:
+                                        # Find reverse_proxy targets in block
+                                        rp_matches = re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_]+)', cf_body)
+                                        for rp_target in rp_matches:
+                                            for target_c in all_container_names:
+                                                if rp_target in target_c:
+                                                    domains[target_c] = {"domain": cf_dom, "source": f"Caddyfile:{cf_path.name}"}
+                                        # Also assign to the Caddy container itself
+                                        if "caddy" in c_name:
+                                            domains[c_name] = {"domain": cf_dom, "source": f"Caddyfile:{cf_path.name}"}
+                                except Exception:
+                                    pass
+
+                    # C. Traefik & Caddy Docker labels
                     for key, val in labels.items():
                         if "traefik" in key and "rule" in key.lower() and "Host(" in val:
                             host_match = re.search(r'Host\(`([^`]+)`\)', val)
                             if host_match:
                                 domains[c_name] = {"domain": host_match.group(1), "source": "traefik-label"}
+                        if key == "caddy" and "." in val:
+                            domains[c_name] = {"domain": val.split()[0], "source": "caddy-label"}
 
-                    # Caddy docker proxy labels: caddy=domain.com
-                    caddy_label = labels.get("caddy", "")
-                    if caddy_label and "." in caddy_label:
-                        domains[c_name] = {"domain": caddy_label, "source": "caddy-label"}
-
-                    # Check if container itself runs a reverse proxy (nginx/caddy inside)
-                    # by scanning its mounted config volumes for domain references
-                    mounts = info.get("Mounts", [])
+                    # D. Mounts inspection (mounted Nginx / Caddy config directories)
                     for mount in mounts:
                         src = mount.get("Source", "")
-                        if any(kw in src for kw in ["nginx", "caddy", "apache", "httpd"]):
-                            # Scan config files in this mount for server_name / domain references
-                            conf_files = glob.glob(f"{src}/**/*.conf", recursive=True) + glob.glob(f"{src}/**/*.caddy", recursive=True)
-                            for cf in conf_files[:5]:  # limit to prevent slow scans
-                                try:
-                                    with open(cf, 'r') as f:
-                                        cf_content = f.read()
-                                    sn = re.findall(r'server_name\s+([^;]+);', cf_content)
-                                    if sn:
-                                        d = sn[0].strip().split()[0]
-                                        if d and d != '_' and '.' in d:
-                                            domains[c_name] = {"domain": d, "source": f"mounted-config:{cf}"}
-                                except Exception:
-                                    continue
+                        if any(kw in src.lower() for kw in ["nginx", "caddy", "apache", "mailcow"]):
+                            # Scan config files in this mount
+                            if os.path.isdir(src):
+                                conf_files = glob.glob(f"{src}/**/*.conf", recursive=True) + glob.glob(f"{src}/**/*.caddy", recursive=True)
+                                for cf in conf_files[:8]:
+                                    try:
+                                        with open(cf, 'r') as f:
+                                            cf_content = f.read()
+                                        sn = re.findall(r'server_name\s+([^;]+);', cf_content)
+                                        if sn:
+                                            for candidate in sn[0].split():
+                                                candidate = candidate.strip()
+                                                if candidate and candidate != '_' and '.' in candidate and not candidate.startswith("$"):
+                                                    domains[c_name] = {"domain": candidate, "source": f"mount:{Path(cf).name}"}
+                                                    break
+                                    except Exception:
+                                        continue
         except Exception:
             pass
 
         return domains
 
-    def discover_and_index_containers(self, use_ai: bool = True) -> List[Dict[str, Any]]:
+    def discover_and_index_containers(self, use_ai: bool = True, force: bool = False) -> List[Dict[str, Any]]:
         """
         Auto-discover ALL running Docker containers and register them for MONITORING.
 
@@ -284,10 +365,10 @@ class DomainRegistry:
         The only way to get a public wildcard URL is via `devctl expose <service> <port>`.
 
         This method:
-        1. Purges stale state entries for containers no longer running.
-        2. Pre-registers ServerGuard infra containers with known URLs.
-        3. Detects existing reverse proxy domains from nginx/caddy/traefik configs.
-        4. Registers all containers for monitoring with correct classification.
+        1. If force=True, flushes previous auto-discovered registrations to allow re-classification.
+        2. Pre-registers ServerGuard infra containers with known URLs (dashboard -> status.BASE_DOMAIN).
+        3. Detects existing real reverse proxy domains from Mailcow, Caddyfiles, Nginx, Traefik, env vars.
+        4. Registers all containers for monitoring with accurate codebase workspace paths.
         """
         import subprocess
         from devctl.core.docker_mgr import DockerManager
@@ -310,15 +391,16 @@ class DomainRegistry:
         except Exception:
             return []
 
-        # ── Step 1: Purge stale state entries for containers that no longer exist ──
-        stale_keys = []
+        # ── Step 1: Purge stale or force-refresh auto-discovered state entries ──
+        keys_to_remove = []
         for svc_key, svc_data in registered.items():
             c_name = svc_data.get("container_name", svc_key)
-            if c_name not in running_names:
-                stale_keys.append(svc_key)
-        for key in stale_keys:
+            # Remove if container stopped, OR if force refresh is requested
+            if c_name not in running_names or force:
+                keys_to_remove.append(svc_key)
+        for key in keys_to_remove:
             del state["services"][key]
-        if stale_keys:
+        if keys_to_remove:
             self._save_state(state)
             registered = state.get("services", {})
 
@@ -349,7 +431,7 @@ class DomainRegistry:
 
         for sg_name, sg_info in SERVERGUARD_CONTAINERS.items():
             slug = self.sanitize_slug(sg_name)
-            if sg_name in running_names and slug not in registered:
+            if sg_name in running_names:
                 entry = self.register(
                     service_name=slug,
                     container_name=sg_name,
@@ -368,7 +450,7 @@ class DomainRegistry:
                 state = self._load_state()
                 registered = state.get("services", {})
 
-        # ── Step 3: Detect existing real domains from reverse proxies ──
+        # ── Step 3: Detect existing real domains from reverse proxies (Mailcow, Caddy, Nginx, env vars) ──
         existing_domains = self.detect_existing_domains()
 
         # ── Step 4: Register all remaining containers for monitoring ──
@@ -391,7 +473,7 @@ class DomainRegistry:
             # Connect container to dev-net for internal monitoring
             docker_mgr.connect_to_network(c_name)
 
-            # AI-assisted classification
+            # AI-assisted classification and workspace inspection
             ai_profile = None
             if ai_engine:
                 try:
@@ -399,24 +481,27 @@ class DomainRegistry:
                 except Exception:
                     ai_profile = None
 
-            # Classify the container
-            if ai_profile and "database" in ai_profile.get("archetype", ""):
+            # Check if this container has an existing real domain from reverse proxy detection
+            real_domain_info = existing_domains.get(c_name)
+            real_domain = real_domain_info["domain"] if real_domain_info else None
+            real_domain_source = real_domain_info["source"] if real_domain_info else None
+
+            # Classify container type
+            if real_domain and ("nginx" in c_name or "frontend" in c_name or "web" in c_name or "sogo" in c_name):
+                c_type = SERVICE_TYPE_WEB
+            elif ai_profile and "database" in ai_profile.get("archetype", ""):
                 c_type = SERVICE_TYPE_DATABASE
             elif ai_profile and "cache" in ai_profile.get("archetype", ""):
                 c_type = SERVICE_TYPE_CACHE
             elif ai_profile and "mail" in ai_profile.get("archetype", ""):
-                c_type = SERVICE_TYPE_MAIL
+                # If Mailcow Nginx/SOGo has a web domain, it's WEB
+                c_type = SERVICE_TYPE_WEB if (real_domain and "nginx" in c_name) else SERVICE_TYPE_MAIL
             elif ai_profile and "worker" in ai_profile.get("archetype", ""):
                 c_type = SERVICE_TYPE_WORKER
             elif ai_profile and "ingress" in ai_profile.get("archetype", ""):
                 c_type = SERVICE_TYPE_INFRA
             else:
                 c_type = self.classify_container(c_name, image, ports)
-
-            # Check if this container has an existing real domain from a reverse proxy
-            real_domain_info = existing_domains.get(c_name)
-            real_domain = real_domain_info["domain"] if real_domain_info else None
-            real_domain_source = real_domain_info["source"] if real_domain_info else None
 
             # Determine port
             port = 0
@@ -438,15 +523,15 @@ class DomainRegistry:
                 meta["existing_domain"] = real_domain
                 meta["domain_source"] = real_domain_source
 
-            # Register for MONITORING ONLY — no wildcard URL, no Caddy route
+            # Register for MONITORING ONLY — no wildcard URL created unless manually exposed
             entry = self.register(
                 service_name=slug,
                 container_name=c_name,
                 port=port,
-                domain=real_domain,  # Real domain if detected, None otherwise
+                domain=real_domain,  # Real domain if detected
                 env="dev",
                 container_type=c_type,
-                url=f"https://{real_domain}" if real_domain else None,  # Only set URL if real domain exists
+                url=f"https://{real_domain}" if real_domain else None,
                 metadata=meta,
             )
             discovered.append(entry)
