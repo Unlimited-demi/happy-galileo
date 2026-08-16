@@ -77,6 +77,13 @@ class RemediationEngine:
 
         # ── DEDUP GUARD ──
         # Only create ONE incident per service. Never spam.
+        # Sync with disk — if an incident was resolved via CLI, remove from dedup set
+        try:
+            disk_open = {inc['service_name'] for inc in self.incident_bus.list_incidents(only_open=True)}
+            self._open_incidents = disk_open
+        except Exception:
+            pass
+
         if service_name in self._open_incidents:
             return {"level": 3, "action": "ALREADY_REPORTED", "service": service_name}
 

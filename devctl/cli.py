@@ -5,6 +5,7 @@ The unified control interface for OpenCode, AI-Ops, and server administration.
 """
 
 import sys
+import os
 import json
 import argparse
 import socket
@@ -61,6 +62,8 @@ def cmd_expose(args):
             print(f"[✗] Error: Docker container '{args.service}' is not running.")
             print(f"    Please start your container first with: docker compose up -d")
             sys.exit(1)
+
+        domain = args.domain or Config.get_full_domain(service_name, env)
 
     # 2. Port detection / validation
     port = args.port

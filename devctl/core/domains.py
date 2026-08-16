@@ -9,9 +9,61 @@ from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 from .config import Config
 
+# Service type classification
+SERVICE_TYPE_WEB = "web"           # Gets public URL + full monitoring
+SERVICE_TYPE_DATABASE = "database"  # Monitored only, no public URL
+SERVICE_TYPE_CACHE = "cache"        # Monitored only, no public URL
+SERVICE_TYPE_MAIL = "mail"          # Monitored only, no public URL
+SERVICE_TYPE_INFRA = "infra"        # Monitored only, no public URL
+SERVICE_TYPE_WORKER = "worker"      # Monitored only, no public URL
+
 
 class DomainRegistry:
     """Manages active domain allocations and persistent state."""
+
+    # Known non-web ports
+    NON_WEB_PORTS = {3306, 5432, 6379, 11211, 27017, 5672, 15672, 25, 110, 143, 465, 587, 993, 995, 4190, 9200, 9300}
+
+    # Known web ports
+    WEB_PORTS = {80, 443, 3000, 4000, 5000, 8000, 8080, 8443, 8888, 9090, 4200, 5173}
+
+    # Image/name keywords for classification
+    DB_KEYWORDS = {"postgres", "mysql", "mariadb", "mongo", "mongodb", "cockroach", "timescale", "influxdb", "clickhouse"}
+    CACHE_KEYWORDS = {"redis", "memcached", "valkey", "dragonfly", "keydb"}
+    MAIL_KEYWORDS = {"dovecot", "postfix", "rspamd", "clamd", "olefy", "sogo", "mailcow", "watchdog-mailcow", "acme-mailcow", "ofelia-mailcow", "unbound", "netfilter", "php-fpm"}
+    INFRA_KEYWORDS = {"caddy", "traefik", "nginx-proxy", "haproxy", "ai-ops-daemon", "devctl-dashboard", "certbot", "letsencrypt"}
+    WORKER_KEYWORDS = {"ofelia", "celery", "sidekiq", "cron", "worker", "scheduler", "dockerize", "certdumper", "solr"}
+
+    @staticmethod
+    def classify_container(container_name, image, ports):
+        """Classify a container into a service type based on image, name, and ports."""
+        name_lower = container_name.lower()
+        image_lower = (image or "").lower()
+        combined = f"{name_lower} {image_lower}"
+        
+        # Check keywords in order of specificity
+        for kw in DomainRegistry.INFRA_KEYWORDS:
+            if kw in combined:
+                return SERVICE_TYPE_INFRA
+        for kw in DomainRegistry.MAIL_KEYWORDS:
+            if kw in combined:
+                return SERVICE_TYPE_MAIL
+        for kw in DomainRegistry.DB_KEYWORDS:
+            if kw in combined:
+                return SERVICE_TYPE_DATABASE
+        for kw in DomainRegistry.CACHE_KEYWORDS:
+            if kw in combined:
+                return SERVICE_TYPE_CACHE
+        for kw in DomainRegistry.WORKER_KEYWORDS:
+            if kw in combined:
+                return SERVICE_TYPE_WORKER
+        
+        # Check ports: if ALL ports are non-web, classify as infra
+        if ports and all(p in DomainRegistry.NON_WEB_PORTS for p in ports):
+            return SERVICE_TYPE_DATABASE  # Generic non-web
+        
+        # Default: it's a web service
+        return SERVICE_TYPE_WEB
 
     def __init__(self, state_file=None):
         self.state_file = state_file or Config.STATE_FILE
@@ -76,16 +128,22 @@ class DomainRegistry:
         domain: str,
         env: str = "dev",
         metadata: Optional[Dict[str, Any]] = None,
+        container_type: str = "web",
+        url: Optional[str] = None
     ) -> Dict[str, Any]:
         """Register a new exposed service."""
         state = self._load_state()
+        if url is None and container_type == "web" and domain:
+            url = f"https://{domain}"
+            
         entry = {
             "service_name": service_name,
             "container_name": container_name,
             "port": port,
             "domain": domain,
-            "url": f"https://{domain}",
+            "url": url,
             "env": env,
+            "container_type": container_type,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "metadata": metadata or {},
             "status": "active",
@@ -120,6 +178,30 @@ class DomainRegistry:
         state = self._load_state()
         return list(state["services"].values())
 
+    def detect_existing_domains(self):
+        """Scan existing reverse proxy configs to detect real domain-to-container mappings."""
+        import glob, re
+        domains = {}  # container_name -> domain
+        
+        # Scan nginx configs
+        nginx_paths = glob.glob('/etc/nginx/sites-enabled/*') + glob.glob('/etc/nginx/conf.d/*.conf')
+        for conf_path in nginx_paths:
+            try:
+                with open(conf_path, 'r') as f:
+                    content = f.read()
+                # Extract server_name and proxy_pass pairs
+                server_names = re.findall(r'server_name\s+([^;]+);', content)
+                proxy_passes = re.findall(r'proxy_pass\s+https?://([^:/;\s]+)', content)
+                if server_names and proxy_passes:
+                    domain = server_names[0].strip().split()[0]
+                    upstream = proxy_passes[0].strip()
+                    if domain and upstream and domain != '_':
+                        domains[upstream] = domain
+            except Exception:
+                continue
+        
+        return domains
+
     def discover_and_index_containers(self) -> List[Dict[str, Any]]:
         """
         Auto-discover running Docker containers on the machine,
@@ -135,10 +217,10 @@ class DomainRegistry:
         state = self._load_state()
         registered = state.get("services", {})
 
-        # System/infra and internal mail daemon containers to skip from auto-web-exposing
-        skip_exact = {"caddy", "ai-ops-daemon", "devctl-dashboard"}
-        skip_keywords = ["dovecot", "postfix", "rspamd", "clamd", "unbound", "netfilter", "php-fpm", "acme-mailcow", "solr-mailcow", "dockerapi-mailcow"]
         discovered = []
+        
+        # Detect existing real domains
+        existing_domains = self.detect_existing_domains()
 
         try:
             # Query all running containers via docker inspect
@@ -150,10 +232,7 @@ class DomainRegistry:
             container_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
 
             for c_name in container_names:
-                c_lower = c_name.lower()
-                if c_name in skip_exact or c_name in registered:
-                    continue
-                if any(kw in c_lower for kw in skip_keywords):
+                if c_name in registered:
                     continue
 
                 info = docker_mgr.inspect_container(c_name)
@@ -164,32 +243,55 @@ class DomainRegistry:
                 if not state_info.get("Running", False):
                     continue
 
+                image = info.get('Config', {}).get('Image', '')
+
                 # Detect exposed ports
                 ports = docker_mgr.detect_ports(c_name)
-                # Filter internal/DB ports unless it's an app port
-                app_ports = [p for p in ports if p not in [5432, 6379, 27017, 3306]]
-                port = app_ports[0] if app_ports else (ports[0] if ports else 80)
 
                 # Connect container to dev-net if not already connected
                 docker_mgr.connect_to_network(c_name)
+                
+                # Classify the container
+                c_type = self.classify_container(c_name, image, ports)
 
-                # Auto-generate domain and route
                 slug = self.sanitize_slug(c_name)
-                domain = Config.get_full_domain(slug, "dev")
+                domain = existing_domains.get(c_name) or Config.get_full_domain(slug, "dev")
 
-                # Register in state
-                entry = self.register(
-                    service_name=slug,
-                    container_name=c_name,
-                    port=port,
-                    domain=domain,
-                    env="dev",
-                    metadata={"auto_discovered": True, "detected_ports": ports},
-                )
+                if c_type == SERVICE_TYPE_WEB:
+                    # Pick port from WEB_PORTS intersection, or first port
+                    web_ports_intersection = [p for p in ports if p in self.WEB_PORTS]
+                    port = web_ports_intersection[0] if web_ports_intersection else (ports[0] if ports else 80)
+                    
+                    # Register in state
+                    entry = self.register(
+                        service_name=slug,
+                        container_name=c_name,
+                        port=port,
+                        domain=domain,
+                        env="dev",
+                        container_type=c_type,
+                        metadata={"auto_discovered": True, "detected_ports": ports},
+                    )
 
-                # Add dynamic Caddy route & SSL
-                caddy_mgr.add_route(domain=domain, upstream_host=c_name, upstream_port=port)
-                discovered.append(entry)
+                    # Add dynamic Caddy route & SSL
+                    caddy_mgr.add_route(domain=domain, upstream_host=c_name, upstream_port=port)
+                    discovered.append(entry)
+                else:
+                    # Non-web container
+                    port = ports[0] if ports else 0
+                    
+                    # Register in state with no url
+                    entry = self.register(
+                        service_name=slug,
+                        container_name=c_name,
+                        port=port,
+                        domain=domain,
+                        env="dev",
+                        container_type=c_type,
+                        url=None,
+                        metadata={"auto_discovered": True, "detected_ports": ports},
+                    )
+                    discovered.append(entry)
 
         except Exception as e:
             print(f"[!] Discovery error: {e}")

@@ -15,6 +15,7 @@ from devctl.core.config import Config
 from devctl.core.domains import DomainRegistry
 from devctl.core.incident_bus import IncidentBus
 from ai_ops.docker_socket import DockerSocket
+from devctl.core.auth import AuthManager
 
 STATIC_DIR = Path(__file__).parent / "static"
 FLEET_STORE = {}
@@ -22,6 +23,19 @@ FLEET_STORE = {}
 
 class DashboardHandler(SimpleHTTPRequestHandler):
     """Multi-threaded HTTP Request handler serving static UI and REST API."""
+
+    def _check_auth(self, auth_type='dashboard'):
+        """Check authentication. Returns True if authorized."""
+        auth_mgr = AuthManager()
+        if auth_type == 'telemetry':
+            key = self.headers.get('X-Fleet-Key', '')
+            return auth_mgr.validate_telemetry_key(key)
+        else:
+            auth_header = self.headers.get('Authorization', '')
+            if auth_header.startswith('Bearer '):
+                key = auth_header[7:]
+                return auth_mgr.validate_dashboard_key(key)
+            return not auth_mgr._load_auth().get('initialized', False)  # Allow if not yet set up
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
@@ -39,6 +53,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         try:
             parsed = urlparse(self.path)
             path = parsed.path
+
+            if path.startswith("/api/") and path != "/api/ask":
+                if not self._check_auth(auth_type='dashboard'):
+                    self._send_json({"error": "Unauthorized"}, status=401)
+                    return
 
             # Caddy On-Demand TLS Permission Verification
             if path == "/api/ask":
@@ -241,6 +260,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             path = parsed.path
 
             if path == "/api/telemetry/ingest":
+                if not self._check_auth(auth_type='telemetry'):
+                    self._send_json({"error": "Unauthorized"}, status=401)
+                    return
+
                 content_length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(content_length).decode("utf-8")
                 payload = json.loads(body)
