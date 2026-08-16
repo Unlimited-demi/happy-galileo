@@ -88,6 +88,20 @@ class AnomalyClassifier:
         (r"Error:\s+adapting config using caddyfile:\s+(.*)", "Caddyfile Configuration Adaptation Failure"),
         (r"nginx:\s+\[emerg\]\s+(.*)", "Nginx Fatal Configuration Error"),
         
+        # External LLM & AI API Failures (Gemini, OpenAI, Anthropic)
+        (r"(?:GoogleAPIError|GoogleGenerativeAIError|ResourceExhausted|API_KEY_INVALID|API key not valid|Quota exceeded for quota metric).*", "Google Gemini API / LLM Upstream Outage"),
+        (r"(?:OpenAIError|AnthropicError|RateLimitError|429 Too Many Requests|insufficient_quota).*", "External LLM / Cloud AI Rate Limit & Quota Failure"),
+        
+        # HTTP 502, 503, 504 Gateway & Upstream Proxy Crashes
+        (r"(?:502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout)", "HTTP 5xx Upstream / Gateway Outage"),
+        (r"(?:upstream connect error|no live upstreams|connection refused while connecting to upstream)", "Reverse Proxy Upstream Disconnection"),
+        (r"(?:AxiosError:\s*Request failed with status code 5\d\d|HTTPError:\s*5\d\d\s+.*|FetchError:.*ECONNREFUSED.*)", "Downstream HTTP 5xx Service Failure"),
+
+        # Object Storage & Payment Gateways
+        (r"(?:MinioError|S3Error|NoSuchBucket|SignatureDoesNotMatch|AccessDenied).*", "Object Storage (S3 / MinIO) Failure"),
+        (r"(?:StripeError|PaymentError|WebhookDeliveryError).*", "Payment Gateway / Webhook Outage"),
+        (r"(?:ConnectionRefusedError|ECONNREFUSED\s+\d+\.\d+\.\d+\.\d+:\d+).*", "Critical Service Connection Drop"),
+        
         # Database Authentication Failures (True App Outages)
         (r"FATAL:\s+password authentication failed for user \"([^\"]+)\"", "Database Authentication Failure"),
         (r"FATAL:\s+database \"([^\"]+)\" does not exist", "Missing Production Database"),
