@@ -384,6 +384,8 @@ class DomainRegistry:
                                             is_strictly_internal = any(kw in c_lower for kw in ["redis", "mysql", "postgres", "memcached", "mongo", "db", "clamd", "rspamd", "watchdog", "acme", "netfilter", "unbound", "dovecot", "postfix", "ofelia"])
                                             if is_web_candidate and not is_strictly_internal:
                                                 domains[c_name] = {"domain": extracted_domain, "source": f"config:{conf_file.name}"}
+                        except Exception:
+                            continue
 
                 # D. Container Mounted Config Directories (Nginx / Caddy / Apache / Proxy mounts)
                 for mount in mounts:
