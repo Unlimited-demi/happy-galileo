@@ -83,13 +83,28 @@ echo "[5/8] Creating internal Docker network 'dev-net'..."
 docker network inspect dev-net &>/dev/null || docker network create dev-net
 
 echo "[6/8] Hardening Firewall (UFW) & Fail2ban..."
-bash "${PROJECT_DIR}/infra/security/ufw_setup.sh"
+if [ -f "${PROJECT_DIR}/infra/security/ufw_setup.sh" ]; then
+  bash "${PROJECT_DIR}/infra/security/ufw_setup.sh"
+else
+  # Basic firewall setup if custom script not yet created
+  ufw --force enable 2>/dev/null || true
+  ufw allow 22/tcp 2>/dev/null || true
+  ufw allow 80/tcp 2>/dev/null || true
+  ufw allow 443/tcp 2>/dev/null || true
+  echo "  [i] Using default UFW rules (custom ufw_setup.sh not found)"
+fi
 
 if [ -d "/etc/fail2ban" ]; then
-  cp "${PROJECT_DIR}/infra/security/fail2ban/jail.local" /etc/fail2ban/jail.local
-  mkdir -p /etc/fail2ban/filter.d
-  cp "${PROJECT_DIR}/infra/security/fail2ban/filter.d/caddy-badbots.conf" /etc/fail2ban/filter.d/caddy-badbots.conf
-  systemctl restart fail2ban || true
+  if [ -f "${PROJECT_DIR}/infra/security/fail2ban/jail.local" ]; then
+    cp "${PROJECT_DIR}/infra/security/fail2ban/jail.local" /etc/fail2ban/jail.local
+    mkdir -p /etc/fail2ban/filter.d
+    if [ -f "${PROJECT_DIR}/infra/security/fail2ban/filter.d/caddy-badbots.conf" ]; then
+      cp "${PROJECT_DIR}/infra/security/fail2ban/filter.d/caddy-badbots.conf" /etc/fail2ban/filter.d/caddy-badbots.conf
+    fi
+    systemctl restart fail2ban || true
+  else
+    echo "  [i] Fail2ban installed but no custom jail config found — using defaults"
+  fi
 fi
 
 echo "[7/8] Installing 'devctl' CLI globally..."
@@ -126,11 +141,14 @@ if [ -f "${PROJECT_DIR}/infra/security/proxy_resolver.sh" ]; then
 fi
 
 cd "${PROJECT_DIR}/infra"
-if [ -f "${PROJECT_DIR}/infra/.env" ]; then
-  docker compose -f docker-compose.infra.yml --env-file .env up -d
-else
-  docker compose -f docker-compose.infra.yml up -d
+
+# Auto-generate .env from template if missing
+if [ ! -f ".env" ] && [ -f "${PROJECT_DIR}/.env.example" ]; then
+  echo "  [i] Creating infra/.env from .env.example..."
+  sed "s/dev-server.datakrib.com/${BASE_DOMAIN}/g" "${PROJECT_DIR}/.env.example" > .env
 fi
+
+docker compose -f docker-compose.infra.yml up -d
 
 echo ""
 echo "========================================================"

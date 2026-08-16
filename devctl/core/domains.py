@@ -220,7 +220,58 @@ class DomainRegistry:
         registered = state.get("services", {})
 
         discovered = []
-        
+
+        # ── Pre-register ServerGuard's own infrastructure containers ──
+        # These have known static Caddy routes and should not go through AI discovery.
+        SERVERGUARD_CONTAINERS = {
+            "devctl-dashboard": {
+                "port": 8888,
+                "container_type": SERVICE_TYPE_WEB,
+                "domain": f"status.{Config.BASE_DOMAIN}",
+                "url": f"https://status.{Config.BASE_DOMAIN}",
+                "role": "Status & Fleet Dashboard",
+            },
+            "caddy": {
+                "port": 80,
+                "container_type": SERVICE_TYPE_INFRA,
+                "domain": None,
+                "url": None,
+                "role": "TLS Ingress & Reverse Proxy",
+            },
+            "ai-ops-daemon": {
+                "port": 0,
+                "container_type": SERVICE_TYPE_INFRA,
+                "domain": None,
+                "url": None,
+                "role": "AI-Ops Monitoring Daemon",
+            },
+        }
+
+        for sg_name, sg_info in SERVERGUARD_CONTAINERS.items():
+            slug = self.sanitize_slug(sg_name)
+            if slug not in registered:
+                # Verify the container actually exists and is running
+                info = docker_mgr.inspect_container(sg_name)
+                if info and info.get("State", {}).get("Running", False):
+                    entry = self.register(
+                        service_name=slug,
+                        container_name=sg_name,
+                        port=sg_info["port"],
+                        domain=sg_info["domain"] or Config.get_full_domain(slug, "dev"),
+                        env="dev",
+                        container_type=sg_info["container_type"],
+                        url=sg_info["url"],
+                        metadata={
+                            "auto_discovered": True,
+                            "serverguard_infra": True,
+                            "ai_inference": {"role_label": sg_info["role"], "is_publicly_exposable": sg_info["url"] is not None},
+                        },
+                    )
+                    discovered.append(entry)
+                    # Reload state after registration
+                    state = self._load_state()
+                    registered = state.get("services", {})
+
         # Detect existing real domains
         existing_domains = self.detect_existing_domains()
 

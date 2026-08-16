@@ -40,6 +40,27 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
 
+    # Explicit MIME map — prevents system mimetypes from returning text/html for .js
+    MIME_OVERRIDES = {
+        ".js": "application/javascript",
+        ".css": "text/css",
+        ".html": "text/html",
+        ".json": "application/json",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".svg": "image/svg+xml",
+        ".ico": "image/x-icon",
+        ".woff2": "font/woff2",
+    }
+
+    def guess_type(self, path):
+        """Override to guarantee correct MIME types for static assets."""
+        import posixpath
+        _, ext = posixpath.splitext(path)
+        if ext.lower() in self.MIME_OVERRIDES:
+            return self.MIME_OVERRIDES[ext.lower()]
+        return super().guess_type(path)
+
     def _send_json(self, data, status=200):
         body = json.dumps(data, indent=2).encode("utf-8")
         self.send_response(status)
@@ -53,6 +74,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         try:
             parsed = urlparse(self.path)
             path = parsed.path
+
+            # Strip /static/ prefix for backward compatibility — files live
+            # directly in the static directory so /static/app.js → /app.js
+            if path.startswith("/static/"):
+                self.path = path[len("/static"):] + ("?" + parsed.query if parsed.query else "")
+                path = self.path.split("?")[0]
 
             if path.startswith("/api/") and path != "/api/ask":
                 if not self._check_auth(auth_type='dashboard'):
@@ -157,7 +184,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 for node_name, node_data in FLEET_STORE.items():
                     if node_name == local_node_name:
                         continue
-                    remote_incidents = node_data.get("open_incidents", [])
+                    # Remote nodes send all_incidents (combined), open_incidents, and resolved_incidents
+                    remote_incidents = node_data.get("all_incidents", []) or node_data.get("open_incidents", [])
                     for rinc in remote_incidents:
                         rinc["source_node"] = node_name
                         if only_open and rinc.get("state") in ["RESOLVED", "CLOSED", "VERIFIED"]:

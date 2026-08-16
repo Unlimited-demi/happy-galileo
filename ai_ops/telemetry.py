@@ -123,9 +123,13 @@ class FleetTelemetryStreamer:
 
         try:
             import ssl
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
+            tls_verify = os.environ.get("FLEET_TLS_VERIFY", "false").lower() == "true"
+            if tls_verify:
+                ctx = ssl.create_default_context()
+            else:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
             with urllib.request.urlopen(req, timeout=5, context=ctx) as res:
                 return res.status == 200
         except Exception as e:

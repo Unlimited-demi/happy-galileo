@@ -68,13 +68,18 @@ class DockerSocket:
         if result is None:
             return ""
         if isinstance(result, str):
-            # Docker log stream has 8-byte header frames, strip control chars
+            # Docker multiplexed log stream has 8-byte header frames per chunk.
+            # Header format: [stream_type(1), 0, 0, 0, size(4)] where stream_type is 1=stdout, 2=stderr
+            # Only strip when the first byte matches Docker stream magic bytes.
             lines = []
             for line in result.split("\n"):
-                # Strip Docker stream header (first 8 bytes of binary frame)
-                cleaned = line.encode("utf-8", errors="replace")
-                if len(cleaned) > 8:
-                    cleaned = cleaned[8:]
+                raw = line.encode("utf-8", errors="replace")
+                if len(raw) > 8 and raw[0] in (0, 1, 2) and raw[1] == 0 and raw[2] == 0 and raw[3] == 0:
+                    # This is a Docker multiplexed stream frame — strip the 8-byte header
+                    cleaned = raw[8:]
+                else:
+                    # Plain text log line — keep as-is
+                    cleaned = raw
                 decoded = cleaned.decode("utf-8", errors="replace").rstrip()
                 if decoded:
                     lines.append(decoded)

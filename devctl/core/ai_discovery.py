@@ -50,8 +50,15 @@ class AIContainerInference:
 
         config = info.get("Config", {})
         image = config.get("Image", "")
-        cmd = " ".join(config.get("Cmd") or [])
-        entrypoint = " ".join(config.get("Entrypoint") or [])
+        # Normalize Cmd and Entrypoint — may be string, list, or None
+        raw_cmd = config.get("Cmd") or []
+        raw_entry = config.get("Entrypoint") or []
+        if isinstance(raw_cmd, str):
+            raw_cmd = [raw_cmd]
+        if isinstance(raw_entry, str):
+            raw_entry = [raw_entry]
+        cmd = " ".join(raw_cmd)
+        entrypoint = " ".join(raw_entry)
         labels = config.get("Labels") or {}
         env_vars = config.get("Env") or []
         env_keys = [e.split("=")[0] for e in env_vars if "=" in e]
