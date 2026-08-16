@@ -307,6 +307,36 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                     "file_name": img.name,
                                     "url_path": f"/screenshots/{svc_name}/{img.name}",
                                     })
+            elif path.startswith("/api/terminals/") and path.endswith("/stream"):
+                # SSE Terminal Stream: /api/terminals/<session>/stream
+                session_name = path[len("/api/terminals/"): -len("/stream")].strip("/")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache, no-transform")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+
+                last_output = None
+                try:
+                    for _ in range(60): # Stream up to 30s per connection then client reconnects
+                        has_sess = subprocess.run(["tmux", "has-session", "-t", session_name], capture_output=True)
+                        if has_sess.returncode == 0:
+                            capture = subprocess.run(["tmux", "capture-pane", "-e", "-p", "-t", session_name], capture_output=True, text=True)
+                            output = capture.stdout
+                        else:
+                            output = f"\x1b[33m[Tmux session '{session_name}' not active yet. Click 'Dispatch OpenCode' or launch session.]\x1b[0m\r\n"
+                        
+                        if output != last_output:
+                            last_output = output
+                            msg = f"data: {json.dumps({'output': output, 'session': session_name})}\n\n"
+                            self.wfile.write(msg.encode("utf-8"))
+                            self.wfile.flush()
+                        time.sleep(0.5)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
+
             # Serve screenshots directory dynamically
             elif path.startswith("/screenshots/"):
                 rel_path = path[len("/screenshots/"):]
@@ -335,6 +365,43 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         try:
             parsed = urlparse(self.path)
             path = parsed.path
+
+            if path.startswith("/api/terminals/") and path.endswith("/input"):
+                session_name = path[len("/api/terminals/"): -len("/input")].strip("/")
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+                payload = json.loads(body) if body else {}
+                inp = payload.get("input", "")
+
+                has_sess = subprocess.run(["tmux", "has-session", "-t", session_name], capture_output=True)
+                if has_sess.returncode == 0:
+                    if inp == "\r" or inp == "\n":
+                        subprocess.run(["tmux", "send-keys", "-t", session_name, "Enter"], check=False)
+                    elif inp == "\x03":
+                        subprocess.run(["tmux", "send-keys", "-t", session_name, "C-c"], check=False)
+                    elif inp == "\x7f" or inp == "\b":
+                        subprocess.run(["tmux", "send-keys", "-t", session_name, "BSpace"], check=False)
+                    elif inp == "\x1b[A": # Up arrow
+                        subprocess.run(["tmux", "send-keys", "-t", session_name, "Up"], check=False)
+                    elif inp == "\x1b[B": # Down arrow
+                        subprocess.run(["tmux", "send-keys", "-t", session_name, "Down"], check=False)
+                    else:
+                        subprocess.run(["tmux", "send-keys", "-l", "-t", session_name, inp], check=False)
+                    self._send_json({"status": "sent"})
+                else:
+                    self._send_json({"status": "error", "error": f"Session '{session_name}' not found"}, status=404)
+                return
+
+            elif path.startswith("/api/terminals/") and path.endswith("/resize"):
+                session_name = path[len("/api/terminals/"): -len("/resize")].strip("/")
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+                payload = json.loads(body) if body else {}
+                cols = int(payload.get("cols", 80))
+                rows = int(payload.get("rows", 24))
+                subprocess.run(["tmux", "resize-window", "-t", session_name, "-x", str(cols), "-y", str(rows)], check=False)
+                self._send_json({"status": "resized", "cols": cols, "rows": rows})
+                return
 
             if path == "/api/telemetry/ingest":
                 if not self._check_auth(auth_type='telemetry'):

@@ -842,6 +842,148 @@ function IncidentConsoleView({ incidents, onSelect, onDispatch, onPurge }) {
   );
 }
 
+// ── COMPONENT: InteractiveTmuxTerminal ──
+function InteractiveTmuxTerminal({ sessionName, onCopy }) {
+  const terminalRef = useRef(null);
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    if (!terminalRef.current || !window.Terminal) return;
+
+    const term = new window.Terminal({
+      cursorBlink: true,
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontSize: 13,
+      lineHeight: 1.35,
+      theme: {
+        background: '#030712',
+        foreground: '#f1f5f9',
+        cursor: '#38bdf8',
+        selectionBackground: 'rgba(56, 189, 248, 0.3)',
+        black: '#0f172a',
+        red: '#f43f5e',
+        green: '#10b981',
+        yellow: '#f59e0b',
+        blue: '#3b82f6',
+        magenta: '#d946ef',
+        cyan: '#06b6d4',
+        white: '#f8fafc',
+      },
+    });
+
+    let fitAddon = null;
+    if (window.FitAddon && window.FitAddon.FitAddon) {
+      fitAddon = new window.FitAddon.FitAddon();
+      term.loadAddon(fitAddon);
+    }
+
+    term.open(terminalRef.current);
+    if (fitAddon) {
+      try { fitAddon.fit(); } catch (e) {}
+    }
+
+    term.writeln(`\x1b[36m⚡ Connecting to live in-browser tmux session: ${sessionName}...\x1b[0m\r\n`);
+
+    // Handle user keystrokes & typing
+    const dataListener = term.onData((inputData) => {
+      fetch(`/api/terminals/${sessionName}/input`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input: inputData }),
+      }).catch(() => {});
+    });
+
+    // Stream SSE terminal updates
+    const es = new EventSource(`/api/terminals/${sessionName}/stream`);
+
+    es.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload && payload.output) {
+          setConnected(true);
+          term.clear();
+          term.write(payload.output.replace(/\r?\n/g, '\r\n'));
+        }
+      } catch (err) {
+        term.write(event.data);
+      }
+    };
+
+    es.onerror = () => {
+      setConnected(false);
+    };
+
+    const handleResize = () => {
+      if (fitAddon) {
+        try {
+          fitAddon.fit();
+          fetch(`/api/terminals/${sessionName}/resize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cols: term.cols, rows: term.rows }),
+          }).catch(() => {});
+        } catch (e) {}
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      dataListener.dispose();
+      es.close();
+      term.dispose();
+    };
+  }, [sessionName]);
+
+  const sendKey = (key) => {
+    fetch(`/api/terminals/${sessionName}/input`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: key }),
+    }).catch(() => {});
+  };
+
+  return React.createElement(
+    'div',
+    { className: 'xterm-card' },
+    React.createElement(
+      'div',
+      { className: 'xterm-header-bar' },
+      React.createElement(
+        'div',
+        { className: 'xterm-title' },
+        React.createElement(Icons.Terminal, { size: 16 }),
+        React.createElement('span', null, sessionName),
+        connected
+          ? React.createElement('span', { className: 'shadcn-badge shadcn-badge-success' }, '● LIVE STREAMING')
+          : React.createElement('span', { className: 'shadcn-badge shadcn-badge-warning' }, 'CONNECTING')
+      ),
+      React.createElement(
+        'div',
+        { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+        React.createElement(
+          'button',
+          { className: 'shadcn-btn shadcn-btn-secondary shadcn-btn-sm', onClick: () => sendKey('\x03'), title: 'Send Ctrl+C' },
+          'Ctrl+C'
+        ),
+        React.createElement(
+          'button',
+          { className: 'shadcn-btn shadcn-btn-secondary shadcn-btn-sm', onClick: () => sendKey('\r'), title: 'Send Enter' },
+          'Enter'
+        ),
+        React.createElement(
+          'button',
+          { className: 'shadcn-btn shadcn-btn-outline shadcn-btn-sm', onClick: () => onCopy && onCopy(`tmux attach -t ${sessionName}`) },
+          React.createElement(Icons.Copy, { size: 12 }),
+          'SSH Command'
+        )
+      )
+    ),
+    React.createElement('div', { ref: terminalRef, className: 'xterm-container-body' })
+  );
+}
+
 // ── COMPONENT: IncidentModal ──
 function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
   const isResolved = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(incident.state);
@@ -850,34 +992,13 @@ function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
   const stack = evidence.stack_trace || evidence.logs || 'No stack trace captured.';
   
   const [modalTab, setModalTab] = useState(isClaimed ? 'worker' : 'dossier'); // 'dossier' or 'worker'
-  const [workerInfo, setWorkerInfo] = useState({ logs: 'Loading agent stream...', status: 'DISPATCHED' });
-
-  useEffect(() => {
-    let interval = null;
-    const fetchLogs = () => {
-      fetch(`/api/incidents/${incident.id}/worker-logs?t=${Date.now()}`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (data && data.logs) setWorkerInfo(data);
-        })
-        .catch(() => {});
-    };
-
-    fetchLogs();
-    if (modalTab === 'worker') {
-      interval = setInterval(fetchLogs, 2500);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [incident.id, modalTab]);
 
   return React.createElement(
     motion.div,
     { className: 'modal-backdrop', onClick: onClose, initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } },
     React.createElement(
       motion.div,
-      { className: 'modal-dialog', onClick: (e) => e.stopPropagation(), variants: modalVariants, initial: 'hidden', animate: 'visible', exit: 'exit', style: { maxWidth: '780px' } },
+      { className: 'modal-dialog', onClick: (e) => e.stopPropagation(), variants: modalVariants, initial: 'hidden', animate: 'visible', exit: 'exit', style: { maxWidth: '820px' } },
       React.createElement(
         'div',
         { className: 'modal-header' },
@@ -893,18 +1014,17 @@ function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
           !isResolved && React.createElement(
             'button',
             {
-              className: 'btn-primary',
+              className: 'shadcn-btn shadcn-btn-default shadcn-btn-sm',
               onClick: () => onDispatch && onDispatch(incident.id),
-              style: { padding: '4px 10px', fontSize: '0.75rem' },
             },
             React.createElement(Icons.Terminal, { size: 12 }),
-            isClaimed ? 'Re-Dispatch' : '⚡ Dispatch'
+            isClaimed ? 'Re-Dispatch' : '⚡ Dispatch OpenCode'
           ),
-          React.createElement('button', { className: 'btn-secondary', onClick: onClose }, 'Close')
+          React.createElement('button', { className: 'shadcn-btn shadcn-btn-secondary shadcn-btn-sm', onClick: onClose }, 'Close')
         )
       ),
 
-      // Sub-tabs: Diagnostic Dossier vs Live Worker Console
+      // Sub-tabs: Diagnostic Dossier vs Live Tmux Web Terminal
       React.createElement(
         'div',
         { style: { display: 'flex', gap: '8px', padding: '0 24px', borderBottom: '1px solid var(--border-subtle)' } },
@@ -926,7 +1046,7 @@ function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
             style: { padding: '10px 14px', fontSize: '0.85rem', color: isClaimed ? 'var(--accent-amber)' : 'inherit' },
           },
           React.createElement(Icons.Terminal, { size: 14 }),
-          '⚡ Live OpenCode Activity Stream',
+          '⚡ Live In-Browser Tmux Terminal',
           isClaimed && React.createElement('span', { className: 'pulse-dot', style: { width: '6px', height: '6px', marginLeft: '6px' } })
         )
       ),
@@ -963,41 +1083,10 @@ function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
           ),
 
         modalTab === 'worker' &&
-          React.createElement(
-            React.Fragment,
-            null,
-            React.createElement(
-              'div',
-              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-surface-elevated)', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-subtle)' } },
-              React.createElement(
-                'div',
-                null,
-                React.createElement('div', { style: { fontSize: '0.75rem', color: 'var(--text-muted)' } }, 'Active Tmux Session'),
-                React.createElement('div', { style: { fontFamily: 'monospace', fontWeight: '700', color: 'var(--accent-indigo)' } }, `opencode-${incident.id}`)
-              ),
-              React.createElement(
-                'button',
-                {
-                  className: 'btn-secondary',
-                  onClick: () => onCopy && onCopy(`tmux attach -t opencode-${incident.id}`),
-                  style: { fontSize: '0.75rem', padding: '4px 8px' },
-                },
-                React.createElement(Icons.Copy, { size: 12 }),
-                'Copy SSH Attach Command'
-              )
-            ),
-            React.createElement(
-              'div',
-              null,
-              React.createElement(
-                'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' } },
-                React.createElement('div', { style: { fontSize: '0.78rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase' } }, 'Live Terminal / Output Stream'),
-                React.createElement('span', { style: { fontSize: '0.72rem', color: 'var(--accent-emerald)', fontWeight: '600' } }, '● Auto-polling 2.5s')
-              ),
-              React.createElement('div', { className: 'trace-code-box', style: { maxHeight: '280px', minHeight: '160px', background: '#07090e', color: '#a6accd' } }, workerInfo.logs || 'No output from worker session.')
-            )
-          )
+          React.createElement(InteractiveTmuxTerminal, {
+            sessionName: `opencode-${incident.id}`,
+            onCopy,
+          })
       )
     )
   );
