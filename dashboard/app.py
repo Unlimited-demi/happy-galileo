@@ -221,13 +221,35 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_json({"incidents": all_incidents})
                 return
 
+            elif path.startswith("/api/incidents/") and path.endswith("/worker-logs"):
+                # Extract inc_id: /api/incidents/<id>/worker-logs
+                inc_id = path[len("/api/incidents/"): -len("/worker-logs")].strip("/")
+                if inc_id:
+                    from ai_ops.dispatcher import IncidentDispatcher
+                    status_info = IncidentDispatcher.get_worker_status(inc_id)
+                    self._send_json(status_info)
+                    return
+
             elif path.startswith("/api/incidents/"):
-                inc_id = path[len("/api/incidents/"):]
+                inc_id = path[len("/api/incidents/"):].strip("/")
                 bus = IncidentBus()
                 inc = bus.get_incident(inc_id)
+                
+                # If not found locally, search connected satellite nodes in FLEET_STORE
+                if not inc:
+                    for n_name, n_data in list(FLEET_STORE.items()):
+                        if isinstance(n_data, dict):
+                            for rinc in (n_data.get("all_incidents") or n_data.get("open_incidents") or []):
+                                if isinstance(rinc, dict) and rinc.get("id") == inc_id:
+                                    inc = dict(rinc)
+                                    break
+                        if inc:
+                            break
+
                 if not inc:
                     self._send_json({"error": "Incident not found"}, status=404)
                     return
+
                 md_path = bus.incidents_dir / f"{inc_id}.md"
                 md_text = ""
                 if md_path.exists():
@@ -285,18 +307,6 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                     "file_name": img.name,
                                     "url_path": f"/screenshots/{svc_name}/{img.name}",
                                     })
-                self._send_json({"screenshots": screenshots})
-                return
-
-            elif path.startswith("/api/incidents/") and path.endswith("/worker-logs"):
-                # Extract inc_id: /api/incidents/<id>/worker-logs
-                inc_id = path[len("/api/incidents/"): -len("/worker-logs")].strip("/")
-                if inc_id:
-                    from ai_ops.dispatcher import IncidentDispatcher
-                    status_info = IncidentDispatcher.get_worker_status(inc_id)
-                    self._send_json(status_info)
-                    return
-
             # Serve screenshots directory dynamically
             elif path.startswith("/screenshots/"):
                 rel_path = path[len("/screenshots/"):]
