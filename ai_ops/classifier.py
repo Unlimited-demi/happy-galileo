@@ -1,7 +1,8 @@
 """
-Anomaly Classifier for AI-Ops.
-Filters out noise (routine HTTP access traffic, port scan disconnects, self-daemon outputs)
-and accurately classifies high-confidence runtime crashes, exceptions, and OOM kills.
+Universal Heuristic Anomaly Classifier for AI-Ops.
+Uses syntactic grammar analysis and structural anomaly heuristics to detect
+unhandled exceptions, HTTP 5xx/4xx upstream errors, stack traces, and crash signals
+across ANY programming language, SDK, or framework without hardcoding vendor names.
 """
 
 import re
@@ -9,24 +10,24 @@ from typing import Optional, Dict, Any, List, Tuple
 
 
 class AnomalyClassifier:
-    """Intelligent classifier distinguishing benign log lines from fatal application anomalies."""
+    """Universal grammar-based anomaly detector and classifier."""
 
-    # 1. Benign Log Noise Patterns — MUST BE IGNORED
+    # 1. Structural Noise Patterns to Discard (Routine access traffic, self-logs, scanner noise)
     NOISE_PATTERNS = [
-        # HTTP Access Logs (2xx, 3xx, 4xx routine web traffic)
+        # Standard HTTP Server Access Logs (Combined/Common log formats: "... METHOD URI ..." 200)
         r'"\s*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|CONNECT)\s+.*"\s+[1-4]\d\d\s+',
         r'handled request.*"status":\s*[1-4]\d\d',
         r'HTTP/\d\.\d"\s+[1-4]\d\d',
         r'\[HTTP\]\s+\d{3}\s+',
         
-        # Self-daemon & Internal Monitoring Logs
+        # Self-daemon Monitoring Output (Prevents feedback loops)
         r'AI-Ops ALERT',
         r'Cycle #\d+:',
         r'\[Level \d\]',
         r'No registered services to monitor',
         r'ALREADY_REPORTED',
         
-        # Public Internet Scanner / Port Probing Noise
+        # Public Internet Scanner / Port Prober Noise (Routine internet background radiation)
         r'Connection reset by peer',
         r'unexpected eof while reading',
         r'connection with http server terminated incorrectly',
@@ -41,7 +42,7 @@ class AnomalyClassifier:
         r'no PostgreSQL user name specified',
         r'lookup.*on whitelist, result',
         
-        # Routine Daemon Lifecycle Logs
+        # Routine Daemon Lifecycle & Normal Initialization
         r'supervisord started',
         r'syslog-ng starting up',
         r'syslog-ng entered RUNNING state',
@@ -60,59 +61,55 @@ class AnomalyClassifier:
         r'using config from file',
     ]
 
-    # 2. High-Confidence Application Crash & Fatal Error Signatures
-    CRITICAL_ERROR_SIGNATURES = [
-        # Python
-        (r"Traceback \(most recent call last\):", "Python Unhandled Exception / Traceback"),
-        (r"IndentationError:.*", "Python Syntax / Indentation Error"),
-        (r"ModuleNotFoundError:\s+No module named\s+.*", "Missing Python Dependency"),
-        
-        # JavaScript / TypeScript / Node.js
-        (r"UnhandledPromiseRejection(?:Warning)?:.*", "Node.js Unhandled Promise Rejection"),
-        (r"TypeError:\s+Cannot read properties of.*", "JavaScript TypeError (Null Property Access)"),
-        (r"ReferenceError:\s+.*is not defined", "JavaScript ReferenceError (Undefined Variable)"),
-        (r"SyntaxError:\s+.*", "JavaScript Syntax Error"),
-        (r"PrismaClient(?:KnownRequest|UnknownRequest|Initialization)Error:.*", "Prisma Database ORM Crash"),
-        
-        # Go / Rust / C++
-        (r"panic:\s+.*", "Go Runtime Panic"),
-        (r"fatal error:\s+.*", "Fatal Runtime Panic"),
-        (r"Segmentation fault", "Memory Segmentation Fault"),
-        
-        # System & Memory
-        (r"OOMKilled", "Out of Memory (OOM Killed)"),
-        (r"out of memory", "Memory Exhaustion"),
-        (r"killed\s+process\s+\d+", "Process Killed by OS Kernel"),
-        
-        # Ingress & Configuration Failures
-        (r"Error:\s+adapting config using caddyfile:\s+(.*)", "Caddyfile Configuration Adaptation Failure"),
-        (r"nginx:\s+\[emerg\]\s+(.*)", "Nginx Fatal Configuration Error"),
-        
-        # External LLM & AI API Failures (Gemini, OpenAI, Anthropic)
-        (r"(?:GoogleAPIError|GoogleGenerativeAIError|ResourceExhausted|API_KEY_INVALID|API key not valid|Quota exceeded for quota metric).*", "Google Gemini API / LLM Upstream Outage"),
-        (r"(?:OpenAIError|AnthropicError|RateLimitError|429 Too Many Requests|insufficient_quota).*", "External LLM / Cloud AI Rate Limit & Quota Failure"),
-        
-        # HTTP 502, 503, 504 Gateway & Upstream Proxy Crashes
-        (r"(?:502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout)", "HTTP 5xx Upstream / Gateway Outage"),
-        (r"(?:upstream connect error|no live upstreams|connection refused while connecting to upstream)", "Reverse Proxy Upstream Disconnection"),
-        (r"(?:AxiosError:\s*Request failed with status code 5\d\d|HTTPError:\s*5\d\d\s+.*|FetchError:.*ECONNREFUSED.*)", "Downstream HTTP 5xx Service Failure"),
+    # Containers excluded from log-level inspection
+    SELF_MONITOR_CONTAINERS = {"ai-ops-daemon", "devctl-dashboard", "caddy"}
 
-        # Object Storage & Payment Gateways
-        (r"(?:MinioError|S3Error|NoSuchBucket|SignatureDoesNotMatch|AccessDenied).*", "Object Storage (S3 / MinIO) Failure"),
-        (r"(?:StripeError|PaymentError|WebhookDeliveryError).*", "Payment Gateway / Webhook Outage"),
-        (r"(?:ConnectionRefusedError|ECONNREFUSED\s+\d+\.\d+\.\d+\.\d+:\d+).*", "Critical Service Connection Drop"),
-        
-        # Database Authentication Failures (True App Outages)
-        (r"FATAL:\s+password authentication failed for user \"([^\"]+)\"", "Database Authentication Failure"),
-        (r"FATAL:\s+database \"([^\"]+)\" does not exist", "Missing Production Database"),
+    # 2. Universal Syntactic Error Grammars (Language-Agnostic)
+    
+    # Generic Exception Class Grammar: Matches [Package.][Name]Error/Exception/Fault/Panic: <Message>
+    GENERIC_EXCEPTION_REGEX = re.compile(
+        r'(?:^|\s)([a-zA-Z0-9_.]*(?:Error|Exception|Fault|Panic|Failure|Crash|Warning))\s*[:\-]\s*(.+)',
+        re.IGNORECASE
+    )
+
+    # Generic HTTP Client / Upstream Status Code Grammar: 5xx server errors, 429 rate limits
+    HTTP_STATUS_ERROR_REGEX = re.compile(
+        r'(?:status(?:\s*code)?\s*[:=]?\s*|HTTP\s*|code\s*[:=]\s*|\b)([54]\d{2})\b(?:\s*[:\-]?\s*(.*))?',
+        re.IGNORECASE
+    )
+
+    # Generic Stack Frame Signatures (Python, Node/JS, Go, Rust, Java/C#, PHP)
+    STACK_FRAME_PATTERNS = [
+        (r'Traceback \(most recent call last\):', 'Python Stack Trace'),
+        (r'^\s*File\s+"[^"]+",\s+line\s+\d+', 'Python Execution Frame'),
+        (r'^\s*at\s+(?:[a-zA-Z0-9_$.<>]+\s+\()?.*:\d+:\d+\)?', 'JavaScript/TypeScript Stack Frame'),
+        (r'UnhandledPromiseRejection(?:Warning)?:', 'Unhandled Promise Rejection'),
+        (r'goroutine\s+\d+\s+\[running\]:', 'Go Panic Stack Trace'),
+        (r'^\s*at\s+[a-zA-Z0-9_$.]+\([a-zA-Z0-9_]+:\d+\)', 'JVM / CLR Stack Frame'),
+        (r'fatal error:\s+.*', 'Fatal Process Error'),
+        (r'panic:\s+(.*)', 'Runtime Panic'),
+        (r'Segmentation fault', 'Memory Segmentation Fault (SIGSEGV)'),
+        (r'OOMKilled|out of memory|killed\s+process\s+\d+', 'Process Memory Exhaustion (OOM)'),
     ]
 
-    # Containers that must never be flagged via log inspection
-    SELF_MONITOR_CONTAINERS = {"ai-ops-daemon", "devctl-dashboard", "caddy"}
+    # Generic Socket / Network Drops (Cross-language POSIX error codes)
+    NETWORK_ERROR_REGEX = re.compile(
+        r'\b(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|EAI_AGAIN|Connection refused|Connection timed out|Network is unreachable)\b(?:\s*[:\-]?\s*(.*))?',
+        re.IGNORECASE
+    )
+
+    # Generic Configuration / Ingress Parser Crashes
+    CONFIG_ERROR_PATTERNS = [
+        (r'Error:\s+adapting config using caddyfile:\s*(.*)', 'Caddyfile Syntax / Option Error'),
+        (r'nginx:\s*\[emerg\]\s*(.*)', 'Nginx Syntax / Configuration Crash'),
+        (r'FATAL:\s+password authentication failed for user "([^"]+)"', 'Database Authentication Refusal'),
+        (r'FATAL:\s+database "([^"]+)" does not exist', 'Target Database Not Found'),
+        (r'FATAL:\s+Role "([^"]+)" does not exist', 'Database Role Not Found'),
+    ]
 
     @classmethod
     def is_noise(cls, line: str) -> bool:
-        """Check if a log line is benign traffic or routine daemon output."""
+        """Check if a log line is routine access traffic or benign operational output."""
         clean = line.strip()
         if not clean:
             return True
@@ -124,23 +121,69 @@ class AnomalyClassifier:
     @classmethod
     def classify_log_error(cls, container_name: str, logs: str) -> Optional[Tuple[str, str]]:
         """
-        Scan logs and return (error_snippet, error_category) if a true critical error is found.
-        Returns None if logs contain only routine traffic or noise.
+        Syntactically analyze container logs to detect unhandled exceptions,
+        upstream 5xx/429 HTTP failures, network drops, and fatal runtime crashes.
+        
+        Returns:
+            (error_snippet, descriptive_category) or None if clean.
         """
         c_lower = container_name.lower()
         if any(sc in c_lower for sc in cls.SELF_MONITOR_CONTAINERS):
             return None
 
-        matched_errors = []
+        candidates: List[Tuple[str, str]] = []
+
         for line in logs.splitlines():
             if cls.is_noise(line):
                 continue
-            for pattern, category in cls.CRITICAL_ERROR_SIGNATURES:
-                match = re.search(pattern, line, re.IGNORECASE)
-                if match:
-                    matched_errors.append((line.strip(), category))
+            
+            clean_line = line.strip()
+
+            # 1. Check Configuration & Database Authentication Crashes
+            for pat, cat in cls.CONFIG_ERROR_PATTERNS:
+                m = re.search(pat, clean_line, re.IGNORECASE)
+                if m:
+                    detail = m.group(1) if m.groups() else clean_line
+                    candidates.append((clean_line, f"{cat}: {detail}"))
                     break
 
-        if matched_errors:
-            return matched_errors[-1]
+            # 2. Check Stack Frame Boundaries (Python, Node, Go, JVM)
+            for pat, cat in cls.STACK_FRAME_PATTERNS:
+                if re.search(pat, clean_line, re.IGNORECASE):
+                    candidates.append((clean_line, cat))
+                    break
+
+            # 3. Check Universal Exception Grammar: [AnyName]Error / Exception: <msg>
+            exc_match = cls.GENERIC_EXCEPTION_REGEX.search(clean_line)
+            if exc_match:
+                err_type = exc_match.group(1).strip()
+                err_msg = exc_match.group(2).strip()
+                # Ensure it's a real class name and not just casual conversational text
+                if any(err_type.lower().endswith(suffix) for suffix in ["error", "exception", "fault", "panic", "failure", "crash"]):
+                    category = f"Unhandled Exception ({err_type})"
+                    candidates.append((clean_line, category))
+                    continue
+
+            # 4. Check Upstream / Downstream HTTP Status Code Failures (500-599, 429)
+            if any(term in clean_line.lower() for term in ["failed", "status", "http", "error", "response", "upstream"]):
+                http_m = cls.HTTP_STATUS_ERROR_REGEX.search(clean_line)
+                if http_m:
+                    code = int(http_m.group(1))
+                    if 500 <= code <= 599:
+                        candidates.append((clean_line, f"Upstream / Downstream HTTP {code} Server Outage"))
+                        continue
+                    elif code == 429:
+                        candidates.append((clean_line, f"Upstream API Rate Limit / Quota Exceeded (HTTP 429)"))
+                        continue
+
+            # 5. Check Network & Connection Drops
+            net_m = cls.NETWORK_ERROR_REGEX.search(clean_line)
+            if net_m:
+                net_code = net_m.group(1)
+                candidates.append((clean_line, f"Network / Socket Failure ({net_code})"))
+                continue
+
+        if candidates:
+            # Return the most recent high-confidence anomaly
+            return candidates[-1]
         return None
