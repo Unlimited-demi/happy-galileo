@@ -152,45 +152,49 @@ def cmd_list(args):
 
     if not services:
         print("[!] No services are currently registered with devctl.")
-        print("    Expose a service with: devctl expose <service> <port>")
+        print("    Expose a service with: devctl expose <service> <port> or run devctl discover")
         return
 
-    print("\n" + "=" * 95)
-    print(f"{'SERVICE':<18} {'ENV':<8} {'PORT':<8} {'STATUS':<12} {'PUBLIC URL':<45}")
-    print("=" * 95)
+    print("\n" + "=" * 115)
+    print(f"{'SERVICE':<24} {'TYPE':<12} {'PORT':<8} {'STATUS':<12} {'PUBLIC HTTPS / ACCESS':<45}")
+    print("=" * 115)
 
     for s in services:
         name = s.get("service_name", "unknown")
-        env = s.get("env", "dev")
+        c_type = (s.get("container_type") or "web").upper()
         port = str(s.get("port", ""))
-        url = s.get("url", "")
+        url = s.get("url") or "[INTERNAL ONLY - PROTECTED]"
         
         is_running = docker_mgr.is_running(s.get("container_name", name))
         status = "● RUNNING" if is_running else "○ STOPPED"
 
-        print(f"{name:<18} {env:<8} {port:<8} {status:<12} {url:<45}")
+        print(f"{name:<24} {c_type:<12} {port:<8} {status:<12} {url:<45}")
 
-    print("=" * 95 + "\n")
+    print("=" * 115 + "\n")
 
 
 def cmd_discover(args):
-    """Auto-discover running Docker containers and index them into devctl."""
-    print("\n🔍 Scanning server for running Docker containers...")
+    """Auto-discover running Docker containers and index them into devctl with AI inference."""
+    print("\n🔍 Scanning server & performing AI architectural inference on Docker containers...")
     registry = DomainRegistry()
-    discovered = registry.discover_and_index_containers()
+    discovered = registry.discover_and_index_containers(use_ai=True)
 
     if not discovered:
         print("[✓] All running containers are already indexed and monitored.")
         return
 
-    print(f"\n[✓] Successfully discovered and indexed {len(discovered)} new container(s):")
-    print("=" * 80)
-    print(f"{'CONTAINER':<20} {'PORT':<8} {'ASSIGNED DOMAIN / HTTPS URL':<45}")
-    print("=" * 80)
+    print(f"\n[✓] Successfully indexed {len(discovered)} container(s) with AI role classification:")
+    print("=" * 110)
+    print(f"{'CONTAINER':<24} {'ROLE / ARCHETYPE':<22} {'PORT':<8} {'PUBLIC INGRESS ROUTE':<45}")
+    print("=" * 110)
     for d in discovered:
-        print(f"{d['container_name']:<20} {d['port']:<8} {d['url']:<45}")
-    print("=" * 80)
-    print("💡 All discovered services are now connected to dev-net and monitored by AI-Ops.\n")
+        c_type = (d.get("container_type") or "web").upper()
+        ai_meta = (d.get("metadata") or {}).get("ai_inference") or {}
+        role = ai_meta.get("role_label") or c_type
+        access = d.get("url") or "[PROTECTED INTERNAL - NO PUBLIC URL]"
+        print(f"{d['container_name']:<24} {role:<22} {str(d['port']):<8} {access:<45}")
+    print("=" * 110)
+    print("💡 All discovered services are safely attached to dev-net and continuously monitored.\n")
 
 
 def cmd_heartbeat(args):

@@ -202,18 +202,20 @@ class DomainRegistry:
         
         return domains
 
-    def discover_and_index_containers(self) -> List[Dict[str, Any]]:
+    def discover_and_index_containers(self, use_ai: bool = True) -> List[Dict[str, Any]]:
         """
         Auto-discover running Docker containers on the machine,
-        index their ports and locations, assign them domain routes,
-        and make them immediately monitorable by AI-Ops.
+        index their ports and locations, perform AI-assisted architectural inference,
+        assign domain routes to web services, and register internal components safely.
         """
         import subprocess
         from devctl.core.docker_mgr import DockerManager
         from devctl.core.caddy import CaddyManager
+        from devctl.core.ai_discovery import AIContainerInference
 
         docker_mgr = DockerManager()
         caddy_mgr = CaddyManager()
+        ai_engine = AIContainerInference() if use_ai else None
         state = self._load_state()
         registered = state.get("services", {})
 
@@ -251,16 +253,45 @@ class DomainRegistry:
                 # Connect container to dev-net if not already connected
                 docker_mgr.connect_to_network(c_name)
                 
+                # Perform AI architecture inference if enabled
+                ai_profile = None
+                if ai_engine:
+                    try:
+                        ai_profile = ai_engine.inspect_and_infer(c_name)
+                    except Exception:
+                        ai_profile = None
+
                 # Classify the container
-                c_type = self.classify_container(c_name, image, ports)
+                if ai_profile and ai_profile.get("is_publicly_exposable"):
+                    c_type = SERVICE_TYPE_WEB
+                elif ai_profile and "database" in ai_profile.get("archetype", ""):
+                    c_type = SERVICE_TYPE_DATABASE
+                elif ai_profile and "cache" in ai_profile.get("archetype", ""):
+                    c_type = SERVICE_TYPE_CACHE
+                elif ai_profile and "mail" in ai_profile.get("archetype", ""):
+                    c_type = SERVICE_TYPE_MAIL
+                elif ai_profile and "worker" in ai_profile.get("archetype", ""):
+                    c_type = SERVICE_TYPE_WORKER
+                else:
+                    c_type = self.classify_container(c_name, image, ports)
 
                 slug = self.sanitize_slug(c_name)
                 domain = existing_domains.get(c_name) or Config.get_full_domain(slug, "dev")
 
+                meta = {
+                    "auto_discovered": True,
+                    "detected_ports": ports,
+                    "image": image,
+                    "ai_inference": ai_profile,
+                }
+
                 if c_type == SERVICE_TYPE_WEB:
-                    # Pick port from WEB_PORTS intersection, or first port
-                    web_ports_intersection = [p for p in ports if p in self.WEB_PORTS]
-                    port = web_ports_intersection[0] if web_ports_intersection else (ports[0] if ports else 80)
+                    # Pick port from AI recommendation or WEB_PORTS intersection or first port
+                    if ai_profile and ai_profile.get("recommended_port"):
+                        port = ai_profile["recommended_port"]
+                    else:
+                        web_ports_intersection = [p for p in ports if p in self.WEB_PORTS]
+                        port = web_ports_intersection[0] if web_ports_intersection else (ports[0] if ports else 80)
                     
                     # Register in state
                     entry = self.register(
@@ -270,17 +301,17 @@ class DomainRegistry:
                         domain=domain,
                         env="dev",
                         container_type=c_type,
-                        metadata={"auto_discovered": True, "detected_ports": ports},
+                        metadata=meta,
                     )
 
                     # Add dynamic Caddy route & SSL
                     caddy_mgr.add_route(domain=domain, upstream_host=c_name, upstream_port=port)
                     discovered.append(entry)
                 else:
-                    # Non-web container
-                    port = ports[0] if ports else 0
+                    # Non-web container (Database, Cache, Mail, Worker, Internal)
+                    port = (ai_profile.get("recommended_port") if ai_profile else None) or (ports[0] if ports else 0)
                     
-                    # Register in state with no url
+                    # Register in state with no public url
                     entry = self.register(
                         service_name=slug,
                         container_name=c_name,
@@ -289,7 +320,7 @@ class DomainRegistry:
                         env="dev",
                         container_type=c_type,
                         url=None,
-                        metadata={"auto_discovered": True, "detected_ports": ports},
+                        metadata=meta,
                     )
                     discovered.append(entry)
 

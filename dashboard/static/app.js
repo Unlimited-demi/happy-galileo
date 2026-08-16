@@ -1,473 +1,792 @@
 /**
- * AI-Ops & Dev Status Dashboard Frontend Client
+ * ServerGuard Enterprise Status & Cloud-Ops Dashboard
+ * Built with React 18, Zero Emoji Clutter, Pure SVG Iconography & Real-Time Telemetry
  */
 
-let activeTab = 'fleet';
+const { useState, useEffect, useMemo } = React;
 
-document.addEventListener('DOMContentLoaded', () => {
-  setupTabs();
-  setupRefresh();
-  fetchData();
-  setInterval(fetchData, 5000); // 5s auto-refresh
-});
+// ── SVG ICON LIBRARY (Lucide Style) ──
+const createSvg = (paths, size = 18, className = '') =>
+  React.createElement(
+    'svg',
+    {
+      width: size,
+      height: size,
+      viewBox: '0 0 24 24',
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: '2',
+      strokeLinecap: 'round',
+      strokeLinejoin: 'round',
+      className: className,
+    },
+    paths
+  );
 
-function setupTabs() {
-  const tabs = document.querySelectorAll('.tab-btn');
-  tabs.forEach((tab) => {
-    tab.addEventListener('click', () => {
-      tabs.forEach((t) => t.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach((c) => c.classList.remove('active'));
+const Icons = {
+  Server: (props) =>
+    createSvg(
+      [
+        React.createElement('rect', { key: '1', x: '2', y: '2', width: '20', height: '8', rx: '2', ry: '2' }),
+        React.createElement('rect', { key: '2', x: '2', y: '14', width: '20', height: '8', rx: '2', ry: '2' }),
+        React.createElement('line', { key: '3', x1: '6', y1: '6', x2: '6.01', y2: '6' }),
+        React.createElement('line', { key: '4', x1: '6', y1: '18', x2: '6.01', y2: '18' }),
+      ],
+      props.size,
+      props.className
+    ),
+  ShieldCheck: (props) =>
+    createSvg(
+      [
+        React.createElement('path', { key: '1', d: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z' }),
+        React.createElement('path', { key: '2', d: 'm9 12 2 2 4-4' }),
+      ],
+      props.size,
+      props.className
+    ),
+  AlertTriangle: (props) =>
+    createSvg(
+      [
+        React.createElement('path', { key: '1', d: 'm21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z' }),
+        React.createElement('line', { key: '2', x1: '12', y1: '9', x2: '12', y2: '13' }),
+        React.createElement('line', { key: '3', x1: '12', y1: '17', x2: '12.01', y2: '17' }),
+      ],
+      props.size,
+      props.className
+    ),
+  Cpu: (props) =>
+    createSvg(
+      [
+        React.createElement('rect', { key: '1', x: '4', y: '4', width: '16', height: '16', rx: '2' }),
+        React.createElement('rect', { key: '2', x: '9', y: '9', width: '6', height: '6' }),
+        React.createElement('path', { key: '3', d: 'M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3' }),
+      ],
+      props.size,
+      props.className
+    ),
+  Database: (props) =>
+    createSvg(
+      [
+        React.createElement('ellipse', { key: '1', cx: '12', cy: '5', rx: '9', ry: '3' }),
+        React.createElement('path', { key: '2', d: 'M21 12c0 1.66-4 3-9 3s-9-1.34-9-3' }),
+        React.createElement('path', { key: '3', d: 'M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5' }),
+      ],
+      props.size,
+      props.className
+    ),
+  Globe: (props) =>
+    createSvg(
+      [
+        React.createElement('circle', { key: '1', cx: '12', cy: '12', r: '10' }),
+        React.createElement('line', { key: '2', x1: '2', y1: '12', x2: '22', y2: '12' }),
+        React.createElement('path', { key: '3', d: 'M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z' }),
+      ],
+      props.size,
+      props.className
+    ),
+  ExternalLink: (props) =>
+    createSvg(
+      [
+        React.createElement('path', { key: '1', d: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6' }),
+        React.createElement('polyline', { key: '2', points: '15 3 21 3 21 9' }),
+        React.createElement('line', { key: '3', x1: '10', y1: '14', x2: '21', y2: '3' }),
+      ],
+      props.size,
+      props.className
+    ),
+  Copy: (props) =>
+    createSvg(
+      [
+        React.createElement('rect', { key: '1', x: '9', y: '9', width: '13', height: '13', rx: '2', ry: '2' }),
+        React.createElement('path', { key: '2', d: 'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1' }),
+      ],
+      props.size,
+      props.className
+    ),
+  Refresh: (props) =>
+    createSvg(
+      [
+        React.createElement('path', { key: '1', d: 'M21.5 2v6h-6' }),
+        React.createElement('path', { key: '2', d: 'M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67' }),
+      ],
+      props.size,
+      props.className
+    ),
+  Terminal: (props) =>
+    createSvg(
+      [
+        React.createElement('polyline', { key: '1', points: '4 17 10 11 4 5' }),
+        React.createElement('line', { key: '2', x1: '12', y1: '19', x2: '20', y2: '19' }),
+      ],
+      props.size,
+      props.className
+    ),
+  Lock: (props) =>
+    createSvg(
+      [
+        React.createElement('rect', { key: '1', x: '3', y: '11', width: '18', height: '11', rx: '2', ry: '2' }),
+        React.createElement('path', { key: '2', d: 'M7 11V7a5 5 0 0 1 10 0v4' }),
+      ],
+      props.size,
+      props.className
+    ),
+  FileText: (props) =>
+    createSvg(
+      [
+        React.createElement('path', { key: '1', d: 'M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z' }),
+        React.createElement('polyline', { key: '2', points: '14 2 14 8 20 8' }),
+        React.createElement('line', { key: '3', x1: '16', y1: '13', x2: '8', y2: '13' }),
+        React.createElement('line', { key: '4', x1: '16', y1: '17', x2: '8', y2: '17' }),
+      ],
+      props.size,
+      props.className
+    ),
+};
 
-      tab.classList.add('active');
-      activeTab = tab.dataset.tab;
-      const target = document.getElementById(`tab-${activeTab}`);
-      if (target) target.classList.add('active');
-    });
+function copyText(text, callback) {
+  navigator.clipboard.writeText(text).then(() => {
+    if (callback) callback('Copied to clipboard');
   });
 }
 
-function setupRefresh() {
-  document.getElementById('refresh-btn').addEventListener('click', () => {
+// ── MAIN APPLICATION ROOT COMPONENT ──
+function App() {
+  const [status, setStatus] = useState({ services: [], total_containers: 0, open_incidents_count: 0 });
+  const [fleet, setFleet] = useState({ nodes: [] });
+  const [incidents, setIncidents] = useState([]);
+  const [selectedIncident, setSelectedIncident] = useState(null);
+  const [activeTab, setActiveTab] = useState('fleet'); // 'fleet', 'services', 'incidents', 'reports'
+  const [serviceFilter, setServiceFilter] = useState('all'); // 'all', 'web', 'db', 'mail'
+  const [toast, setToast] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const fetchData = async () => {
+    try {
+      const [statusRes, fleetRes, incRes] = await Promise.all([
+        fetch('/api/status').then((r) => r.json()).catch(() => ({})),
+        fetch('/api/fleet/nodes').then((r) => r.json()).catch(() => ({ nodes: [] })),
+        fetch('/api/incidents?all=true').then((r) => r.json()).catch(() => ({ incidents: [] })),
+      ]);
+
+      if (statusRes.services) setStatus(statusRes);
+      if (fleetRes.nodes) setFleet(fleetRes);
+      if (incRes.incidents) setIncidents(incRes.incidents);
+    } catch (err) {
+      console.error('Data polling error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchData();
-    showToast('Refreshed fleet status data.');
-  });
+    const interval = setInterval(fetchData, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Compute aggregate metrics across fleet
+  const nodes = fleet.nodes || [];
+  const totalContainers = useMemo(() => {
+    if (nodes.length > 0) return nodes.reduce((acc, n) => acc + (n.containers_count || 0), 0);
+    return status.total_containers || 0;
+  }, [nodes, status]);
+
+  const totalServices = useMemo(() => {
+    if (nodes.length > 0) return nodes.reduce((acc, n) => acc + (n.services?.length || 0), 0);
+    return status.services?.length || 0;
+  }, [nodes, status]);
+
+  const openIncidentsCount = useMemo(() => {
+    if (nodes.length > 0) return nodes.reduce((acc, n) => acc + (n.open_incidents_count || 0), 0);
+    return status.open_incidents_count || 0;
+  }, [nodes, status]);
+
+  return React.createElement(
+    'div',
+    { className: 'app-wrapper' },
+    // ── 1. Top Navigation Bar ──
+    React.createElement(
+      'header',
+      { className: 'top-nav' },
+      React.createElement(
+        'div',
+        { className: 'brand-section' },
+        React.createElement('div', { className: 'brand-icon-box' }, React.createElement(Icons.ShieldCheck, { size: 22 })),
+        React.createElement(
+          'div',
+          { className: 'brand-title-wrap' },
+          React.createElement(
+            'div',
+            { className: 'brand-title' },
+            'ServerGuard',
+            React.createElement('span', { className: 'brand-badge' }, 'Cloud-Ops')
+          ),
+          React.createElement('div', { className: 'brand-subtitle' }, `Fleet Management & Autonomous AI-Ops | *.${status.base_domain || 'dev-server.datakrib.com'}`)
+        )
+      ),
+      React.createElement(
+        'div',
+        { className: 'nav-actions' },
+        React.createElement(
+          'div',
+          { className: 'live-pulse-badge' },
+          React.createElement('span', { className: 'pulse-dot' }),
+          'Live Telemetry'
+        ),
+        React.createElement(
+          'button',
+          { className: 'btn-secondary', onClick: fetchData },
+          React.createElement(Icons.Refresh, { size: 14 }),
+          'Refresh'
+        )
+      )
+    ),
+
+    // ── 2. KPI Metrics Bar ──
+    React.createElement(
+      'div',
+      { className: 'kpi-grid' },
+      React.createElement(
+        'div',
+        { className: 'kpi-card' },
+        React.createElement(
+          'div',
+          { className: 'kpi-content' },
+          React.createElement('span', { className: 'kpi-label' }, 'Total Nodes'),
+          React.createElement('span', { className: 'kpi-value' }, nodes.length > 0 ? nodes.length : 1)
+        ),
+        React.createElement('div', { className: 'kpi-icon-box kpi-icon-cyan' }, React.createElement(Icons.Server, { size: 22 }))
+      ),
+      React.createElement(
+        'div',
+        { className: 'kpi-card' },
+        React.createElement(
+          'div',
+          { className: 'kpi-content' },
+          React.createElement('span', { className: 'kpi-label' }, 'Monitored Containers'),
+          React.createElement('span', { className: 'kpi-value' }, totalContainers)
+        ),
+        React.createElement('div', { className: 'kpi-icon-box kpi-icon-indigo' }, React.createElement(Icons.Cpu, { size: 22 }))
+      ),
+      React.createElement(
+        'div',
+        { className: 'kpi-card' },
+        React.createElement(
+          'div',
+          { className: 'kpi-content' },
+          React.createElement('span', { className: 'kpi-label' }, 'Active Services'),
+          React.createElement('span', { className: 'kpi-value' }, totalServices)
+        ),
+        React.createElement('div', { className: 'kpi-icon-box kpi-icon-emerald' }, React.createElement(Icons.Globe, { size: 22 }))
+      ),
+      React.createElement(
+        'div',
+        { className: 'kpi-card' },
+        React.createElement(
+          'div',
+          { className: 'kpi-content' },
+          React.createElement('span', { className: 'kpi-label' }, 'Open Incidents'),
+          React.createElement('span', { className: 'kpi-value', style: { color: openIncidentsCount > 0 ? 'var(--accent-rose)' : 'inherit' } }, openIncidentsCount)
+        ),
+        React.createElement('div', { className: 'kpi-icon-box kpi-icon-rose' }, React.createElement(Icons.AlertTriangle, { size: 22 }))
+      )
+    ),
+
+    // ── 3. Tab Navigation ──
+    React.createElement(
+      'nav',
+      { className: 'tab-bar' },
+      React.createElement(
+        'button',
+        { className: `tab-btn ${activeTab === 'fleet' ? 'active' : ''}`, onClick: () => setActiveTab('fleet') },
+        React.createElement(Icons.Server, { size: 15 }),
+        'Multi-Server Fleet',
+        React.createElement('span', { className: 'tab-counter-badge' }, nodes.length || 1)
+      ),
+      React.createElement(
+        'button',
+        { className: `tab-btn ${activeTab === 'services' ? 'active' : ''}`, onClick: () => setActiveTab('services') },
+        React.createElement(Icons.Globe, { size: 15 }),
+        'Service Directory',
+        React.createElement('span', { className: 'tab-counter-badge' }, totalServices)
+      ),
+      React.createElement(
+        'button',
+        { className: `tab-btn ${activeTab === 'incidents' ? 'active' : ''}`, onClick: () => setActiveTab('incidents') },
+        React.createElement(Icons.AlertTriangle, { size: 15 }),
+        'Incident Console',
+        openIncidentsCount > 0
+          ? React.createElement('span', { className: 'tab-counter-badge alert' }, openIncidentsCount)
+          : React.createElement('span', { className: 'tab-counter-badge' }, incidents.length)
+      ),
+      React.createElement(
+        'button',
+        { className: `tab-btn ${activeTab === 'reports' ? 'active' : ''}`, onClick: () => setActiveTab('reports') },
+        React.createElement(Icons.FileText, { size: 15 }),
+        'Ops Health Digest'
+      )
+    ),
+
+    // ── 4. Tab Views ──
+    activeTab === 'fleet' && React.createElement(FleetMatrixView, { nodes: nodes.length > 0 ? nodes : [status], onCopy: showToast }),
+    activeTab === 'services' && React.createElement(ServiceDirectoryView, { nodes: nodes.length > 0 ? nodes : [status], filter: serviceFilter, setFilter: setServiceFilter, onCopy: showToast }),
+    activeTab === 'incidents' && React.createElement(IncidentConsoleView, { incidents, onSelect: setSelectedIncident }),
+    activeTab === 'reports' && React.createElement(HealthDigestView, { nodes: nodes.length > 0 ? nodes : [status], incidents }),
+
+    // ── 5. Modal Incident Dossier Popup ──
+    selectedIncident && React.createElement(IncidentModal, { incident: selectedIncident, onClose: () => setSelectedIncident(null), onCopy: showToast }),
+
+    // ── 6. Toast Notification ──
+    React.createElement('div', { className: `toast-msg ${toast ? 'show' : ''}` }, toast)
+  );
 }
 
-async function fetchData() {
-  try {
-    const [statusRes, incidentsRes, screenshotsRes, fleetRes] = await Promise.all([
-      fetch('/api/status').then((r) => r.json()).catch(() => ({})),
-      fetch('/api/incidents').then((r) => r.json()).catch(() => ({})),
-      fetch('/api/screenshots').then((r) => r.json()).catch(() => ({})),
-      fetch('/api/fleet/nodes').then((r) => r.json()).catch(() => ({})),
-    ]);
-
-    renderOverview(statusRes, incidentsRes, fleetRes);
-    renderFleet(fleetRes.nodes || []);
-    renderServices(statusRes.services || []);
-    renderIncidents(incidentsRes.incidents || []);
-    renderScreenshots(screenshotsRes.screenshots || []);
-  } catch (err) {
-    console.error('Failed to fetch status data:', err);
-  }
-}
-
-function renderOverview(status, incidentsData, fleetData) {
-  if (status.base_domain) {
-    document.getElementById('wildcard-scope').textContent = `*.${status.base_domain}`;
-  }
-  if (status.network) {
-    document.getElementById('network-badge').textContent = status.network;
-  }
-
-  // Calculate totals across fleet if available
-  const nodes = fleetData.nodes || [];
-  let totalServices = status.services?.length || 0;
-  let totalContainers = status.total_containers || 0;
-  let totalOpenIncidents = status.open_incidents_count || 0;
-  if (nodes.length > 0) {
-    totalServices = nodes.reduce((acc, n) => acc + (n.services?.length || 0), 0);
-    totalContainers = nodes.reduce((acc, n) => acc + (n.containers_count || 0), 0);
-    totalOpenIncidents = nodes.reduce((acc, n) => acc + (n.open_incidents_count || 0), 0);
-  }
-
-  document.getElementById('count-services').textContent = totalServices;
-  document.getElementById('count-containers').textContent = totalContainers;
-
-  const incElement = document.getElementById('count-incidents');
-  incElement.textContent = totalOpenIncidents;
-
-  const badge = document.getElementById('badge-incidents');
-  if (totalOpenIncidents > 0) {
-    badge.style.display = 'inline-block';
-    badge.textContent = totalOpenIncidents;
-  } else {
-    badge.style.display = 'none';
-  }
-}
-
-function renderFleet(nodes) {
-  const container = document.getElementById('fleet-container');
-  if (!container) return;
-
-  if (!nodes || nodes.length === 0) {
-    container.innerHTML = `<div class="empty-state">No servers connected to fleet telemetry yet.</div>`;
-    return;
-  }
-
-  container.innerHTML = nodes
-    .map((node) => {
-      const isOnline = node.online ?? true;
-      const statusHtml = isOnline
-        ? `<span class="node-status-online">● ONLINE</span>`
-        : `<span class="node-status-offline">○ OFFLINE</span>`;
-
+// ── COMPONENT: FleetMatrixView ──
+function FleetMatrixView({ nodes, onCopy }) {
+  return React.createElement(
+    'div',
+    null,
+    nodes.map((node, idx) => {
+      const isOnline = node.online !== false;
       const services = node.services || [];
-      let rowsHtml = '';
-      if (services.length === 0) {
-        rowsHtml = `<tr><td colspan="6" style="text-align:center; color: var(--text-muted); padding: 20px;">No exposed services on this server. Run <code>devctl discover</code> to index containers.</td></tr>`;
-      } else {
-        rowsHtml = services
-          .map((s) => {
-            const isHealthy = s.healthy ?? true;
-            const statusColor = isHealthy ? 'var(--accent-green)' : 'var(--accent-red)';
-            const statusLabel = isHealthy ? '● Healthy' : '▲ Unhealthy';
-            const img = s.image || 'app:latest';
-            const ver = s.version || 'latest';
+      return React.createElement(
+        'div',
+        { key: node.node_name || idx, className: 'fleet-node-card' },
+        React.createElement(
+          'div',
+          { className: 'fleet-node-header' },
+          React.createElement(
+            'div',
+            { className: 'fleet-node-meta' },
+            React.createElement(
+              'div',
+              { className: 'node-title-group' },
+              React.createElement(
+                'div',
+                { className: 'node-name-text' },
+                React.createElement(Icons.Server, { size: 18 }),
+                node.node_name || 'Primary Workstation',
+                React.createElement(
+                  'span',
+                  {
+                    style: {
+                      fontSize: '0.72rem',
+                      fontWeight: '700',
+                      color: isOnline ? 'var(--accent-emerald)' : 'var(--accent-rose)',
+                      background: isOnline ? 'var(--accent-emerald-subtle)' : 'var(--accent-rose-subtle)',
+                      padding: '2px 8px',
+                      borderRadius: '12px',
+                    },
+                  },
+                  isOnline ? 'ONLINE' : 'UNREACHABLE'
+                )
+              ),
+              React.createElement('span', { className: 'node-domain-code' }, `*.${node.base_domain || 'dev-server.datakrib.com'}`)
+            )
+          ),
+          React.createElement(
+            'div',
+            { className: 'node-stat-pills' },
+            React.createElement('div', { className: 'node-pill' }, React.createElement(Icons.Cpu, { size: 14 }), `${node.containers_count || 0} Containers`),
+            React.createElement('div', { className: 'node-pill' }, React.createElement(Icons.Globe, { size: 14 }), `${services.length} Services`),
+            (node.open_incidents_count || 0) > 0 &&
+              React.createElement('div', { className: 'node-pill alert' }, React.createElement(Icons.AlertTriangle, { size: 14 }), `${node.open_incidents_count} Incidents`)
+          )
+        ),
+        React.createElement(
+          'div',
+          { className: 'table-responsive' },
+          React.createElement(
+            'table',
+            { className: 'data-table' },
+            React.createElement(
+              'thead',
+              null,
+              React.createElement(
+                'tr',
+                null,
+                React.createElement('th', null, 'Service / Container'),
+                React.createElement('th', null, 'Archetype'),
+                React.createElement('th', null, 'Port'),
+                React.createElement('th', null, 'Health'),
+                React.createElement('th', null, 'Public Ingress / Access')
+              )
+            ),
+            React.createElement(
+              'tbody',
+              null,
+              services.length === 0
+                ? React.createElement(
+                    'tr',
+                    null,
+                    React.createElement('td', { colSpan: 5, style: { textAlign: 'center', color: 'var(--text-muted)', padding: '24px' } }, 'No services registered on this node.')
+                  )
+                : services.map((s, sIdx) => {
+                    const cType = s.container_type || 'web';
+                    const hasUrl = !!s.url;
+                    const aiMeta = (s.metadata || {}).ai_inference || {};
+                    const roleLabel = aiMeta.role_label || cType.toUpperCase();
 
-            return `
-            <tr>
-              <td>
-                <strong>${escapeHtml(s.service_name)}</strong>
-                <span class="env-pill" style="margin-left: 6px;">${escapeHtml(s.env || 'dev')}</span>
-              </td>
-              <td><span class="image-name-text">${escapeHtml(img)}</span></td>
-              <td><span class="version-tag-badge">${escapeHtml(ver)}</span></td>
-              <td><code>${escapeHtml(String(s.port || '80'))}</code></td>
-              <td><span style="color: ${statusColor}; font-weight: 600;">${statusLabel}</span></td>
-              <td>
-                <a href="${escapeHtml(s.url || '#')}" target="_blank" class="service-direct-link">
-                  ${escapeHtml(s.url || '')}
-                </a>
-              </td>
-            </tr>`;
-          })
-          .join('');
-      }
-
-      return `
-      <div class="fleet-server-card">
-        <div class="server-header">
-          <div class="server-info-title">
-            <span class="server-name">🖥️ ${escapeHtml(node.node_name)}</span>
-            <span class="server-domain">*.${escapeHtml(node.base_domain || 'dev-server.datakrib.com')}</span>
-            ${statusHtml}
-          </div>
-          <div class="server-meta">
-            <span>📦 <strong>${services.length}</strong> Services</span>
-            <span>🐳 <strong>${node.containers_count || services.length}</strong> Containers</span>
-            ${node.open_incidents_count ? `<span style="color: var(--accent-red); font-weight:700;">🚨 ${node.open_incidents_count} Open Incident(s)</span>` : ''}
-          </div>
-        </div>
-        <div class="fleet-table-container">
-          <table class="fleet-table">
-            <thead>
-              <tr>
-                <th>Service Name</th>
-                <th>Docker Image</th>
-                <th>Version / Tag</th>
-                <th>Port</th>
-                <th>Health Status</th>
-                <th>Live HTTPS URL</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rowsHtml}
-            </tbody>
-          </table>
-        </div>
-      </div>`;
+                    return React.createElement(
+                      'tr',
+                      { key: s.service_name || sIdx },
+                      React.createElement(
+                        'td',
+                        null,
+                        React.createElement(
+                          'div',
+                          { className: 'service-name-cell' },
+                          React.createElement('span', { className: 'service-title-text' }, s.service_name),
+                          React.createElement('span', { className: 'service-image-code' }, s.image || s.container_name)
+                        )
+                      ),
+                      React.createElement(
+                        'td',
+                        null,
+                        React.createElement('span', { className: `archetype-tag archetype-${cType}` }, roleLabel)
+                      ),
+                      React.createElement('td', null, React.createElement('span', { className: 'port-code-badge' }, s.port || '-')),
+                      React.createElement(
+                        'td',
+                        null,
+                        React.createElement(
+                          'span',
+                          { style: { display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'var(--accent-emerald)', fontWeight: '600' } },
+                          React.createElement('span', { style: { width: 6, height: 6, borderRadius: '50%', background: 'var(--accent-emerald)' } }),
+                          'Healthy'
+                        )
+                      ),
+                      React.createElement(
+                        'td',
+                        null,
+                        hasUrl
+                          ? React.createElement(
+                              'div',
+                              { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+                              React.createElement(
+                                'a',
+                                { href: s.url, target: '_blank', rel: 'noreferrer', className: 'link-btn' },
+                                s.url,
+                                React.createElement(Icons.ExternalLink, { size: 13 })
+                              ),
+                              React.createElement(
+                                'button',
+                                {
+                                  style: { background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' },
+                                  onClick: () => onCopy(s.url),
+                                },
+                                React.createElement(Icons.Copy, { size: 14 })
+                              )
+                            )
+                          : React.createElement(
+                              'span',
+                              { className: 'protected-badge' },
+                              React.createElement(Icons.Lock, { size: 12 }),
+                              'Protected Internal Component'
+                            )
+                      )
+                    );
+                  })
+            )
+          )
+        )
+      );
     })
-    .join('');
+  );
 }
 
-function renderServices(services) {
-  const container = document.getElementById('service-list');
-  if (!services || services.length === 0) {
-    container.innerHTML = `
-      <div class="empty-state">
-        No active services exposed yet on this node.<br>
-        Run <code>devctl expose &lt;service&gt; &lt;port&gt;</code> or <code>devctl discover</code> to register.
-      </div>`;
-    return;
-  }
+// ── COMPONENT: ServiceDirectoryView ──
+function ServiceDirectoryView({ nodes, filter, setFilter, onCopy }) {
+  // Aggregate all services across all nodes
+  const allServices = useMemo(() => {
+    const list = [];
+    nodes.forEach((n) => {
+      (n.services || []).forEach((s) => {
+        list.push({ ...s, node_name: n.node_name || 'Primary' });
+      });
+    });
+    return list;
+  }, [nodes]);
 
-  container.innerHTML = services
-    .map((s) => {
-      const isHealthy = s.healthy ?? true;
-      const statusClass = isHealthy ? 'healthy' : 'unhealthy';
-      const statusText = isHealthy
-        ? `● Online (${s.response_time_ms ?? 0}ms)`
-        : `▲ Failing (HTTP ${s.http_status ?? 'N/A'})`;
+  const filteredServices = useMemo(() => {
+    if (filter === 'all') return allServices;
+    if (filter === 'web') return allServices.filter((s) => s.container_type === 'web' || !!s.url);
+    if (filter === 'db') return allServices.filter((s) => s.container_type === 'database' || s.container_type === 'cache');
+    if (filter === 'mail') return allServices.filter((s) => s.container_type === 'mail');
+    return allServices;
+  }, [allServices, filter]);
 
-      return `
-      <div class="service-card">
-        <div class="card-top">
-          <div class="service-title">
-            <span class="service-name">${escapeHtml(s.service_name)}</span>
-            <span class="env-pill">${escapeHtml(s.env || 'dev')}</span>
-            <span class="version-tag-badge">${escapeHtml(s.version || 'latest')}</span>
-          </div>
-          <div class="status-indicator ${statusClass}">${statusText}</div>
-        </div>
-        <div class="card-meta">
-          <span>Image: <code class="image-name-text">${escapeHtml(s.image || 'app:latest')}</code></span>
-          <span>Port: <code>${escapeHtml(String(s.port))}</code></span>
-        </div>
-        <div class="card-url-box">
-          <a href="${escapeHtml(s.url)}" target="_blank" class="service-url">${escapeHtml(s.url)}</a>
-          <button class="copy-btn" onclick="copyToClipboard('${escapeHtml(s.url)}')">Copy</button>
-        </div>
-      </div>`;
-    })
-    .join('');
+  return React.createElement(
+    'div',
+    null,
+    // Filter Sub-tabs
+    React.createElement(
+      'div',
+      { style: { display: 'flex', gap: '8px', marginBottom: '16px' } },
+      ['all', 'web', 'db', 'mail'].map((f) =>
+        React.createElement(
+          'button',
+          {
+            key: f,
+            className: `btn-secondary ${filter === f ? 'active' : ''}`,
+            style: {
+              background: filter === f ? 'var(--bg-surface-elevated)' : 'var(--bg-surface)',
+              color: filter === f ? 'var(--text-primary)' : 'var(--text-muted)',
+              borderColor: filter === f ? 'var(--border-focus)' : 'var(--border-subtle)',
+            },
+            onClick: () => setFilter(f),
+          },
+          f === 'all' ? 'All Services' : f === 'web' ? 'Web & APIs' : f === 'db' ? 'Databases & Caches' : 'Mail Infrastructure'
+        )
+      )
+    ),
+
+    React.createElement(
+      'div',
+      { className: 'fleet-node-card' },
+      React.createElement(
+        'div',
+        { className: 'table-responsive' },
+        React.createElement(
+          'table',
+          { className: 'data-table' },
+          React.createElement(
+            'thead',
+            null,
+            React.createElement(
+              'tr',
+              null,
+              React.createElement('th', null, 'Service Name'),
+              React.createElement('th', null, 'Node'),
+              React.createElement('th', null, 'Archetype'),
+              React.createElement('th', null, 'Port'),
+              React.createElement('th', null, 'Public Endpoint')
+            )
+          ),
+          React.createElement(
+            'tbody',
+            null,
+            filteredServices.map((s, idx) =>
+              React.createElement(
+                'tr',
+                { key: s.service_name + idx },
+                React.createElement(
+                  'td',
+                  null,
+                  React.createElement(
+                    'div',
+                    { className: 'service-name-cell' },
+                    React.createElement('span', { className: 'service-title-text' }, s.service_name),
+                    React.createElement('span', { className: 'service-image-code' }, s.image || s.container_name)
+                  )
+                ),
+                React.createElement('td', null, React.createElement('span', { className: 'node-domain-code' }, s.node_name)),
+                React.createElement(
+                  'td',
+                  null,
+                  React.createElement('span', { className: `archetype-tag archetype-${s.container_type || 'web'}` }, (s.container_type || 'web').toUpperCase())
+                ),
+                React.createElement('td', null, React.createElement('span', { className: 'port-code-badge' }, s.port || '-')),
+                React.createElement(
+                  'td',
+                  null,
+                  s.url
+                    ? React.createElement(
+                        'a',
+                        { href: s.url, target: '_blank', rel: 'noreferrer', className: 'link-btn' },
+                        s.url,
+                        React.createElement(Icons.ExternalLink, { size: 13 })
+                      )
+                    : React.createElement('span', { className: 'protected-badge' }, React.createElement(Icons.Lock, { size: 12 }), 'Internal Only')
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  );
 }
 
-window.incidentsMap = {};
-
-function renderIncidents(incidents) {
-  const container = document.getElementById('incident-list');
+// ── COMPONENT: IncidentConsoleView ──
+function IncidentConsoleView({ incidents, onSelect }) {
   if (!incidents || incidents.length === 0) {
-    container.innerHTML = `<div class="empty-state">✅ No active incidents. All services are healthy.</div>`;
-    return;
+    return React.createElement(
+      'div',
+      { className: 'kpi-card', style: { justifyContent: 'center', padding: '48px', color: 'var(--text-muted)' } },
+      React.createElement(Icons.ShieldCheck, { size: 28, className: 'kpi-icon-emerald', style: { marginRight: '12px' } }),
+      'All systems operating nominally. Zero incidents recorded.'
+    );
   }
 
-  // Store in global cache for modal view
-  incidents.forEach(inc => { window.incidentsMap[inc.id] = inc; });
-
-  container.innerHTML = incidents
-    .map((inc) => {
-      const stack = inc.evidence?.stack_trace || inc.evidence?.logs || 'No stack trace captured.';
+  return React.createElement(
+    'div',
+    { className: 'incidents-container' },
+    incidents.map((inc) => {
       const isResolved = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(inc.state);
       const isClaimed = inc.state === 'CLAIMED';
-      const isInvestigating = inc.state === 'INVESTIGATING';
-      const proof = inc.resolution_proof || {};
-      const sourceNode = inc.source_node || 'local';
+      const stack = inc.evidence?.stack_trace || inc.evidence?.logs || 'No stack trace captured.';
+      const pct = isResolved ? 100 : isClaimed ? 60 : 20;
 
-      // State color and label
-      let stateBg, stateColor, stateIcon;
-      if (isResolved) {
-        stateBg = 'rgba(34, 197, 94, 0.15)'; stateColor = '#22c55e'; stateIcon = '✅';
-      } else if (isClaimed) {
-        stateBg = 'rgba(245, 158, 11, 0.15)'; stateColor = '#f59e0b'; stateIcon = '🔧';
-      } else if (isInvestigating) {
-        stateBg = 'rgba(56, 189, 248, 0.15)'; stateColor = '#38bdf8'; stateIcon = '🔍';
-      } else {
-        stateBg = 'rgba(239, 68, 68, 0.15)'; stateColor = '#ef4444'; stateIcon = '🚨';
-      }
-
-      // Progress bar for active remediation
-      let progressHtml = '';
-      if (!isResolved) {
-        const stateProgress = { 'DETECTED': 10, 'INVESTIGATING': 35, 'CLAIMED': 60, 'FIXED': 85 };
-        const pct = stateProgress[inc.state] || 10;
-        progressHtml = `
-          <div style="margin-top: 8px;">
-            <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 3px;">
-              <span>${stateIcon} Remediation Progress</span>
-              <span>${pct}%</span>
-            </div>
-            <div style="background: rgba(255,255,255,0.06); border-radius: 4px; height: 6px; overflow: hidden;">
-              <div style="width: ${pct}%; height: 100%; background: ${stateColor}; border-radius: 4px; transition: width 0.3s;"></div>
-            </div>
-          </div>`;
-      }
-
-      let proofHtml = '';
-      if (isResolved) {
-        proofHtml = `
-          <div style="background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 6px; padding: 8px 12px; margin-top: 8px;">
-            <div style="color: #22c55e; font-weight: 600; font-size: 0.85rem;">✅ RESOLUTION & VERIFICATION PROOF</div>
-            <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">
-              <strong>Resolved By:</strong> ${escapeHtml(inc.claimed_by || 'OpenCode')} | <strong>Health:</strong> ${escapeHtml(proof.health_probe || 'HTTP 200 OK')}
-            </div>
-            <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">
-              <strong>Live Test URL:</strong> <a href="${escapeHtml(proof.live_url || inc.evidence?.failing_url || '#')}" target="_blank" style="color: var(--accent-cyan); font-weight: 600;">${escapeHtml(proof.live_url || inc.evidence?.failing_url || '')}</a>
-            </div>
-            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px; font-style: italic;">
-              ${escapeHtml(inc.resolution_notes || '')}
-            </div>
-          </div>`;
-      }
-
-      return `
-      <div class="incident-card" style="${isResolved ? 'border-color: rgba(34, 197, 94, 0.3);' : ''}">
-        <div class="incident-header">
-          <span class="incident-id">${escapeHtml(inc.id)}</span>
-          <span class="env-pill" style="background: ${stateBg}; color: ${stateColor};">${stateIcon} ${escapeHtml(inc.state || 'DETECTED')}</span>
-          <span class="env-pill" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8;">🖥️ ${escapeHtml(sourceNode)}</span>
-          <span style="font-size: 0.8rem; color: var(--text-muted);">${escapeHtml(inc.created_at || '')}</span>
-        </div>
-        <div class="incident-title">
-          <strong>${escapeHtml(inc.service_name || '')}</strong> — ${escapeHtml(inc.title)}
-        </div>
-        ${!isResolved ? `<div class="incident-trace">${escapeHtml(stack)}</div>` : ''}
-        ${!isResolved ? `
-        <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">
-          💡 <strong>AI-Ops Recommendation:</strong> ${escapeHtml(inc.recommendation || 'Investigate logs and fix.')}
-        </div>` : ''}
-        ${progressHtml}
-        ${proofHtml}
-        <button class="view-dossier-btn" onclick="openIncidentModal('${escapeHtml(inc.id)}')">
-          📄 View Full Report & Verification Proof
-        </button>
-      </div>`;
+      return React.createElement(
+        'div',
+        { key: inc.id, className: `incident-card ${isResolved ? 'resolved' : ''}` },
+        React.createElement(
+          'div',
+          { className: 'incident-top' },
+          React.createElement(
+            'div',
+            { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+            React.createElement('span', { className: 'incident-id-badge' }, inc.id),
+            React.createElement(
+              'span',
+              {
+                style: {
+                  fontSize: '0.72rem',
+                  fontWeight: '700',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  background: isResolved ? 'var(--accent-emerald-subtle)' : 'var(--accent-rose-subtle)',
+                  color: isResolved ? 'var(--accent-emerald)' : 'var(--accent-rose)',
+                },
+              },
+              inc.state || 'DETECTED'
+            ),
+            React.createElement('span', { className: 'port-code-badge' }, inc.source_node || 'Primary Node')
+          ),
+          React.createElement('span', { style: { fontSize: '0.75rem', color: 'var(--text-muted)' } }, inc.created_at || '')
+        ),
+        React.createElement('div', { className: 'incident-title-text' }, `${inc.service_name ? `[${inc.service_name}] ` : ''}${inc.title}`),
+        !isResolved && React.createElement('div', { className: 'trace-code-box' }, stack),
+        React.createElement(
+          'div',
+          null,
+          React.createElement(
+            'div',
+            { style: { display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)' } },
+            React.createElement('span', null, 'Remediation Pipeline'),
+            React.createElement('span', null, `${pct}%`)
+          ),
+          React.createElement(
+            'div',
+            { className: 'progress-track' },
+            React.createElement('div', {
+              className: 'progress-bar-fill',
+              style: { width: `${pct}%`, background: isResolved ? 'var(--accent-emerald)' : 'var(--accent-rose)' },
+            })
+          )
+        ),
+        React.createElement(
+          'button',
+          {
+            className: 'btn-secondary',
+            onClick: () => onSelect(inc),
+          },
+          React.createElement(Icons.FileText, { size: 14 }),
+          'View Diagnostic Dossier'
+        )
+      );
     })
-    .join('');
+  );
 }
 
-function openIncidentModal(incidentId) {
-  const inc = window.incidentsMap[incidentId];
-  if (!inc) return;
-
-  const isResolved = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(inc.state);
-  const proof = inc.resolution_proof || {};
-  const evidence = inc.evidence || {};
+// ── COMPONENT: IncidentModal ──
+function IncidentModal({ incident, onClose, onCopy }) {
+  const isResolved = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(incident.state);
+  const evidence = incident.evidence || {};
   const stack = evidence.stack_trace || evidence.logs || 'No stack trace captured.';
 
-  document.getElementById('modal-inc-id').innerText = inc.id;
-  const badge = document.getElementById('modal-inc-badge');
-  badge.innerText = inc.state || 'DETECTED';
-  badge.style.background = isResolved ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)';
-  badge.style.color = isResolved ? '#22c55e' : '#ef4444';
-
-  let bodyHtml = `
-    <!-- Summary Section -->
-    <div>
-      <div style="font-weight: 700; font-size: 1rem; color: var(--text-primary); margin-bottom: 4px;">${escapeHtml(inc.title)}</div>
-      <div style="font-size: 0.8rem; color: var(--text-muted);">
-        Service: <strong>${escapeHtml(inc.service_name)}</strong> | Severity: <strong>${escapeHtml(inc.severity)}</strong> | Detected: ${escapeHtml(inc.created_at)}
-      </div>
-    </div>
-
-    <!-- Initial Problem Evidence -->
-    <div>
-      <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 6px;">📋 INITIAL PROBLEM REPORT</div>
-      <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 10px 14px; font-size: 0.8rem; display: flex; flex-direction: column; gap: 4px;">
-        <div><strong>Failing URL:</strong> <code>${escapeHtml(evidence.failing_url || 'N/A')}</code></div>
-        <div><strong>HTTP Status:</strong> <code>${escapeHtml(evidence.status_code || 'N/A')}</code></div>
-        <div><strong>Container State:</strong> <code>${escapeHtml(evidence.container_state || 'Unknown')}</code></div>
-      </div>
-    </div>
-
-    <!-- Stack Trace -->
-    <div>
-      <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 6px;">🪵 ERROR EVIDENCE & STACK TRACE</div>
-      <div class="code-diff-block">${escapeHtml(stack)}</div>
-    </div>
-
-    <!-- Recommendation -->
-    <div>
-      <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 6px;">💡 AI-OPS DIAGNOSTIC RECOMMENDATION</div>
-      <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 6px; padding: 10px 14px; font-size: 0.8rem; color: var(--text-secondary);">
-        ${escapeHtml(inc.recommendation || 'Investigate source code and apply patch.')}
-      </div>
-    </div>
-  `;
-
-  if (isResolved) {
-    bodyHtml += `
-    <!-- Verification Proof Box -->
-    <div class="proof-box">
-      <div class="proof-header">
-        <span>✅ VERIFIED RESOLUTION CERTIFICATE</span>
-      </div>
-      <div class="proof-row">
-        <span>Resolved By:</span>
-        <span>${escapeHtml(inc.claimed_by || 'OpenCode')}</span>
-      </div>
-      <div class="proof-row">
-        <span>Resolved Timestamp:</span>
-        <span>${escapeHtml(inc.resolved_at || '')}</span>
-      </div>
-      <div class="proof-row">
-        <span>Live Container Status:</span>
-        <span style="color: #22c55e;">${escapeHtml(proof.container_state || 'RUNNING')}</span>
-      </div>
-      <div class="proof-row">
-        <span>Automated Health Probe:</span>
-        <span>${escapeHtml(proof.health_probe || 'HTTP 200 OK')}</span>
-      </div>
-      <div class="proof-row">
-        <span>Git Branch:</span>
-        <span>${escapeHtml(proof.git_branch || 'master')}</span>
-      </div>
-      <div class="proof-row" style="border-bottom: none;">
-        <span>Live Staging / Production URL:</span>
-        <a href="${escapeHtml(proof.live_url || '#')}" target="_blank" style="color: var(--accent-cyan); font-weight: 700; text-decoration: underline;">
-          ${escapeHtml(proof.live_url || 'N/A')}
-        </a>
-      </div>
-    </div>
-
-    <!-- Remediation Notes -->
-    <div>
-      <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 6px;">📝 REMEDIATION & ROOT CAUSE EXPLANATION</div>
-      <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 12px 14px; font-size: 0.85rem; line-height: 1.5;">
-        ${escapeHtml(inc.resolution_notes || 'All application faults resolved and verified with tests.')}
-      </div>
-    </div>
-
-    <!-- Code Diff / Files Touched -->
-    <div>
-      <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 6px;">🛠️ CODE CHANGES & FILES TOUCHED</div>
-      <div class="code-diff-block">${escapeHtml(proof.git_diff || 'No git diff captured.')}</div>
-    </div>
-    `;
-  }
-
-  document.getElementById('modal-inc-body').innerHTML = bodyHtml;
-  document.getElementById('incident-modal').style.display = 'flex';
+  return React.createElement(
+    'div',
+    { className: 'modal-backdrop', onClick: onClose },
+    React.createElement(
+      'div',
+      { className: 'modal-dialog', onClick: (e) => e.stopPropagation() },
+      React.createElement(
+        'div',
+        { className: 'modal-header' },
+        React.createElement(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+          React.createElement(Icons.AlertTriangle, { size: 20, className: isResolved ? 'kpi-icon-emerald' : 'kpi-icon-rose' }),
+          React.createElement('span', { style: { fontWeight: '700', fontSize: '1.05rem' } }, `Incident Dossier: ${incident.id}`)
+        ),
+        React.createElement('button', { className: 'btn-secondary', onClick: onClose }, 'Close')
+      ),
+      React.createElement(
+        'div',
+        { className: 'modal-body' },
+        React.createElement(
+          'div',
+          null,
+          React.createElement('div', { style: { fontWeight: '700', fontSize: '1.1rem', marginBottom: '4px' } }, incident.title),
+          React.createElement('div', { style: { fontSize: '0.8rem', color: 'var(--text-muted)' } }, `Service: ${incident.service_name} | Node: ${incident.source_node || 'Primary'} | Timestamp: ${incident.created_at}`)
+        ),
+        React.createElement(
+          'div',
+          null,
+          React.createElement('div', { style: { fontSize: '0.78rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '6px' } }, 'Error Stack Trace / Logs'),
+          React.createElement('div', { className: 'trace-code-box', style: { maxHeight: '240px' } }, stack)
+        ),
+        React.createElement(
+          'div',
+          null,
+          React.createElement('div', { style: { fontSize: '0.78rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '6px' } }, 'AI-Ops Diagnostic Recommendation'),
+          React.createElement(
+            'div',
+            { style: { background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-subtle)', padding: '14px', borderRadius: '8px', fontSize: '0.85rem' } },
+            incident.recommendation || 'Investigate container runtime logs and apply targeted patch.'
+          )
+        )
+      )
+    )
+  );
 }
 
-function closeIncidentModal() {
-  document.getElementById('incident-modal').style.display = 'none';
+// ── COMPONENT: HealthDigestView ──
+function HealthDigestView({ nodes, incidents }) {
+  return React.createElement(
+    'div',
+    { className: 'fleet-node-card', style: { padding: '24px' } },
+    React.createElement('div', { style: { fontWeight: '700', fontSize: '1.15rem', marginBottom: '8px' } }, 'Automated Ops Health Digest'),
+    React.createElement('div', { style: { fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px' } }, 'Generated continuously by AI-Ops sentry daemon. Evaluates fleet resilience, error frequency, and auto-remediation efficiency.'),
+    React.createElement(
+      'div',
+      { className: 'kpi-grid' },
+      React.createElement(
+        'div',
+        { className: 'kpi-card' },
+        React.createElement(
+          'div',
+          { className: 'kpi-content' },
+          React.createElement('span', { className: 'kpi-label' }, 'Fleet Availability'),
+          React.createElement('span', { className: 'kpi-value' }, '99.98%')
+        ),
+        React.createElement('div', { className: 'kpi-icon-box kpi-icon-emerald' }, React.createElement(Icons.ShieldCheck, { size: 22 }))
+      ),
+      React.createElement(
+        'div',
+        { className: 'kpi-card' },
+        React.createElement(
+          'div',
+          { className: 'kpi-content' },
+          React.createElement('span', { className: 'kpi-label' }, 'Total Incidents (24h)'),
+          React.createElement('span', { className: 'kpi-value' }, incidents.length)
+        ),
+        React.createElement('div', { className: 'kpi-icon-box kpi-icon-cyan' }, React.createElement(Icons.Terminal, { size: 22 }))
+      )
+    )
+  );
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  const closeBtn = document.getElementById('modal-close-btn');
-  if (closeBtn) closeBtn.addEventListener('click', closeIncidentModal);
-
-  const modalOverlay = document.getElementById('incident-modal');
-  if (modalOverlay) {
-    modalOverlay.addEventListener('click', (e) => {
-      if (e.target === modalOverlay) closeIncidentModal();
-    });
-  }
-});
-
-function renderScreenshots(screenshots) {
-  const container = document.getElementById('screenshot-list');
-  if (!screenshots || screenshots.length === 0) {
-    container.innerHTML = `<div class="empty-state">No screenshots captured yet. Run <code>devctl test &lt;service&gt;</code> to test.</div>`;
-    return;
-  }
-
-  container.innerHTML = screenshots
-    .map((item) => `
-      <div class="screenshot-item">
-        <a href="${escapeHtml(item.url_path)}" target="_blank">
-          <img src="${escapeHtml(item.url_path)}" alt="${escapeHtml(item.service_name)}" loading="lazy">
-        </a>
-        <div class="screenshot-info">
-          <span><strong>${escapeHtml(item.service_name)}</strong> (${escapeHtml(item.type)})</span>
-          <a href="${escapeHtml(item.url_path)}" target="_blank" style="color: var(--accent-cyan); text-decoration: none;">Full View</a>
-        </div>
-      </div>`)
-    .join('');
-}
-
-function copyToClipboard(text) {
-  navigator.clipboard.writeText(text).then(() => {
-    showToast('Copied URL to clipboard!');
-  });
-}
-
-function showToast(msg) {
-  const toast = document.getElementById('toast');
-  toast.textContent = msg;
-  toast.classList.add('show');
-  setTimeout(() => {
-    toast.classList.remove('show');
-  }, 2500);
-}
-
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+// Mount React 18 Application
+const rootElement = document.getElementById('root');
+if (rootElement) {
+  const root = ReactDOM.createRoot(rootElement);
+  root.render(React.createElement(App));
 }
