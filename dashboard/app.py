@@ -323,22 +323,26 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
 
+                # Ensure session exists: auto-spawn if not present
+                has_sess = subprocess.run(["tmux", "has-session", "-t", session_name], capture_output=True)
+                if has_sess.returncode != 0:
+                    target_cwd = "/app" if os.path.isdir("/app") else "."
+                    subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", target_cwd, "bash"], check=False)
+                    welcome = f'echo "=== [SERVERGUARD WORKER CONSOLE: {session_name}] ==="; echo "Physical Workspace: $(pwd)"; echo "Agent Status: Ready (Type commands or run: opencode)"; echo ""'
+                    subprocess.run(["tmux", "send-keys", "-t", session_name, welcome, "C-m"], check=False)
+
                 last_output = None
                 try:
-                    for _ in range(60): # Stream up to 30s per connection then client reconnects
-                        has_sess = subprocess.run(["tmux", "has-session", "-t", session_name], capture_output=True)
-                        if has_sess.returncode == 0:
-                            capture = subprocess.run(["tmux", "capture-pane", "-e", "-p", "-t", session_name], capture_output=True, text=True)
-                            output = capture.stdout
-                        else:
-                            output = f"\x1b[33m[Tmux session '{session_name}' not active yet. Click 'Dispatch OpenCode' or launch session.]\x1b[0m\r\n"
+                    for _ in range(60): # Stream for 30s before client auto-reconnects
+                        capture = subprocess.run(["tmux", "capture-pane", "-e", "-p", "-t", session_name], capture_output=True, text=True)
+                        output = capture.stdout if capture.returncode == 0 else f"[Tmux session '{session_name}' initialized]\r\n"
                         
                         if output != last_output:
                             last_output = output
                             msg = f"data: {json.dumps({'output': output, 'session': session_name})}\n\n"
                             self.wfile.write(msg.encode("utf-8"))
                             self.wfile.flush()
-                        time.sleep(0.5)
+                        time.sleep(0.4)
                 except (BrokenPipeError, ConnectionResetError):
                     pass
                 return

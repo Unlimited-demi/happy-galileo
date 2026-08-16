@@ -145,7 +145,8 @@ REMEDIATION WORKFLOW CONTRACT (AGENTS.md):
                 }
 
             # Create tmux session and launch OpenCode (or an interactive bash runner)
-            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", workspace_dir], check=False)
+            target_cwd = workspace_dir if os.path.isdir(workspace_dir) else ("/app" if os.path.isdir("/app") else ".")
+            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", target_cwd, "bash"], check=False)
             
             # Send the OpenCode command or prompt to tmux session
             if has_opencode:
