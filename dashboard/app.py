@@ -338,7 +338,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if inc_id:
                     from ai_ops.dispatcher import IncidentDispatcher
                     dispatcher = IncidentDispatcher()
-                    result = dispatcher.dispatch(inc_id)
+                    result = dispatcher.dispatch(inc_id, fleet_store=FLEET_STORE)
                     self._send_json(result, status=200 if result.get("success") else 400)
                     return
 

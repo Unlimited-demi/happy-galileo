@@ -29,7 +29,8 @@ class IncidentDispatcher:
         self,
         incident_id: str,
         agent_name: str = "OpenCode",
-        use_tmux: bool = True
+        use_tmux: bool = True,
+        fleet_store: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Dispatch an incident to OpenCode.
@@ -38,31 +39,31 @@ class IncidentDispatcher:
         incident = self.bus.get_incident(incident_id)
         target_node = "Local Controller"
 
-        if not incident:
-            # Search connected remote nodes in FLEET_STORE
-            try:
-                from dashboard.app import FLEET_STORE
-                for n_name, n_data in list(FLEET_STORE.items()):
-                    if isinstance(n_data, dict):
-                        for rinc in (n_data.get("all_incidents") or n_data.get("open_incidents") or []):
-                            if isinstance(rinc, dict) and rinc.get("id") == incident_id:
-                                incident = dict(rinc)
-                                target_node = n_name
-                                # Persist copy to local incidents dir
-                                try:
-                                    import json
-                                    with open(self.bus.incidents_dir / f"{incident_id}.json", "w", encoding="utf-8") as f:
-                                        json.dump(incident, f, indent=2)
-                                except Exception:
-                                    pass
-                                break
-                    if incident:
-                        break
-            except Exception:
-                pass
+        # If not found on local disk, search fleet store (connected satellite nodes)
+        if not incident and fleet_store:
+            for n_name, n_data in list(fleet_store.items()):
+                if isinstance(n_data, dict):
+                    for rinc in (n_data.get("all_incidents") or n_data.get("open_incidents") or []):
+                        if isinstance(rinc, dict) and rinc.get("id") == incident_id:
+                            incident = rinc
+                            target_node = n_name
+                            # Mutate state in fleet store so dashboard UI updates immediately
+                            rinc["state"] = "CLAIMED"
+                            rinc["claimed_by"] = agent_name
+                            # Also persist a local dossier copy
+                            try:
+                                json_path = self.bus.incidents_dir / f"{incident_id}.json"
+                                import json
+                                with open(json_path, "w", encoding="utf-8") as f:
+                                    json.dump(rinc, f, indent=2)
+                            except Exception:
+                                pass
+                            break
+                if incident:
+                    break
 
         if not incident:
-            return {"success": False, "error": f"Incident '{incident_id}' not found."}
+            return {"success": False, "error": f"Incident '{incident_id}' not found in local bus or fleet store."}
 
         service_name = incident.get("service_name", "app")
         title = incident.get("title", "Service incident")
