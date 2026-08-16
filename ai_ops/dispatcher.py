@@ -132,30 +132,34 @@ REMEDIATION WORKFLOW CONTRACT (AGENTS.md):
         has_opencode = shutil.which("opencode") is not None
 
         if use_tmux and has_tmux:
-            # Check if session already exists
-            check_sess = subprocess.run(["tmux", "has-session", "-t", session_name], capture_output=True)
-            if check_sess.returncode == 0:
-                return {
-                    "success": True,
-                    "session_name": session_name,
-                    "workspace_dir": workspace_dir,
-                    "fix_branch": fix_branch,
-                    "status": "ALREADY_DISPATCHED",
-                    "message": f"OpenCode session '{session_name}' is already active.",
-                }
+            # Kill any existing stale session, then create fresh
+            subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
 
-            # Create tmux session and launch OpenCode (or an interactive bash runner)
+            # Create tmux session with interactive bash in the workspace
             target_cwd = workspace_dir if os.path.isdir(workspace_dir) else ("/app" if os.path.isdir("/app") else ".")
             subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", target_cwd, "bash"], check=False)
-            
-            # Send the OpenCode command or prompt to tmux session
+
+            # Send the OpenCode command or full diagnostic blueprint to tmux session
             if has_opencode:
+                # OpenCode is installed — launch it with the remediation prompt
                 cmd = f'opencode --prompt {repr(prompt)}'
+                subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "C-m"], check=False)
             else:
-                # Fallback banner if opencode CLI is not globally linked
-                cmd = f'echo "=== [OPENCODE REMEDIATION WORKER: {incident_id}] ==="; echo {repr(prompt)}'
-            
-            subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "C-m"], check=False)
+                # OpenCode not installed — display the full remediation blueprint
+                # so the human operator or a future agent install can pick up
+                blueprint_lines = prompt.strip().split('\n')
+                subprocess.run(["tmux", "send-keys", "-t", session_name, "clear", "C-m"], check=False)
+                import time as _time
+                _time.sleep(0.2)
+                for line in blueprint_lines:
+                    safe_line = line.replace("'", "'\\''").replace('"', '\\"')
+                    subprocess.run(["tmux", "send-keys", "-t", session_name, f'echo "{safe_line}"', "C-m"], check=False)
+                # Show workspace info and leave user at an interactive prompt
+                subprocess.run(["tmux", "send-keys", "-t", session_name, 'echo ""', "C-m"], check=False)
+                subprocess.run(["tmux", "send-keys", "-t", session_name, 'echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"', "C-m"], check=False)
+                subprocess.run(["tmux", "send-keys", "-t", session_name, 'echo "⚡ Ready for manual remediation. Type commands below."', "C-m"], check=False)
+                subprocess.run(["tmux", "send-keys", "-t", session_name, 'echo "   To install OpenCode: npm i -g opencode"', "C-m"], check=False)
+                subprocess.run(["tmux", "send-keys", "-t", session_name, 'echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"', "C-m"], check=False)
 
             return {
                 "success": True,

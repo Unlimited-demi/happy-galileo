@@ -845,16 +845,29 @@ function IncidentConsoleView({ incidents, onSelect, onDispatch, onPurge }) {
 // ── COMPONENT: InteractiveTmuxTerminal ──
 function InteractiveTmuxTerminal({ sessionName, onCopy }) {
   const terminalRef = useRef(null);
+  const termInstanceRef = useRef(null);
+  const lastOutputRef = useRef('');
   const [connected, setConnected] = useState(false);
+
+  // Focus the terminal when the container div is clicked
+  const handleContainerClick = useCallback(() => {
+    if (termInstanceRef.current) {
+      termInstanceRef.current.focus();
+    }
+  }, []);
 
   useEffect(() => {
     if (!terminalRef.current || !window.Terminal) return;
 
     const term = new window.Terminal({
       cursorBlink: true,
+      cursorStyle: 'block',
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
       fontSize: 13,
       lineHeight: 1.35,
+      scrollback: 1000,
+      convertEol: true,
+      disableStdin: false,
       theme: {
         background: '#030712',
         foreground: '#f1f5f9',
@@ -871,6 +884,8 @@ function InteractiveTmuxTerminal({ sessionName, onCopy }) {
       },
     });
 
+    termInstanceRef.current = term;
+
     let fitAddon = null;
     if (window.FitAddon && window.FitAddon.FitAddon) {
       fitAddon = new window.FitAddon.FitAddon();
@@ -882,30 +897,48 @@ function InteractiveTmuxTerminal({ sessionName, onCopy }) {
       try { fitAddon.fit(); } catch (e) {}
     }
 
-    term.writeln(`\x1b[36m⚡ Connecting to live in-browser tmux session: ${sessionName}...\x1b[0m\r\n`);
+    // Focus the terminal immediately so user can type
+    term.focus();
 
-    // Handle user keystrokes & typing
+    term.writeln('\x1b[36m⚡ Connecting to live tmux session: ' + sessionName + '...\x1b[0m');
+    term.writeln('\x1b[90m   Click inside this terminal to start typing.\x1b[0m\r\n');
+
+    // Forward every keystroke to tmux via POST
     const dataListener = term.onData((inputData) => {
-      fetch(`/api/terminals/${sessionName}/input`, {
+      fetch('/api/terminals/' + sessionName + '/input', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ input: inputData }),
       }).catch(() => {});
     });
 
-    // Stream SSE terminal updates
-    const es = new EventSource(`/api/terminals/${sessionName}/stream`);
+    // Stream tmux pane output via SSE
+    const es = new EventSource('/api/terminals/' + sessionName + '/stream');
 
     es.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
-        if (payload && payload.output) {
-          setConnected(true);
-          term.clear();
-          term.write(payload.output.replace(/\r?\n/g, '\r\n'));
+        if (payload && payload.output != null) {
+          const newOutput = payload.output;
+          // Only redraw if content actually changed
+          if (newOutput !== lastOutputRef.current) {
+            lastOutputRef.current = newOutput;
+            setConnected(true);
+            // Reset terminal and write the full captured pane
+            term.reset();
+            // Write each line from tmux capture-pane
+            const lines = newOutput.split('\n');
+            for (let i = 0; i < lines.length; i++) {
+              if (i < lines.length - 1) {
+                term.writeln(lines[i]);
+              } else {
+                term.write(lines[i]);
+              }
+            }
+          }
         }
       } catch (err) {
-        term.write(event.data);
+        // raw text fallback
       }
     };
 
@@ -917,7 +950,7 @@ function InteractiveTmuxTerminal({ sessionName, onCopy }) {
       if (fitAddon) {
         try {
           fitAddon.fit();
-          fetch(`/api/terminals/${sessionName}/resize`, {
+          fetch('/api/terminals/' + sessionName + '/resize', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ cols: term.cols, rows: term.rows }),
@@ -933,6 +966,8 @@ function InteractiveTmuxTerminal({ sessionName, onCopy }) {
       dataListener.dispose();
       es.close();
       term.dispose();
+      termInstanceRef.current = null;
+      lastOutputRef.current = '';
     };
   }, [sessionName]);
 
@@ -980,7 +1015,12 @@ function InteractiveTmuxTerminal({ sessionName, onCopy }) {
         )
       )
     ),
-    React.createElement('div', { ref: terminalRef, className: 'xterm-container-body' })
+    React.createElement('div', {
+      ref: terminalRef,
+      className: 'xterm-container-body',
+      onClick: handleContainerClick,
+      style: { cursor: 'text' },
+    })
   );
 }
 
