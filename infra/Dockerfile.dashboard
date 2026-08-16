@@ -1,7 +1,7 @@
 # ==============================================================================
 # Multi-Stage Dockerfile for ServerGuard Dashboard
 # Stage 1: Build React 18 + Vite + Tailwind + Radix UI Frontend
-# Stage 2: Serve via Python 3.11 Backend with tmux + OpenCode agent
+# Stage 2: Serve via Python 3.11 Backend (oversight only — no agent execution)
 # ==============================================================================
 
 # ── Stage 1: Frontend Build ──
@@ -14,27 +14,14 @@ RUN npm install
 COPY dashboard/frontend ./
 RUN npm run build
 
-# ── Stage 2: Production Python Backend & OpenCode Agent Runtime ──
+# ── Stage 2: Production Python Backend (lightweight oversight server) ──
 FROM python:3.11-slim
 WORKDIR /app
 
-# Install system dependencies: tmux, git, Node.js 20, and build tools
+# Minimal system deps — dashboard is read-only oversight, no agent execution
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tmux \
-    git \
-    procps \
     curl \
-    ca-certificates \
-    gnupg \
-    && mkdir -p /etc/apt/keyrings \
-    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
-
-# Install OpenCode AI coding agent globally
-RUN npm install -g opencode-ai
 
 # Copy backend code
 COPY devctl /app/devctl

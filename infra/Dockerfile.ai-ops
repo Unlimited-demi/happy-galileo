@@ -1,0 +1,35 @@
+# ==============================================================================
+# Dockerfile for AI-Ops Autonomous Monitoring & Remediation Daemon
+# Includes: Python 3.11, tmux, git, Node.js 20, OpenCode AI agent
+# This is the container that detects incidents AND auto-dispatches OpenCode
+# ==============================================================================
+FROM python:3.11-slim
+WORKDIR /app
+
+# Install system deps: tmux for session management, git for branch checkout,
+# Node.js 20 for OpenCode AI agent, procps for process inspection
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tmux \
+    git \
+    procps \
+    curl \
+    ca-certificates \
+    gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install OpenCode AI coding agent globally
+# This is the same agent installed on the host via setup-server.sh
+RUN npm install -g opencode-ai 2>/dev/null || npm install -g @opencode/cli 2>/dev/null || true
+
+# Copy application code (also volume-mounted in docker-compose for live updates)
+COPY devctl /app/devctl
+COPY ai_ops /app/ai_ops
+
+ENV PYTHONPATH=/app
+
+CMD ["python3", "/app/ai_ops/daemon.py"]

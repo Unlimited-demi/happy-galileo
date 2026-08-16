@@ -144,11 +144,27 @@ class RemediationEngine:
 
         print(f"[INCIDENT CREATED] {incident['id']} — {title}")
         print(f"  Dossier: ~/.devctl/incidents/{incident['id']}.md")
-        print(f"  Claim:   devctl incident claim {incident['id']}")
+
+        # ── AUTO-DISPATCH: Launch OpenCode on THIS node to fix the bug ──
+        # OpenCode is installed on the host via setup-server.sh (npm i -g opencode-ai)
+        # It runs in a local tmux session: opencode-<incident_id>
+        try:
+            from ai_ops.dispatcher import IncidentDispatcher
+            dispatcher = IncidentDispatcher()
+            dispatch_result = dispatcher.dispatch(incident["id"])
+            if dispatch_result.get("success"):
+                print(f"  ⚡ AUTO-DISPATCHED: OpenCode session '{dispatch_result.get('session_name')}'")
+                print(f"     Attach: tmux attach -t {dispatch_result.get('session_name')}")
+            else:
+                print(f"  ⚠ Auto-dispatch failed: {dispatch_result.get('error', 'unknown')}")
+                print(f"  Manual: devctl dispatch {incident['id']}")
+        except Exception as dispatch_err:
+            print(f"  ⚠ Auto-dispatch error: {dispatch_err}")
+            print(f"  Manual: devctl dispatch {incident['id']}")
 
         return {
             "level": 3,
-            "action": "ESCALATE_TO_OPENCODE",
+            "action": "ESCALATE_AND_DISPATCH",
             "incident_id": incident["id"],
             "dossier": f"{incident['id']}.md",
         }

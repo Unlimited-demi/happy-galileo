@@ -43,17 +43,16 @@ services:
       - CENTRAL_HUB_URL=${CENTRAL_HUB_URL:-}
       - FLEET_KEY=${FLEET_KEY:-}
       - PYTHONPATH=/app
-      # LLM API keys for OpenCode autonomous remediation agent
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     command: python3 /app/dashboard/app.py
     networks:
       - dev-net
 
   # 3. AI-Ops Autonomous Monitoring & Escalation Daemon
   ai-ops:
-    image: python:3.11-slim
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.ai-ops
+    image: serverguard-ai-ops:latest
     container_name: ai-ops-daemon
     restart: unless-stopped
     working_dir: /app
@@ -62,6 +61,7 @@ services:
       - ../.devctl:/app/.devctl
       - ../devctl:/app/devctl
       - ../ai_ops:/app/ai_ops
+      - /opt:/opt
     environment:
       - BASE_DOMAIN=${BASE_DOMAIN:-dev-server.datakrib.com}
       - CADDY_ADMIN_API=http://caddy:2019
