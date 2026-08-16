@@ -103,6 +103,36 @@ class DossierBuilder:
         logs_lines = logs.splitlines() if logs else []
         last_logs = "\n".join(logs_lines[-50:]) if logs_lines else ""
 
+        # Extract codebase workspace context from DomainRegistry or container labels
+        workspace_dir = None
+        compose_file = None
+        compose_service = None
+        git_branch = "master"
+        git_commit = "N/A"
+        project_type = "Docker Service"
+
+        try:
+            from devctl.core.domains import DomainRegistry
+            registry = DomainRegistry()
+            svc_data = registry.get_service(service_name)
+            if svc_data:
+                workspace_dir = svc_data.get("workspace_dir")
+                compose_file = svc_data.get("compose_file")
+                git_branch = svc_data.get("git_branch", "master")
+                codebase = (svc_data.get("metadata") or {}).get("codebase") or {}
+                compose_service = codebase.get("compose_service")
+                git_commit = codebase.get("git_commit", "N/A")
+                project_type = codebase.get("project_type", "Docker Service")
+        except Exception:
+            pass
+
+        # Fallback inspection directly from container labels if not in registry
+        if not workspace_dir and container_info:
+            labels = container_info.get("Config", {}).get("Labels", {}) or {}
+            workspace_dir = labels.get("com.docker.compose.project.working_dir")
+            compose_file = labels.get("com.docker.compose.project.config_files")
+            compose_service = labels.get("com.docker.compose.service", container_name)
+
         return {
             "service_name": service_name,
             "container_name": container_name,
@@ -119,6 +149,12 @@ class DossierBuilder:
             "failure_reasons": failure_reasons or [],
             "stack_trace": stack_trace,
             "logs": last_logs,
+            "workspace_dir": workspace_dir,
+            "compose_file": compose_file,
+            "compose_service": compose_service,
+            "git_branch": git_branch,
+            "git_commit": git_commit,
+            "project_type": project_type,
         }
 
     def generate_recommendation(self, evidence: Dict[str, Any]) -> str:

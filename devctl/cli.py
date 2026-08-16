@@ -155,22 +155,25 @@ def cmd_list(args):
         print("    Expose a service with: devctl expose <service> <port> or run devctl discover")
         return
 
-    print("\n" + "=" * 115)
-    print(f"{'SERVICE':<24} {'TYPE':<12} {'PORT':<8} {'STATUS':<12} {'PUBLIC HTTPS / ACCESS':<45}")
-    print("=" * 115)
+    print("\n" + "=" * 125)
+    print(f"{'SERVICE':<22} {'TYPE':<10} {'PORT':<7} {'STATUS':<11} {'WORKSPACE / CODEBASE':<32} {'PUBLIC ACCESS':<38}")
+    print("=" * 125)
 
     for s in services:
         name = s.get("service_name", "unknown")
         c_type = (s.get("container_type") or "web").upper()
         port = str(s.get("port", ""))
-        url = s.get("url") or "[INTERNAL ONLY - PROTECTED]"
+        url = s.get("url") or "[INTERNAL - NO URL]"
+        ws = s.get("workspace_dir") or "[host container]"
+        if len(ws) > 30:
+            ws = "..." + ws[-27:]
         
         is_running = docker_mgr.is_running(s.get("container_name", name))
         status = "● RUNNING" if is_running else "○ STOPPED"
 
-        print(f"{name:<24} {c_type:<12} {port:<8} {status:<12} {url:<45}")
+        print(f"{name:<22} {c_type:<10} {port:<7} {status:<11} {ws:<32} {url:<38}")
 
-    print("=" * 115 + "\n")
+    print("=" * 125 + "\n")
 
 
 def cmd_discover(args):
@@ -183,17 +186,20 @@ def cmd_discover(args):
         print("[✓] All running containers are already indexed and monitored.")
         return
 
-    print(f"\n[✓] Successfully indexed {len(discovered)} container(s) with AI role classification:")
-    print("=" * 110)
-    print(f"{'CONTAINER':<24} {'ROLE / ARCHETYPE':<22} {'PORT':<8} {'PUBLIC INGRESS ROUTE':<45}")
-    print("=" * 110)
+    print(f"\n[✓] Successfully indexed {len(discovered)} container(s) with AI role & workspace classification:")
+    print("=" * 125)
+    print(f"{'CONTAINER':<24} {'ROLE / ARCHETYPE':<22} {'PORT':<7} {'WORKSPACE LOCATION':<32} {'INGRESS ROUTE':<35}")
+    print("=" * 125)
     for d in discovered:
         c_type = (d.get("container_type") or "web").upper()
         ai_meta = (d.get("metadata") or {}).get("ai_inference") or {}
         role = ai_meta.get("role_label") or c_type
-        access = d.get("url") or "[PROTECTED INTERNAL - NO PUBLIC URL]"
-        print(f"{d['container_name']:<24} {role:<22} {str(d['port']):<8} {access:<45}")
-    print("=" * 110)
+        access = d.get("url") or "[INTERNAL - NO PUBLIC URL]"
+        ws = d.get("workspace_dir") or "[Docker Host]"
+        if len(ws) > 30:
+            ws = "..." + ws[-27:]
+        print(f"{d['container_name']:<24} {role:<22} {str(d['port']):<7} {ws:<32} {access:<35}")
+    print("=" * 125)
     print("💡 All discovered services are safely attached to dev-net and continuously monitored.\n")
 
 
@@ -445,18 +451,48 @@ def cmd_dispatch(args):
     print(f"  {recommendation}")
     print("─" * 70)
 
-    # 3. Create fix branch in git if in a git repository
+    # 3. Resolve target service workspace directory from metadata / container labels
+    registry = DomainRegistry()
+    svc_data = registry.get_service(service_name) or {}
+    workspace_dir = evidence.get("workspace_dir") or svc_data.get("workspace_dir")
+    compose_service = evidence.get("compose_service") or svc_data.get("container_name") or service_name
+    port = evidence.get("port") or svc_data.get("port") or 80
+
+    if not workspace_dir:
+        # Fallback inspection directly from container
+        docker_mgr = DockerManager()
+        c_info = docker_mgr.inspect_container(service_name)
+        if c_info:
+            labels = c_info.get("Config", {}).get("Labels", {}) or {}
+            workspace_dir = labels.get("com.docker.compose.project.working_dir")
+            compose_service = labels.get("com.docker.compose.service", compose_service)
+
+    from pathlib import Path
+    if workspace_dir and os.path.exists(workspace_dir):
+        svc_dir = Path(workspace_dir)
+    elif (BASE_DIR / "services" / service_name).exists():
+        svc_dir = BASE_DIR / "services" / service_name
+    else:
+        svc_dir = BASE_DIR
+
+    print(f"📁 Target Workspace Directory: {svc_dir}")
+
+    # 4. Create fix branch in git repository if git exists in workspace
     import subprocess
     try:
-        subprocess.run(["git", "checkout", "-b", branch_name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print(f"[✓] Git Branch created and checked out: {branch_name}")
+        res = subprocess.run(
+            ["git", "-C", str(svc_dir), "checkout", "-b", branch_name],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if res.returncode == 0:
+            print(f"[✓] Git Fix Branch created and checked out: {branch_name} in {svc_dir}")
+        else:
+            print(f"  [i] Git branch: {res.stderr.strip() or 'Working on active branch'}")
     except Exception:
         pass
-
-    # 4. Resolve target service directory
-    svc_dir = BASE_DIR / "services" / service_name
-    if not svc_dir.exists():
-        svc_dir = BASE_DIR
 
     dossier_file = Config.INCIDENTS_DIR / f"{incident_id}.md"
 
@@ -464,15 +500,17 @@ def cmd_dispatch(args):
     prompt = (
         f"URGENT INCIDENT REMEDIATION: {incident_id} ({service_name})\n"
         f"1. Read evidence dossier: {dossier_file}\n"
-        f"2. SCOPE CONSTRAINT: Only investigate and modify code inside directory: {svc_dir}\n"
-        f"   (STRICT: Do NOT modify ai_ops/, devctl/, or infra/ infrastructure code).\n"
-        f"3. You are already on fix branch: {branch_name}\n"
-        f"4. Implement the fix in source code and rebuild: cd {svc_dir} && docker compose up -d --build\n"
-        f"5. Verify with: devctl test {service_name}\n"
-        f"6. Mark resolved: devctl incident resolve {incident_id} --notes 'Fixed {service_name} root cause and verified with tests.'"
+        f"2. SCOPE CONSTRAINT: Work inside service workspace: {svc_dir}\n"
+        f"3. Active fix branch: {branch_name}\n"
+        f"4. Diagnose root cause, implement code fix, and rebuild container:\n"
+        f"   cd {svc_dir} && docker compose up -d --build {compose_service}\n"
+        f"5. Deploy staging verification route:\n"
+        f"   devctl expose {service_name} {port} --env staging\n"
+        f"6. Run Playwright automated verification:\n"
+        f"   devctl test {service_name}-staging\n"
+        f"7. Mark incident resolved:\n"
+        f"   devctl incident resolve {incident_id} --notes 'Fixed {service_name} and verified on staging.'"
     )
-
-    print(f"[*] Target Service Directory Scoped: {svc_dir}")
 
     # 5. Check if opencode executable is present to launch
     import shutil

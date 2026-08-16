@@ -117,10 +117,17 @@ class IncidentBus:
 ## 📌 Summary
 {incident['title']}
 
-## 🔍 Evidence
-- **Failing URL:** `{failing_url}`
-- **HTTP Status:** `{status_code}`
+## 🔍 Diagnostic Evidence
 - **Container State:** `{evidence.get('container_state', 'Unknown')}`
+- **HTTP Status:** `{status_code}`
+- **Failing URL:** `{failing_url}`
+- **Stack / Project Type:** `{evidence.get('project_type', 'Docker Service')}`
+
+## 📁 Codebase & Git Context
+- **Workspace Directory:** `{evidence.get('workspace_dir', 'N/A')}`
+- **Docker Compose File:** `{evidence.get('compose_file', 'N/A')}`
+- **Target Compose Service:** `{evidence.get('compose_service', incident['service_name'])}`
+- **Active Git Branch:** `{evidence.get('git_branch', 'master')}`
 - **Recent Git Commit:** `{evidence.get('git_commit', 'N/A')}`
 
 ### 🪵 Recent Logs / Stack Trace:
@@ -130,6 +137,25 @@ class IncidentBus:
 
 ## 🛠️ Recommended Action for OpenCode
 {incident.get('recommendation', 'Investigate recent code changes, run regression tests, fix application bug, and redeploy.')}
+
+### 📋 Suggested Autonomous Remediation Workflow:
+```bash
+# 1. Navigate to service workspace
+cd {evidence.get('workspace_dir', '/opt/happy-galileo')}
+
+# 2. Checkout fix branch
+git checkout -b fix/{incident['service_name']}-{incident_id.lower()}
+
+# 3. Implement code fix & rebuild container
+docker compose up -d --build {evidence.get('compose_service', incident['service_name'])}
+
+# 4. Deploy staging verification route & test with Playwright
+devctl expose {incident['service_name']} {evidence.get('port', 80)} --env staging
+devctl test {incident['service_name']}-staging
+
+# 5. Mark incident resolved
+devctl incident resolve {incident_id} --notes "Resolved {incident['service_name']} root cause and verified on staging."
+```
 {resolution_section}
 ---
 *To inspect dossier: `devctl incident inspect {incident_id}`*

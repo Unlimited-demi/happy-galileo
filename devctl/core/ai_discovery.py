@@ -77,8 +77,11 @@ class AIContainerInference:
         # Fetch recent logs for startup banners
         logs_sample = self.docker.get_logs(container_name, tail=20)
 
+        # Inspect codebase, workspace location, and git repository context
+        codebase_info = self._inspect_codebase(container_name, info)
+
         # Run inference rules
-        return self._evaluate_profile(
+        profile = self._evaluate_profile(
             container_name=container_name,
             image=image,
             cmd=cmd,
@@ -88,6 +91,155 @@ class AIContainerInference:
             exposed_ports=exposed_ports,
             logs_sample=logs_sample,
         )
+        profile["codebase"] = codebase_info
+        return profile
+
+    def _inspect_codebase(self, container_name: str, info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Inspect host codebase, git repo, compose working directory, and bind mounts for a container.
+        This provides OpenCode with the exact directory path to checkout fix branches and rebuild.
+        """
+        import os
+        import subprocess
+        from pathlib import Path
+
+        labels = info.get("Config", {}).get("Labels", {}) or {}
+        mounts = info.get("Mounts", []) or []
+
+        # 1. Check Docker Compose project working directory
+        compose_work_dir = labels.get("com.docker.compose.project.working_dir")
+        compose_file = labels.get("com.docker.compose.project.config_files")
+        compose_service = labels.get("com.docker.compose.service", container_name)
+        compose_project = labels.get("com.docker.compose.project", "")
+
+        # 2. Check bind mounts to locate host source code directories
+        bind_mounts = []
+        candidate_dirs = []
+        if compose_work_dir:
+            candidate_dirs.append(compose_work_dir)
+
+        for m in mounts:
+            if m.get("Type") == "bind":
+                src = m.get("Source", "")
+                dst = m.get("Destination", "")
+                if src and os.path.exists(src):
+                    bind_mounts.append({"host_path": src, "container_path": dst})
+                    candidate_dirs.append(src)
+
+        # 3. Determine the primary workspace directory
+        workspace_dir = None
+        for cd in candidate_dirs:
+            p = Path(cd)
+            if p.is_dir():
+                workspace_dir = str(p.resolve())
+                break
+
+        # Fallback search if not found in compose labels
+        if not workspace_dir and bind_mounts:
+            workspace_dir = bind_mounts[0]["host_path"]
+
+        # 4. Check for Git repository & active branch
+        is_git_repo = False
+        git_root = None
+        git_branch = None
+        git_remote = None
+        git_commit = None
+
+        if workspace_dir:
+            try:
+                # Walk up to find .git directory
+                curr = Path(workspace_dir)
+                for parent in [curr] + list(curr.parents):
+                    if (parent / ".git").exists():
+                        is_git_repo = True
+                        git_root = str(parent)
+                        break
+
+                if is_git_repo and git_root:
+                    # Query git branch
+                    try:
+                        res = subprocess.run(
+                            ["git", "-C", git_root, "rev-parse", "--abbrev-ref", "HEAD"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            timeout=2,
+                            check=False,
+                        )
+                        if res.returncode == 0:
+                            git_branch = res.stdout.strip()
+                    except Exception:
+                        pass
+
+                    # Query git remote URL
+                    try:
+                        res = subprocess.run(
+                            ["git", "-C", git_root, "remote", "get-url", "origin"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            timeout=2,
+                            check=False,
+                        )
+                        if res.returncode == 0:
+                            git_remote = res.stdout.strip()
+                    except Exception:
+                        pass
+
+                    # Query latest commit
+                    try:
+                        res = subprocess.run(
+                            ["git", "-C", git_root, "log", "-1", "--oneline"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            timeout=2,
+                            check=False,
+                        )
+                        if res.returncode == 0:
+                            git_commit = res.stdout.strip()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # 5. Detect project type / stack markers in workspace
+        project_type = "Docker Container"
+        if workspace_dir and os.path.exists(workspace_dir):
+            try:
+                wp = Path(workspace_dir)
+                if (wp / "package.json").exists():
+                    project_type = "Node.js / JavaScript"
+                elif (wp / "tsconfig.json").exists():
+                    project_type = "TypeScript"
+                elif (wp / "requirements.txt").exists() or (wp / "pyproject.toml").exists() or (wp / "Pipfile").exists():
+                    project_type = "Python"
+                elif (wp / "go.mod").exists():
+                    project_type = "Go (Golang)"
+                elif (wp / "Cargo.toml").exists():
+                    project_type = "Rust"
+                elif (wp / "composer.json").exists():
+                    project_type = "PHP"
+                elif (wp / "Gemfile").exists():
+                    project_type = "Ruby"
+                elif (wp / "pom.xml").exists() or (wp / "build.gradle").exists():
+                    project_type = "Java / JVM"
+            except Exception:
+                pass
+
+        return {
+            "workspace_dir": workspace_dir,
+            "compose_file": compose_file,
+            "compose_service": compose_service,
+            "compose_project": compose_project,
+            "is_git_repo": is_git_repo,
+            "git_root": git_root,
+            "git_branch": git_branch or "master",
+            "git_remote": git_remote,
+            "git_commit": git_commit,
+            "bind_mounts": bind_mounts,
+            "project_type": project_type,
+        }
 
     def _evaluate_profile(
         self,

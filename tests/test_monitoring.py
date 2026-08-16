@@ -320,3 +320,35 @@ class TestAIContainerInference:
         assert profile["is_publicly_exposable"] is True
         assert profile["recommended_port"] == 3000
 
+    def test_codebase_workspace_inspection(self):
+        from devctl.core.ai_discovery import AIContainerInference
+        mock_docker = MagicMock()
+        mock_docker.inspect_container.return_value = {
+            "Config": {
+                "Image": "anivault-backend:latest",
+                "Cmd": ["node", "dist/server.js"],
+                "Labels": {
+                    "com.docker.compose.project.working_dir": "/opt/anivault",
+                    "com.docker.compose.project.config_files": "/opt/anivault/docker-compose.yml",
+                    "com.docker.compose.service": "anivault-backend",
+                },
+                "Env": ["PORT=8070"],
+            },
+            "Mounts": [
+                {"Type": "bind", "Source": "/opt/anivault/backend", "Destination": "/app"}
+            ],
+            "NetworkSettings": {"Ports": {"8070/tcp": None}},
+        }
+        mock_docker.get_logs.return_value = "Listening on port 8070"
+
+        inference = AIContainerInference(docker=mock_docker)
+        profile = inference.inspect_and_infer("anivault-backend-1")
+
+        assert "codebase" in profile
+        cb = profile["codebase"]
+        assert cb["workspace_dir"] == "/opt/anivault"
+        assert cb["compose_file"] == "/opt/anivault/docker-compose.yml"
+        assert cb["compose_service"] == "anivault-backend"
+        assert len(cb["bind_mounts"]) == 1
+        assert cb["bind_mounts"][0]["host_path"] == "/opt/anivault/backend"
+

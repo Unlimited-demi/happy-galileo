@@ -131,11 +131,14 @@ class DomainRegistry:
         container_type: str = "web",
         url: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Register a new exposed service."""
+        """Register a new monitored/exposed service."""
         state = self._load_state()
         if url is None and container_type == "web" and domain:
             url = f"https://{domain}"
             
+        meta = metadata or {}
+        codebase = meta.get("codebase") or (meta.get("ai_inference") or {}).get("codebase") or {}
+
         entry = {
             "service_name": service_name,
             "container_name": container_name,
@@ -144,8 +147,11 @@ class DomainRegistry:
             "url": url,
             "env": env,
             "container_type": container_type,
+            "workspace_dir": codebase.get("workspace_dir"),
+            "compose_file": codebase.get("compose_file"),
+            "git_branch": codebase.get("git_branch", "master"),
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "metadata": metadata or {},
+            "metadata": meta,
             "status": "active",
         }
         state["services"][service_name] = entry
@@ -179,50 +185,144 @@ class DomainRegistry:
         return list(state["services"].values())
 
     def detect_existing_domains(self):
-        """Scan existing reverse proxy configs to detect real domain-to-container mappings."""
-        import glob, re
-        domains = {}  # container_name -> domain
-        
-        # Scan nginx configs
+        """
+        Scan ALL reverse proxy configs to detect real domain-to-container mappings.
+        Checks: host nginx, host caddy, container-mounted configs, Docker labels (traefik, caddy-docker-proxy).
+        Returns: dict of container_name -> {"domain": str, "source": str}
+        """
+        import glob
+        import subprocess
+        domains = {}  # container_name -> {"domain": ..., "source": ...}
+
+        # 1. Scan host nginx configs
         nginx_paths = glob.glob('/etc/nginx/sites-enabled/*') + glob.glob('/etc/nginx/conf.d/*.conf')
         for conf_path in nginx_paths:
             try:
                 with open(conf_path, 'r') as f:
                     content = f.read()
-                # Extract server_name and proxy_pass pairs
                 server_names = re.findall(r'server_name\s+([^;]+);', content)
                 proxy_passes = re.findall(r'proxy_pass\s+https?://([^:/;\s]+)', content)
                 if server_names and proxy_passes:
                     domain = server_names[0].strip().split()[0]
                     upstream = proxy_passes[0].strip()
                     if domain and upstream and domain != '_':
-                        domains[upstream] = domain
+                        domains[upstream] = {"domain": domain, "source": f"nginx:{conf_path}"}
             except Exception:
                 continue
-        
+
+        # 2. Scan host Caddy configs (our own conf.d + global Caddyfile)
+        caddy_paths = glob.glob('/etc/caddy/conf.d/*.caddy') + glob.glob('/etc/caddy/Caddyfile')
+        for conf_path in caddy_paths:
+            try:
+                with open(conf_path, 'r') as f:
+                    content = f.read()
+                # Match "domain.com { ... reverse_proxy container:port }"
+                blocks = re.findall(r'(\S+\.\S+)\s*\{[^}]*reverse_proxy\s+(\S+)', content, re.DOTALL)
+                for domain, upstream in blocks:
+                    container = upstream.split(":")[0].strip()
+                    if domain and container:
+                        domains[container] = {"domain": domain, "source": f"caddy:{conf_path}"}
+            except Exception:
+                continue
+
+        # 3. Scan Docker container labels for traefik / caddy-docker-proxy
+        try:
+            cmd = ["docker", "ps", "--format", "{{.Names}}"]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=False)
+            if res.returncode == 0:
+                from devctl.core.docker_mgr import DockerManager
+                docker_mgr = DockerManager()
+                for c_name in [n.strip() for n in res.stdout.splitlines() if n.strip()]:
+                    info = docker_mgr.inspect_container(c_name)
+                    if not info:
+                        continue
+                    labels = info.get("Config", {}).get("Labels", {}) or {}
+
+                    # Traefik labels: traefik.http.routers.*.rule = Host(`domain`)
+                    for key, val in labels.items():
+                        if "traefik" in key and "rule" in key.lower() and "Host(" in val:
+                            host_match = re.search(r'Host\(`([^`]+)`\)', val)
+                            if host_match:
+                                domains[c_name] = {"domain": host_match.group(1), "source": "traefik-label"}
+
+                    # Caddy docker proxy labels: caddy=domain.com
+                    caddy_label = labels.get("caddy", "")
+                    if caddy_label and "." in caddy_label:
+                        domains[c_name] = {"domain": caddy_label, "source": "caddy-label"}
+
+                    # Check if container itself runs a reverse proxy (nginx/caddy inside)
+                    # by scanning its mounted config volumes for domain references
+                    mounts = info.get("Mounts", [])
+                    for mount in mounts:
+                        src = mount.get("Source", "")
+                        if any(kw in src for kw in ["nginx", "caddy", "apache", "httpd"]):
+                            # Scan config files in this mount for server_name / domain references
+                            conf_files = glob.glob(f"{src}/**/*.conf", recursive=True) + glob.glob(f"{src}/**/*.caddy", recursive=True)
+                            for cf in conf_files[:5]:  # limit to prevent slow scans
+                                try:
+                                    with open(cf, 'r') as f:
+                                        cf_content = f.read()
+                                    sn = re.findall(r'server_name\s+([^;]+);', cf_content)
+                                    if sn:
+                                        d = sn[0].strip().split()[0]
+                                        if d and d != '_' and '.' in d:
+                                            domains[c_name] = {"domain": d, "source": f"mounted-config:{cf}"}
+                                except Exception:
+                                    continue
+        except Exception:
+            pass
+
         return domains
 
     def discover_and_index_containers(self, use_ai: bool = True) -> List[Dict[str, Any]]:
         """
-        Auto-discover running Docker containers on the machine,
-        index their ports and locations, perform AI-assisted architectural inference,
-        assign domain routes to web services, and register internal components safely.
+        Auto-discover ALL running Docker containers and register them for MONITORING.
+
+        CRITICAL DESIGN PRINCIPLE:
+        Discovery NEVER assigns wildcard staging URLs or creates Caddy routes.
+        All containers are registered for health monitoring only.
+        The only way to get a public wildcard URL is via `devctl expose <service> <port>`.
+
+        This method:
+        1. Purges stale state entries for containers no longer running.
+        2. Pre-registers ServerGuard infra containers with known URLs.
+        3. Detects existing reverse proxy domains from nginx/caddy/traefik configs.
+        4. Registers all containers for monitoring with correct classification.
         """
         import subprocess
         from devctl.core.docker_mgr import DockerManager
-        from devctl.core.caddy import CaddyManager
         from devctl.core.ai_discovery import AIContainerInference
 
         docker_mgr = DockerManager()
-        caddy_mgr = CaddyManager()
         ai_engine = AIContainerInference() if use_ai else None
         state = self._load_state()
         registered = state.get("services", {})
 
         discovered = []
 
-        # ── Pre-register ServerGuard's own infrastructure containers ──
-        # These have known static Caddy routes and should not go through AI discovery.
+        # ── Step 0: Get all running container names ──
+        try:
+            cmd = ["docker", "ps", "--format", "{{.Names}}"]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=False)
+            if res.returncode != 0:
+                return []
+            running_names = set(n.strip() for n in res.stdout.splitlines() if n.strip())
+        except Exception:
+            return []
+
+        # ── Step 1: Purge stale state entries for containers that no longer exist ──
+        stale_keys = []
+        for svc_key, svc_data in registered.items():
+            c_name = svc_data.get("container_name", svc_key)
+            if c_name not in running_names:
+                stale_keys.append(svc_key)
+        for key in stale_keys:
+            del state["services"][key]
+        if stale_keys:
+            self._save_state(state)
+            registered = state.get("services", {})
+
+        # ── Step 2: Pre-register ServerGuard's own infrastructure ──
         SERVERGUARD_CONTAINERS = {
             "devctl-dashboard": {
                 "port": 8888,
@@ -249,134 +349,106 @@ class DomainRegistry:
 
         for sg_name, sg_info in SERVERGUARD_CONTAINERS.items():
             slug = self.sanitize_slug(sg_name)
-            if slug not in registered:
-                # Verify the container actually exists and is running
-                info = docker_mgr.inspect_container(sg_name)
-                if info and info.get("State", {}).get("Running", False):
-                    entry = self.register(
-                        service_name=slug,
-                        container_name=sg_name,
-                        port=sg_info["port"],
-                        domain=sg_info["domain"] or Config.get_full_domain(slug, "dev"),
-                        env="dev",
-                        container_type=sg_info["container_type"],
-                        url=sg_info["url"],
-                        metadata={
-                            "auto_discovered": True,
-                            "serverguard_infra": True,
-                            "ai_inference": {"role_label": sg_info["role"], "is_publicly_exposable": sg_info["url"] is not None},
-                        },
-                    )
-                    discovered.append(entry)
-                    # Reload state after registration
-                    state = self._load_state()
-                    registered = state.get("services", {})
+            if sg_name in running_names and slug not in registered:
+                entry = self.register(
+                    service_name=slug,
+                    container_name=sg_name,
+                    port=sg_info["port"],
+                    domain=sg_info["domain"],
+                    env="dev",
+                    container_type=sg_info["container_type"],
+                    url=sg_info["url"],
+                    metadata={
+                        "auto_discovered": True,
+                        "serverguard_infra": True,
+                        "ai_inference": {"role_label": sg_info["role"], "is_publicly_exposable": sg_info["url"] is not None},
+                    },
+                )
+                discovered.append(entry)
+                state = self._load_state()
+                registered = state.get("services", {})
 
-        # Detect existing real domains
+        # ── Step 3: Detect existing real domains from reverse proxies ──
         existing_domains = self.detect_existing_domains()
 
-        try:
-            # Query all running containers via docker inspect
-            cmd = ["docker", "ps", "--format", "{{.Names}}"]
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=False)
-            if res.returncode != 0:
-                return []
+        # ── Step 4: Register all remaining containers for monitoring ──
+        for c_name in running_names:
+            slug = self.sanitize_slug(c_name)
+            if slug in registered:
+                continue
 
-            container_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
+            info = docker_mgr.inspect_container(c_name)
+            if not info:
+                continue
 
-            for c_name in container_names:
-                if c_name in registered:
-                    continue
+            state_info = info.get("State", {})
+            if not state_info.get("Running", False):
+                continue
 
-                info = docker_mgr.inspect_container(c_name)
-                if not info:
-                    continue
+            image = info.get('Config', {}).get('Image', '')
+            ports = docker_mgr.detect_ports(c_name)
 
-                state_info = info.get("State", {})
-                if not state_info.get("Running", False):
-                    continue
+            # Connect container to dev-net for internal monitoring
+            docker_mgr.connect_to_network(c_name)
 
-                image = info.get('Config', {}).get('Image', '')
+            # AI-assisted classification
+            ai_profile = None
+            if ai_engine:
+                try:
+                    ai_profile = ai_engine.inspect_and_infer(c_name)
+                except Exception:
+                    ai_profile = None
 
-                # Detect exposed ports
-                ports = docker_mgr.detect_ports(c_name)
+            # Classify the container
+            if ai_profile and "database" in ai_profile.get("archetype", ""):
+                c_type = SERVICE_TYPE_DATABASE
+            elif ai_profile and "cache" in ai_profile.get("archetype", ""):
+                c_type = SERVICE_TYPE_CACHE
+            elif ai_profile and "mail" in ai_profile.get("archetype", ""):
+                c_type = SERVICE_TYPE_MAIL
+            elif ai_profile and "worker" in ai_profile.get("archetype", ""):
+                c_type = SERVICE_TYPE_WORKER
+            elif ai_profile and "ingress" in ai_profile.get("archetype", ""):
+                c_type = SERVICE_TYPE_INFRA
+            else:
+                c_type = self.classify_container(c_name, image, ports)
 
-                # Connect container to dev-net if not already connected
-                docker_mgr.connect_to_network(c_name)
-                
-                # Perform AI architecture inference if enabled
-                ai_profile = None
-                if ai_engine:
-                    try:
-                        ai_profile = ai_engine.inspect_and_infer(c_name)
-                    except Exception:
-                        ai_profile = None
+            # Check if this container has an existing real domain from a reverse proxy
+            real_domain_info = existing_domains.get(c_name)
+            real_domain = real_domain_info["domain"] if real_domain_info else None
+            real_domain_source = real_domain_info["source"] if real_domain_info else None
 
-                # Classify the container
-                if ai_profile and ai_profile.get("is_publicly_exposable"):
-                    c_type = SERVICE_TYPE_WEB
-                elif ai_profile and "database" in ai_profile.get("archetype", ""):
-                    c_type = SERVICE_TYPE_DATABASE
-                elif ai_profile and "cache" in ai_profile.get("archetype", ""):
-                    c_type = SERVICE_TYPE_CACHE
-                elif ai_profile and "mail" in ai_profile.get("archetype", ""):
-                    c_type = SERVICE_TYPE_MAIL
-                elif ai_profile and "worker" in ai_profile.get("archetype", ""):
-                    c_type = SERVICE_TYPE_WORKER
-                else:
-                    c_type = self.classify_container(c_name, image, ports)
+            # Determine port
+            port = 0
+            if ai_profile and ai_profile.get("recommended_port"):
+                port = ai_profile["recommended_port"]
+            elif ports:
+                web_ports = [p for p in ports if p in self.WEB_PORTS]
+                port = web_ports[0] if web_ports else ports[0]
 
-                slug = self.sanitize_slug(c_name)
-                domain = existing_domains.get(c_name) or Config.get_full_domain(slug, "dev")
+            meta = {
+                "auto_discovered": True,
+                "detected_ports": ports,
+                "image": image,
+                "ai_inference": ai_profile,
+            }
 
-                meta = {
-                    "auto_discovered": True,
-                    "detected_ports": ports,
-                    "image": image,
-                    "ai_inference": ai_profile,
-                }
+            # If we detected a real domain, store it in metadata
+            if real_domain:
+                meta["existing_domain"] = real_domain
+                meta["domain_source"] = real_domain_source
 
-                if c_type == SERVICE_TYPE_WEB:
-                    # Pick port from AI recommendation or WEB_PORTS intersection or first port
-                    if ai_profile and ai_profile.get("recommended_port"):
-                        port = ai_profile["recommended_port"]
-                    else:
-                        web_ports_intersection = [p for p in ports if p in self.WEB_PORTS]
-                        port = web_ports_intersection[0] if web_ports_intersection else (ports[0] if ports else 80)
-                    
-                    # Register in state
-                    entry = self.register(
-                        service_name=slug,
-                        container_name=c_name,
-                        port=port,
-                        domain=domain,
-                        env="dev",
-                        container_type=c_type,
-                        metadata=meta,
-                    )
-
-                    # Add dynamic Caddy route & SSL
-                    caddy_mgr.add_route(domain=domain, upstream_host=c_name, upstream_port=port)
-                    discovered.append(entry)
-                else:
-                    # Non-web container (Database, Cache, Mail, Worker, Internal)
-                    port = (ai_profile.get("recommended_port") if ai_profile else None) or (ports[0] if ports else 0)
-                    
-                    # Register in state with no public url
-                    entry = self.register(
-                        service_name=slug,
-                        container_name=c_name,
-                        port=port,
-                        domain=domain,
-                        env="dev",
-                        container_type=c_type,
-                        url=None,
-                        metadata=meta,
-                    )
-                    discovered.append(entry)
-
-        except Exception as e:
-            print(f"[!] Discovery error: {e}")
-            pass
+            # Register for MONITORING ONLY — no wildcard URL, no Caddy route
+            entry = self.register(
+                service_name=slug,
+                container_name=c_name,
+                port=port,
+                domain=real_domain,  # Real domain if detected, None otherwise
+                env="dev",
+                container_type=c_type,
+                url=f"https://{real_domain}" if real_domain else None,  # Only set URL if real domain exists
+                metadata=meta,
+            )
+            discovered.append(entry)
 
         return discovered
