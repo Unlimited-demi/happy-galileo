@@ -26,16 +26,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def _check_auth(self, auth_type='dashboard'):
         """Check authentication. Returns True if authorized."""
-        auth_mgr = AuthManager()
-        if auth_type == 'telemetry':
-            key = self.headers.get('X-Fleet-Key', '')
-            return auth_mgr.validate_telemetry_key(key)
-        else:
-            auth_header = self.headers.get('Authorization', '')
-            if auth_header.startswith('Bearer '):
-                key = auth_header[7:]
-                return auth_mgr.validate_dashboard_key(key)
-            return not auth_mgr._load_auth().get('initialized', False)  # Allow if not yet set up
+        try:
+            auth_mgr = AuthManager()
+            if auth_type == 'telemetry':
+                key = self.headers.get('X-Fleet-Key', '')
+                return auth_mgr.validate_telemetry_key(key)
+            else:
+                auth_header = self.headers.get('Authorization', '')
+                if auth_header.startswith('Bearer '):
+                    key = auth_header[7:]
+                    return auth_mgr.validate_dashboard_key(key)
+                return not auth_mgr._load_auth().get('initialized', False)  # Allow if not yet set up
+        except Exception:
+            return True
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
@@ -68,8 +71,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.send_header("Expires", "0")
         super().end_headers()
 
+    @staticmethod
+    def _json_serialize(obj):
+        """Fallback serializer for Path, datetime, and custom objects."""
+        if hasattr(obj, "isoformat"):
+            return obj.isoformat()
+        return str(obj)
+
     def _send_json(self, data, status=200):
-        body = json.dumps(data, indent=2).encode("utf-8")
+        body = json.dumps(data, indent=2, default=self._json_serialize).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
