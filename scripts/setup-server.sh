@@ -9,9 +9,14 @@ set -e
 
 # Parse optional --domain argument
 BASE_DOMAIN="${BASE_DOMAIN:-dev-server.datakrib.com}"
+GIT_NAME="${GIT_NAME:-}"
+GIT_EMAIL="${GIT_EMAIL:-}"
+
 while [[ "$#" -gt 0 ]]; do
   case $1 in
     --domain) BASE_DOMAIN="$2"; shift ;;
+    --git-name|--git-username) GIT_NAME="$2"; shift ;;
+    --git-email) GIT_EMAIL="$2"; shift ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
   shift
@@ -47,7 +52,36 @@ apt-get install -y \
   python3 \
   python3-pip \
   python3-venv \
-  jq
+  jq \
+  openssh-client
+
+# ── GitHub & SSH Deploy Key Setup ──
+echo "[*] Setting up GitHub SSH deploy key & Git identity..."
+SSH_DIR="${HOME}/.ssh"
+mkdir -p "${SSH_DIR}"
+chmod 700 "${SSH_DIR}"
+
+if [ ! -f "${SSH_DIR}/id_ed25519" ]; then
+  echo "  Generating ED25519 SSH Key..."
+  ssh-keygen -t ed25519 -C "${GIT_EMAIL:-server@datakrib.com}" -f "${SSH_DIR}/id_ed25519" -N ""
+fi
+
+# Pre-populate known_hosts for github.com
+ssh-keyscan -t ed25519,rsa github.com >> "${SSH_DIR}/known_hosts" 2>/dev/null || true
+chmod 600 "${SSH_DIR}/known_hosts" 2>/dev/null || true
+
+# Configure Git username & email
+if [ -n "${GIT_NAME}" ]; then
+  git config --global user.name "${GIT_NAME}"
+elif [ -z "$(git config --global user.name 2>/dev/null)" ]; then
+  git config --global user.name "OpenCode Server"
+fi
+
+if [ -n "${GIT_EMAIL}" ]; then
+  git config --global user.email "${GIT_EMAIL}"
+elif [ -z "$(git config --global user.email 2>/dev/null)" ]; then
+  git config --global user.email "bot@datakrib.com"
+fi
 
 echo "[2/8] Installing Docker & Docker Compose..."
 if ! command -v docker &> /dev/null; then
@@ -148,7 +182,7 @@ if [ ! -f ".env" ] && [ -f "${PROJECT_DIR}/.env.example" ]; then
   sed "s/dev-server.datakrib.com/${BASE_DOMAIN}/g" "${PROJECT_DIR}/.env.example" > .env
 fi
 
-docker compose -f docker-compose.infra.yml up -d
+docker compose -f docker-compose.infra.yml up -d --build
 
 echo ""
 echo "========================================================"
@@ -163,3 +197,23 @@ echo ""
 
 # Run doctor diagnostic
 devctl doctor
+
+# ── Print SSH Deploy Key for GitHub ──
+if [ -f "${HOME}/.ssh/id_ed25519.pub" ]; then
+  PUB_KEY="$(cat "${HOME}/.ssh/id_ed25519.pub")"
+  echo ""
+  echo "╔══════════════════════════════════════════════════════════════════════╗"
+  echo "║ 🔑 GITHUB SSH PUBLIC KEY FOR THIS SERVER                             ║"
+  echo "╠══════════════════════════════════════════════════════════════════════╣"
+  echo ""
+  echo "  ${PUB_KEY}"
+  echo ""
+  echo "  👉 Add this key to GitHub so OpenCode can checkout & push fix branches:"
+  echo "     1. Go to: https://github.com/settings/keys"
+  echo "        (or repo Deploy Keys: https://github.com/Unlimited-demi/happy-galileo/settings/keys)"
+  echo "     2. Click 'New SSH Key' (Title: serverguard-primary)"
+  echo "     3. Paste the key above (check 'Allow write access' if Deploy Key)"
+  echo ""
+  echo "╚══════════════════════════════════════════════════════════════════════╝"
+  echo ""
+fi
