@@ -71,11 +71,11 @@ class IncidentDispatcher:
         evidence = incident.get("evidence", {}) or {}
 
         # 1. Resolve host workspace directory & compose file
-        svc_entry = self.registry.get_service(service_name)
-        svc_meta = (svc_entry.get("metadata") if svc_entry else {}) or {}
+        svc_entry = self.registry.get_service(service_name) or {}
+        svc_meta = svc_entry.get("metadata") or {}
         codebase = (
             evidence.get("codebase")
-            or (svc_entry.get("workspace_dir") and {"workspace_dir": svc_entry.get("workspace_dir"), "compose_file": svc_entry.get("compose_file")})
+            or ({"workspace_dir": svc_entry.get("workspace_dir"), "compose_file": svc_entry.get("compose_file")} if svc_entry.get("workspace_dir") else None)
             or (svc_meta.get("codebase"))
             or {}
         )
@@ -86,7 +86,10 @@ class IncidentDispatcher:
         fix_branch = f"fix/{service_name}-{incident_id}"
 
         # 2. Claim the incident in IncidentBus (20% -> 40%)
-        self.bus.claim_incident(incident_id, claimed_by=agent_name)
+        try:
+            self.bus.claim_incident(incident_id, agent_name=agent_name)
+        except Exception:
+            pass
 
         # 3. Format OpenCode prompt blueprint
         staging_domain = Config.get_full_domain(service_name, env=Config.STAGING_NAMESPACE)
