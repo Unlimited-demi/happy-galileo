@@ -61,6 +61,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self.MIME_OVERRIDES[ext.lower()]
         return super().guess_type(path)
 
+    def end_headers(self):
+        """Prevent aggressive browser caching during development and updates."""
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
+
     def _send_json(self, data, status=200):
         body = json.dumps(data, indent=2).encode("utf-8")
         self.send_response(status)
