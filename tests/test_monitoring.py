@@ -352,3 +352,15 @@ class TestAIContainerInference:
         assert len(cb["bind_mounts"]) == 1
         assert cb["bind_mounts"][0]["host_path"] == "/opt/anivault/backend"
 
+    def test_universal_domain_validation(self):
+        from devctl.core.domains import DomainRegistry
+        assert DomainRegistry._is_valid_public_domain("mail.example.com") is True
+        assert DomainRegistry._is_valid_public_domain("api.my-app.io") is True
+        assert DomainRegistry._is_valid_public_domain("dashboard.datakrib.com") is True
+        # Invalid / internal
+        assert DomainRegistry._is_valid_public_domain("localhost") is False
+        assert DomainRegistry._is_valid_public_domain("backend.internal") is False
+        assert DomainRegistry._is_valid_public_domain("postgres") is False
+        assert DomainRegistry._is_valid_public_domain("127.0.0.1") is False
+        assert DomainRegistry._is_valid_public_domain("redis.lan") is False
+

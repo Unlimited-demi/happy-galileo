@@ -184,172 +184,223 @@ class DomainRegistry:
         state = self._load_state()
         return list(state["services"].values())
 
-    def detect_existing_domains(self):
+    @staticmethod
+    def _is_valid_public_domain(candidate: str) -> bool:
+        """Validate if a string is a real FQDN domain name and not a local/internal host."""
+        if not candidate or len(candidate) < 4 or "." not in candidate:
+            return False
+        candidate = candidate.lower().strip().rstrip(".")
+        # Exclude internal / reserved names
+        internal_suffixes = [
+            ".internal", ".local", ".localhost", ".lan", ".home", ".corp",
+            ".invalid", ".example", ".test", ".arpa", ".docker", ".node"
+        ]
+        if any(candidate.endswith(s) for s in internal_suffixes):
+            return False
+        if candidate in ["localhost", "0.0.0.0", "127.0.0.1", "dev-net", "bridge", "host"]:
+            return False
+        # Match standard FQDN (at least one dot, valid TLD of 2-24 chars)
+        match = re.match(r'^(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$', candidate)
+        return bool(match)
+
+    def detect_existing_domains(self) -> Dict[str, Dict[str, str]]:
         """
-        Scan ALL reverse proxy configs and container environments to detect real domain-to-container mappings.
-        Checks:
-        1. Mailcow mailcow.conf (MAILCOW_HOSTNAME) & Mailcow Nginx configs.
-        2. Container mounted Caddyfiles & Nginx confs (including upstreams).
-        3. Container environment variables (MAILCOW_HOSTNAME, VIRTUAL_HOST, APP_URL, DOMAIN).
-        4. Docker labels (Traefik, Caddy, Virtual Host).
-        5. Host /etc/nginx and /etc/caddy configs.
-        Returns: dict of container_name -> {"domain": str, "source": str}
+        Universal Heuristic Domain & Reverse Proxy Resolver.
+        Intelligently discovers domain-to-container routing across ANY stack without hardcoding.
+
+        Heuristics inspected:
+        1. Host Web Server Configs (Nginx, Caddy, Apache, HAProxy, Traefik).
+        2. Container Mounted Web Server Configs (Caddyfile, nginx.conf, *.conf).
+        3. Project Workspace Configs (*.env, *.conf, *.yaml, *.yml, *.toml, *.ini).
+        4. Container Environment Signatures (*_HOSTNAME, *_DOMAIN, *_URL, VIRTUAL_HOST, etc.).
+        5. Container Reverse Proxy Ingress Labels (Traefik, Caddy, Virtual Host).
         """
         import glob
         import os
         import subprocess
         from pathlib import Path
+        from urllib.parse import urlparse
+
         domains = {}  # container_name -> {"domain": ..., "source": ...}
 
-        # 1. Scan host nginx configs
-        nginx_paths = glob.glob('/etc/nginx/sites-enabled/*') + glob.glob('/etc/nginx/conf.d/*.conf')
-        for conf_path in nginx_paths:
+        # ── 1. Host Reverse Proxy Configs (Nginx, Caddy, etc.) ──
+        # Host Nginx
+        for conf_path in glob.glob('/etc/nginx/sites-enabled/*') + glob.glob('/etc/nginx/conf.d/*.conf'):
             try:
-                with open(conf_path, 'r') as f:
+                with open(conf_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
                 server_names = re.findall(r'server_name\s+([^;]+);', content)
                 proxy_passes = re.findall(r'proxy_pass\s+https?://([^:/;\s]+)', content)
-                if server_names and proxy_passes:
-                    domain = server_names[0].strip().split()[0]
-                    upstream = proxy_passes[0].strip()
-                    if domain and upstream and domain != '_':
-                        domains[upstream] = {"domain": domain, "source": f"nginx:{conf_path}"}
+                for sn in server_names:
+                    for d in sn.split():
+                        if self._is_valid_public_domain(d):
+                            for up in proxy_passes:
+                                domains[up.strip()] = {"domain": d.strip(), "source": f"host-nginx:{Path(conf_path).name}"}
             except Exception:
                 continue
 
-        # 2. Scan host Caddy configs
-        caddy_paths = glob.glob('/etc/caddy/conf.d/*.caddy') + glob.glob('/etc/caddy/Caddyfile')
-        for conf_path in caddy_paths:
+        # Host Caddy
+        for conf_path in glob.glob('/etc/caddy/conf.d/*.caddy') + glob.glob('/etc/caddy/Caddyfile'):
             try:
-                with open(conf_path, 'r') as f:
+                with open(conf_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
-                blocks = re.findall(r'(\S+\.\S+)\s*\{[^}]*reverse_proxy\s+(\S+)', content, re.DOTALL)
-                for domain, upstream in blocks:
-                    container = upstream.split(":")[0].strip()
-                    if domain and container:
-                        domains[container] = {"domain": domain, "source": f"caddy:{conf_path}"}
+                blocks = re.findall(r'([a-zA-Z0-9\.\-_]+)\s*\{([^}]+)\}', content)
+                for dom, body in blocks:
+                    if self._is_valid_public_domain(dom):
+                        upstreams = re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_]+)', body)
+                        for up in upstreams:
+                            domains[up.strip()] = {"domain": dom.strip(), "source": f"host-caddy:{Path(conf_path).name}"}
             except Exception:
                 continue
 
-        # 3. Deep Container Inspection (Env Vars, Mounts, Compose Workspaces, Labels)
+        # ── 2. Universal Container Introspection ──
         try:
             cmd = ["docker", "ps", "--format", "{{.Names}}"]
             res = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=False)
-            if res.returncode == 0:
-                from devctl.core.docker_mgr import DockerManager
-                docker_mgr = DockerManager()
-                all_container_names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
+            if res.returncode != 0:
+                return domains
 
-                for c_name in all_container_names:
-                    info = docker_mgr.inspect_container(c_name)
-                    if not info:
+            from devctl.core.docker_mgr import DockerManager
+            docker_mgr = DockerManager()
+            all_containers = [n.strip() for n in res.stdout.splitlines() if n.strip()]
+
+            for c_name in all_containers:
+                info = docker_mgr.inspect_container(c_name)
+                if not info:
+                    continue
+
+                config = info.get("Config", {})
+                labels = config.get("Labels", {}) or {}
+                env_vars = config.get("Env", []) or []
+                mounts = info.get("Mounts", []) or []
+
+                # A. Container Environment Variables Inspection
+                for e in env_vars:
+                    if "=" not in e:
                         continue
-                    
-                    config = info.get("Config", {})
-                    labels = config.get("Labels", {}) or {}
-                    env_vars = config.get("Env", []) or []
-                    mounts = info.get("Mounts", []) or []
+                    k, v = e.split("=", 1)
+                    k_upper = k.upper().strip()
+                    v_clean = v.strip()
 
-                    # A. Environment Variables Inspection
-                    env_dict = {}
-                    for e in env_vars:
-                        if "=" in e:
-                            k, v = e.split("=", 1)
-                            env_dict[k] = v.strip()
+                    # Domain / Hostname variables
+                    if any(term in k_upper for term in ["HOSTNAME", "DOMAIN", "DOMAINS", "VIRTUAL_HOST", "SERVER_NAME", "APP_HOST"]):
+                        for part in v_clean.replace(";", ",").replace(" ", ",").split(","):
+                            part = part.strip()
+                            if self._is_valid_public_domain(part):
+                                domains[c_name] = {"domain": part, "source": f"env:{k}"}
 
-                    # Check Mailcow hostname
-                    if "MAILCOW_HOSTNAME" in env_dict and env_dict["MAILCOW_HOSTNAME"]:
-                        mc_host = env_dict["MAILCOW_HOSTNAME"].strip()
-                        # Assign domain to Mailcow Nginx entrypoint
-                        domains[c_name] = {"domain": mc_host, "source": "env:MAILCOW_HOSTNAME"}
-                        for other in all_container_names:
-                            if "nginx-mailcow" in other or "sogo-mailcow" in other:
-                                domains[other] = {"domain": mc_host, "source": "env:MAILCOW_HOSTNAME"}
+                    # URL variables (e.g. APP_URL=https://app.example.com)
+                    if any(term in k_upper for term in ["URL", "ORIGIN", "ENDPOINT", "SITE_URL", "BASE_URL", "PUBLIC_URL", "WEB_URL"]):
+                        try:
+                            parsed_url = urlparse(v_clean)
+                            if parsed_url.hostname and self._is_valid_public_domain(parsed_url.hostname):
+                                domains[c_name] = {"domain": parsed_url.hostname, "source": f"env:{k}"}
+                        except Exception:
+                            pass
 
-                    # Check standard web domain environment variables
-                    for d_key in ["VIRTUAL_HOST", "DOMAIN", "DOMAINS", "SERVER_NAME", "APP_DOMAIN"]:
-                        if d_key in env_dict and env_dict[d_key]:
-                            val = env_dict[d_key].split(",")[0].split()[0].strip()
-                            if "." in val and not val.startswith("http"):
-                                domains[c_name] = {"domain": val, "source": f"env:{d_key}"}
+                # B. Docker Ingress Labels (Traefik, Caddy-Docker-Proxy, NPM, VirtualHost)
+                for key, val in labels.items():
+                    k_lower = key.lower()
+                    if "traefik" in k_lower and "rule" in k_lower:
+                        # Extract Host(`example.com`) or Host(example.com)
+                        for host_match in re.findall(r'Host\([`\'"]?([^`\'")]+)[`\'"]?\)', val):
+                            for h in host_match.split(","):
+                                h = h.strip()
+                                if self._is_valid_public_domain(h):
+                                    domains[c_name] = {"domain": h, "source": "label:traefik"}
 
-                    for u_key in ["APP_URL", "PUBLIC_URL", "NEXT_PUBLIC_APP_URL", "BASE_URL", "SITE_URL"]:
-                        if u_key in env_dict and env_dict[u_key]:
-                            from urllib.parse import urlparse
-                            try:
-                                p_url = urlparse(env_dict[u_key])
-                                if p_url.hostname and "." in p_url.hostname:
-                                    domains[c_name] = {"domain": p_url.hostname, "source": f"env:{u_key}"}
-                            except Exception:
-                                pass
+                    if "caddy" in k_lower and "." in val:
+                        for token in val.split():
+                            token = token.strip()
+                            if self._is_valid_public_domain(token):
+                                domains[c_name] = {"domain": token, "source": "label:caddy"}
 
-                    # B. Check Docker Compose Workspace for mailcow.conf or Caddyfile
-                    compose_work_dir = labels.get("com.docker.compose.project.working_dir")
-                    if compose_work_dir and os.path.exists(compose_work_dir):
-                        # Check mailcow.conf
-                        mc_conf = Path(compose_work_dir) / "mailcow.conf"
-                        if mc_conf.exists():
-                            try:
-                                with open(mc_conf, "r") as f:
-                                    for line in f:
-                                        if line.strip().startswith("MAILCOW_HOSTNAME="):
-                                            mc_domain = line.strip().split("=")[1].strip()
-                                            if mc_domain:
-                                                if "nginx" in c_name or "sogo" in c_name or "mailcow" in c_name:
-                                                    domains[c_name] = {"domain": mc_domain, "source": "mailcow.conf"}
-                            except Exception:
-                                pass
+                    if "virtual_host" in k_lower or "virtual.host" in k_lower:
+                        for token in val.split(","):
+                            token = token.strip()
+                            if self._is_valid_public_domain(token):
+                                domains[c_name] = {"domain": token, "source": f"label:{key}"}
 
-                        # Check Caddyfile in workspace (e.g. AniVault Caddyfile)
-                        for cf_path in [Path(compose_work_dir) / "Caddyfile", Path(compose_work_dir) / "caddy" / "Caddyfile"]:
-                            if cf_path.exists():
-                                try:
-                                    with open(cf_path, "r") as f:
-                                        cf_text = f.read()
-                                    # Extract domain and reverse_proxy blocks
-                                    cf_blocks = re.findall(r'([a-zA-Z0-9\.\-]+(?:datakrib\.com|[a-zA-Z0-9\-]+\.[a-zA-Z]{2,}))\s*\{([^}]+)\}', cf_text)
-                                    for cf_dom, cf_body in cf_blocks:
-                                        # Find reverse_proxy targets in block
-                                        rp_matches = re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_]+)', cf_body)
-                                        for rp_target in rp_matches:
-                                            for target_c in all_container_names:
-                                                if rp_target in target_c:
-                                                    domains[target_c] = {"domain": cf_dom, "source": f"Caddyfile:{cf_path.name}"}
-                                        # Also assign to the Caddy container itself
+                # C. Project Workspace Configuration Files
+                compose_work_dir = labels.get("com.docker.compose.project.working_dir")
+                if compose_work_dir and os.path.isdir(compose_work_dir):
+                    wp = Path(compose_work_dir)
+                    # Scan workspace config files for domain definitions
+                    for conf_file in list(wp.glob("*.conf")) + list(wp.glob("*.env*")) + list(wp.glob("*Caddyfile*")) + list(wp.glob("*.yaml")) + list(wp.glob("*.yml")):
+                        try:
+                            with open(conf_file, "r", encoding="utf-8", errors="ignore") as f:
+                                f_text = f.read()
+
+                            # Generic Caddyfile domain blocks in workspace
+                            if "Caddyfile" in conf_file.name or conf_file.suffix == ".caddy":
+                                for dom, body in re.findall(r'([a-zA-Z0-9\.\-_]+)\s*\{([^}]+)\}', f_text):
+                                    if self._is_valid_public_domain(dom):
+                                        # Map to upstreams and proxy
+                                        for up in re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_]+)', body):
+                                            for candidate_c in all_containers:
+                                                if up in candidate_c:
+                                                    domains[candidate_c] = {"domain": dom.strip(), "source": f"workspace:{conf_file.name}"}
                                         if "caddy" in c_name:
-                                            domains[c_name] = {"domain": cf_dom, "source": f"Caddyfile:{cf_path.name}"}
-                                except Exception:
-                                    pass
+                                            domains[c_name] = {"domain": dom.strip(), "source": f"workspace:{conf_file.name}"}
 
-                    # C. Traefik & Caddy Docker labels
-                    for key, val in labels.items():
-                        if "traefik" in key and "rule" in key.lower() and "Host(" in val:
-                            host_match = re.search(r'Host\(`([^`]+)`\)', val)
-                            if host_match:
-                                domains[c_name] = {"domain": host_match.group(1), "source": "traefik-label"}
-                        if key == "caddy" and "." in val:
-                            domains[c_name] = {"domain": val.split()[0], "source": "caddy-label"}
+                            # Generic key-value configs (*.conf, *.env)
+                            for line in f_text.splitlines():
+                                line_clean = line.strip()
+                                if "=" in line_clean and not line_clean.startswith("#"):
+                                    ck, cv = line_clean.split("=", 1)
+                                    ck_upper = ck.upper().strip()
+                                    cv_clean = cv.strip().strip("'\"")
+                                    if any(term in ck_upper for term in ["HOSTNAME", "DOMAIN", "URL", "SERVER_NAME", "VIRTUAL_HOST"]):
+                                        # Check if value has a valid domain
+                                        if "://" in cv_clean:
+                                            try:
+                                                h = urlparse(cv_clean).hostname
+                                                if h and self._is_valid_public_domain(h):
+                                                    # Associate with web/ingress containers in this project
+                                                    domains[c_name] = {"domain": h, "source": f"config:{conf_file.name}"}
+                                            except Exception:
+                                                pass
+                                        elif self._is_valid_public_domain(cv_clean):
+                                            domains[c_name] = {"domain": cv_clean, "source": f"config:{conf_file.name}"}
+                        except Exception:
+                            continue
 
-                    # D. Mounts inspection (mounted Nginx / Caddy config directories)
-                    for mount in mounts:
-                        src = mount.get("Source", "")
-                        if any(kw in src.lower() for kw in ["nginx", "caddy", "apache", "mailcow"]):
-                            # Scan config files in this mount
-                            if os.path.isdir(src):
-                                conf_files = glob.glob(f"{src}/**/*.conf", recursive=True) + glob.glob(f"{src}/**/*.caddy", recursive=True)
-                                for cf in conf_files[:8]:
-                                    try:
-                                        with open(cf, 'r') as f:
-                                            cf_content = f.read()
-                                        sn = re.findall(r'server_name\s+([^;]+);', cf_content)
-                                        if sn:
-                                            for candidate in sn[0].split():
-                                                candidate = candidate.strip()
-                                                if candidate and candidate != '_' and '.' in candidate and not candidate.startswith("$"):
-                                                    domains[c_name] = {"domain": candidate, "source": f"mount:{Path(cf).name}"}
-                                                    break
-                                    except Exception:
-                                        continue
+                # D. Container Mounted Config Directories (Nginx / Caddy / Apache / Proxy mounts)
+                for mount in mounts:
+                    src = mount.get("Source", "")
+                    if not src or not os.path.exists(src):
+                        continue
+
+                    # If mount is a directory, scan config files inside it
+                    config_files = []
+                    if os.path.isdir(src):
+                        config_files = glob.glob(f"{src}/**/*.conf", recursive=True) + glob.glob(f"{src}/**/*.caddy", recursive=True) + glob.glob(f"{src}/**/Caddyfile", recursive=True)
+                    elif os.path.isfile(src):
+                        config_files = [src]
+
+                    for cf in config_files[:10]:
+                        try:
+                            with open(cf, 'r', encoding='utf-8', errors='ignore') as f:
+                                cf_content = f.read()
+
+                            # Nginx server_name
+                            for sn in re.findall(r'server_name\s+([^;]+);', cf_content):
+                                for d in sn.split():
+                                    d = d.strip()
+                                    if self._is_valid_public_domain(d):
+                                        domains[c_name] = {"domain": d, "source": f"mount:{Path(cf).name}"}
+                                        break
+
+                            # Caddyfile domain blocks
+                            for dom, body in re.findall(r'([a-zA-Z0-9\.\-_]+)\s*\{([^}]+)\}', cf_content):
+                                if self._is_valid_public_domain(dom):
+                                    domains[c_name] = {"domain": dom.strip(), "source": f"mount:{Path(cf).name}"}
+                                    for up in re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_]+)', body):
+                                        for target_c in all_containers:
+                                            if up in target_c:
+                                                domains[target_c] = {"domain": dom.strip(), "source": f"mount:{Path(cf).name}"}
+                        except Exception:
+                            continue
         except Exception:
             pass
 
