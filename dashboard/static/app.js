@@ -1,9 +1,33 @@
-/**
- * ServerGuard Enterprise Status & Cloud-Ops Dashboard
- * Built with React 18, Zero Emoji Clutter, Pure SVG Iconography & Real-Time Telemetry
- */
-
 const { useState, useEffect, useMemo } = React;
+
+// Framer Motion Primitives
+const MotionLib = window.Motion || window.framerMotion || {};
+const motion = MotionLib.motion || {
+  div: 'div',
+  header: 'header',
+  button: 'button',
+  tr: 'tr',
+  span: 'span',
+};
+const AnimatePresence = MotionLib.AnimatePresence || (({ children }) => children);
+
+// Animation Variants
+const fadeInVariants = {
+  hidden: { opacity: 0, y: 8 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.25, ease: 'easeOut' } },
+  exit: { opacity: 0, y: -8, transition: { duration: 0.15 } },
+};
+
+const cardSpringVariants = {
+  hover: { scale: 1.015, y: -2, transition: { type: 'spring', stiffness: 400, damping: 25 } },
+  tap: { scale: 0.985 },
+};
+
+const modalVariants = {
+  hidden: { opacity: 0, scale: 0.94, y: 20 },
+  visible: { opacity: 1, scale: 1, y: 0, transition: { type: 'spring', stiffness: 350, damping: 28 } },
+  exit: { opacity: 0, scale: 0.94, y: 20, transition: { duration: 0.18 } },
+};
 
 // ── SVG ICON LIBRARY (Lucide Style) ──
 const createSvg = (paths, size = 18, className = '') =>
@@ -207,12 +231,12 @@ function App() {
   }, [nodes, status]);
 
   return React.createElement(
-    'div',
-    { className: 'app-wrapper' },
+    motion.div,
+    { className: 'app-wrapper', initial: 'hidden', animate: 'visible', variants: fadeInVariants },
     // ── 1. Top Navigation Bar ──
     React.createElement(
-      'header',
-      { className: 'top-nav' },
+      motion.header,
+      { className: 'top-nav', initial: { opacity: 0, y: -10 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.3 } },
       React.createElement(
         'div',
         { className: 'brand-section' },
@@ -239,8 +263,8 @@ function App() {
           'Live Telemetry'
         ),
         React.createElement(
-          'button',
-          { className: 'btn-secondary', onClick: fetchData },
+          motion.button,
+          { className: 'btn-secondary', onClick: fetchData, whileHover: { scale: 1.04 }, whileTap: { scale: 0.96 } },
           React.createElement(Icons.Refresh, { size: 14 }),
           'Refresh'
         )
@@ -252,8 +276,8 @@ function App() {
       'div',
       { className: 'kpi-grid' },
       React.createElement(
-        'div',
-        { className: 'kpi-card' },
+        motion.div,
+        { className: 'kpi-card', whileHover: 'hover', whileTap: 'tap', variants: cardSpringVariants },
         React.createElement(
           'div',
           { className: 'kpi-content' },
@@ -263,8 +287,8 @@ function App() {
         React.createElement('div', { className: 'kpi-icon-box kpi-icon-cyan' }, React.createElement(Icons.Server, { size: 22 }))
       ),
       React.createElement(
-        'div',
-        { className: 'kpi-card' },
+        motion.div,
+        { className: 'kpi-card', whileHover: 'hover', whileTap: 'tap', variants: cardSpringVariants },
         React.createElement(
           'div',
           { className: 'kpi-content' },
@@ -274,8 +298,8 @@ function App() {
         React.createElement('div', { className: 'kpi-icon-box kpi-icon-indigo' }, React.createElement(Icons.Cpu, { size: 22 }))
       ),
       React.createElement(
-        'div',
-        { className: 'kpi-card' },
+        motion.div,
+        { className: 'kpi-card', whileHover: 'hover', whileTap: 'tap', variants: cardSpringVariants },
         React.createElement(
           'div',
           { className: 'kpi-content' },
@@ -285,8 +309,8 @@ function App() {
         React.createElement('div', { className: 'kpi-icon-box kpi-icon-emerald' }, React.createElement(Icons.Globe, { size: 22 }))
       ),
       React.createElement(
-        'div',
-        { className: 'kpi-card' },
+        motion.div,
+        { className: 'kpi-card', whileHover: 'hover', whileTap: 'tap', variants: cardSpringVariants },
         React.createElement(
           'div',
           { className: 'kpi-content' },
@@ -302,22 +326,22 @@ function App() {
       'nav',
       { className: 'tab-bar' },
       React.createElement(
-        'button',
-        { className: `tab-btn ${activeTab === 'fleet' ? 'active' : ''}`, onClick: () => setActiveTab('fleet') },
+        motion.button,
+        { className: `tab-btn ${activeTab === 'fleet' ? 'active' : ''}`, onClick: () => setActiveTab('fleet'), whileTap: { scale: 0.97 } },
         React.createElement(Icons.Server, { size: 15 }),
         'Multi-Server Fleet',
         React.createElement('span', { className: 'tab-counter-badge' }, nodes.length || 1)
       ),
       React.createElement(
-        'button',
-        { className: `tab-btn ${activeTab === 'services' ? 'active' : ''}`, onClick: () => setActiveTab('services') },
+        motion.button,
+        { className: `tab-btn ${activeTab === 'services' ? 'active' : ''}`, onClick: () => setActiveTab('services'), whileTap: { scale: 0.97 } },
         React.createElement(Icons.Globe, { size: 15 }),
         'Service Directory',
         React.createElement('span', { className: 'tab-counter-badge' }, totalServices)
       ),
       React.createElement(
-        'button',
-        { className: `tab-btn ${activeTab === 'incidents' ? 'active' : ''}`, onClick: () => setActiveTab('incidents') },
+        motion.button,
+        { className: `tab-btn ${activeTab === 'incidents' ? 'active' : ''}`, onClick: () => setActiveTab('incidents'), whileTap: { scale: 0.97 } },
         React.createElement(Icons.AlertTriangle, { size: 15 }),
         'Incident Console',
         openIncidentsCount > 0
@@ -325,21 +349,33 @@ function App() {
           : React.createElement('span', { className: 'tab-counter-badge' }, incidents.length)
       ),
       React.createElement(
-        'button',
-        { className: `tab-btn ${activeTab === 'reports' ? 'active' : ''}`, onClick: () => setActiveTab('reports') },
+        motion.button,
+        { className: `tab-btn ${activeTab === 'reports' ? 'active' : ''}`, onClick: () => setActiveTab('reports'), whileTap: { scale: 0.97 } },
         React.createElement(Icons.FileText, { size: 15 }),
         'Ops Health Digest'
       )
     ),
 
-    // ── 4. Tab Views ──
-    activeTab === 'fleet' && React.createElement(FleetMatrixView, { nodes: nodes.length > 0 ? nodes : [status], onCopy: showToast }),
-    activeTab === 'services' && React.createElement(ServiceDirectoryView, { nodes: nodes.length > 0 ? nodes : [status], filter: serviceFilter, setFilter: setServiceFilter, onCopy: showToast }),
-    activeTab === 'incidents' && React.createElement(IncidentConsoleView, { incidents, onSelect: setSelectedIncident }),
-    activeTab === 'reports' && React.createElement(HealthDigestView, { nodes: nodes.length > 0 ? nodes : [status], incidents }),
+    // ── 4. Tab Views with Framer Motion AnimatePresence ──
+    React.createElement(
+      AnimatePresence,
+      { mode: 'wait' },
+      React.createElement(
+        motion.div,
+        { key: activeTab, initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -6 }, transition: { duration: 0.2 } },
+        activeTab === 'fleet' && React.createElement(FleetMatrixView, { nodes: nodes.length > 0 ? nodes : [status], onCopy: showToast }),
+        activeTab === 'services' && React.createElement(ServiceDirectoryView, { nodes: nodes.length > 0 ? nodes : [status], filter: serviceFilter, setFilter: setServiceFilter, onCopy: showToast }),
+        activeTab === 'incidents' && React.createElement(IncidentConsoleView, { incidents, onSelect: setSelectedIncident }),
+        activeTab === 'reports' && React.createElement(HealthDigestView, { nodes: nodes.length > 0 ? nodes : [status], incidents })
+      )
+    ),
 
-    // ── 5. Modal Incident Dossier Popup ──
-    selectedIncident && React.createElement(IncidentModal, { incident: selectedIncident, onClose: () => setSelectedIncident(null), onCopy: showToast }),
+    // ── 5. Modal Incident Dossier Popup with Framer Motion ──
+    React.createElement(
+      AnimatePresence,
+      null,
+      selectedIncident && React.createElement(IncidentModal, { incident: selectedIncident, onClose: () => setSelectedIncident(null), onCopy: showToast })
+    ),
 
     // ── 6. Toast Notification ──
     React.createElement('div', { className: `toast-msg ${toast ? 'show' : ''}` }, toast)
@@ -702,11 +738,11 @@ function IncidentModal({ incident, onClose, onCopy }) {
   const stack = evidence.stack_trace || evidence.logs || 'No stack trace captured.';
 
   return React.createElement(
-    'div',
-    { className: 'modal-backdrop', onClick: onClose },
+    motion.div,
+    { className: 'modal-backdrop', onClick: onClose, initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } },
     React.createElement(
-      'div',
-      { className: 'modal-dialog', onClick: (e) => e.stopPropagation() },
+      motion.div,
+      { className: 'modal-dialog', onClick: (e) => e.stopPropagation(), variants: modalVariants, initial: 'hidden', animate: 'visible', exit: 'exit' },
       React.createElement(
         'div',
         { className: 'modal-header' },
