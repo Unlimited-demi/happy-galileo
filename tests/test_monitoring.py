@@ -254,3 +254,69 @@ class TestFleetTelemetry:
         streamer = FleetTelemetryStreamer(hub_url="")
         result = streamer.send_heartbeat()
         assert result is False
+
+
+class TestAIContainerInference:
+    def test_database_classification(self):
+        from devctl.core.ai_discovery import AIContainerInference, ContainerArchetype
+        mock_docker = MagicMock()
+        mock_docker.inspect_container.return_value = {
+            "Config": {
+                "Image": "postgres:15-alpine",
+                "Cmd": ["postgres"],
+                "Labels": {},
+                "Env": ["POSTGRES_DB=app", "POSTGRES_PASSWORD=secret"],
+            },
+            "NetworkSettings": {"Ports": {"5432/tcp": None}},
+        }
+        mock_docker.get_logs.return_value = "PostgreSQL database server initialized"
+
+        inference = AIContainerInference(docker=mock_docker)
+        profile = inference.inspect_and_infer("my-postgres")
+
+        assert profile["archetype"] == ContainerArchetype.RELATIONAL_DB
+        assert profile["is_publicly_exposable"] is False
+        assert profile["recommended_port"] == 5432
+
+    def test_redis_cache_classification(self):
+        from devctl.core.ai_discovery import AIContainerInference, ContainerArchetype
+        mock_docker = MagicMock()
+        mock_docker.inspect_container.return_value = {
+            "Config": {
+                "Image": "redis:7.2-alpine",
+                "Cmd": ["redis-server"],
+                "Labels": {},
+                "Env": [],
+            },
+            "NetworkSettings": {"Ports": {"6379/tcp": None}},
+        }
+        mock_docker.get_logs.return_value = "Ready to accept connections"
+
+        inference = AIContainerInference(docker=mock_docker)
+        profile = inference.inspect_and_infer("session-redis")
+
+        assert profile["archetype"] == ContainerArchetype.CACHE_STORE
+        assert profile["is_publicly_exposable"] is False
+        assert profile["recommended_port"] == 6379
+
+    def test_web_frontend_classification(self):
+        from devctl.core.ai_discovery import AIContainerInference, ContainerArchetype
+        mock_docker = MagicMock()
+        mock_docker.inspect_container.return_value = {
+            "Config": {
+                "Image": "my-nextjs-frontend:latest",
+                "Cmd": ["npm", "start"],
+                "Labels": {"com.docker.compose.service": "frontend"},
+                "Env": ["NEXT_PUBLIC_API_URL=http://api:8000"],
+            },
+            "NetworkSettings": {"Ports": {"3000/tcp": None}},
+        }
+        mock_docker.get_logs.return_value = "Next.js ready on http://0.0.0.0:3000"
+
+        inference = AIContainerInference(docker=mock_docker)
+        profile = inference.inspect_and_infer("anivault-frontend")
+
+        assert profile["archetype"] == ContainerArchetype.WEB_FRONTEND
+        assert profile["is_publicly_exposable"] is True
+        assert profile["recommended_port"] == 3000
+
