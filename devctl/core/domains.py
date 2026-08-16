@@ -322,9 +322,24 @@ class DomainRegistry:
                                 domains[c_name] = {"domain": token, "source": f"label:{key}"}
 
                 # C. Project Workspace Configuration Files
+                # Check compose labels, or check bind mounts to locate workspace directory
+                candidate_workspaces = []
                 compose_work_dir = labels.get("com.docker.compose.project.working_dir")
                 if compose_work_dir and os.path.isdir(compose_work_dir):
-                    wp = Path(compose_work_dir)
+                    candidate_workspaces.append(Path(compose_work_dir))
+
+                # Check bind mount parent directories
+                for m in mounts:
+                    if m.get("Type") == "bind":
+                        src_path = Path(m.get("Source", ""))
+                        if src_path.exists():
+                            # Add parent dirs up to 3 levels
+                            for p in [src_path] + list(src_path.parents)[:3]:
+                                if p.is_dir() and any((p / f).exists() for f in ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml", ".env", "mailcow.conf"]):
+                                    if p not in candidate_workspaces:
+                                        candidate_workspaces.append(p)
+
+                for wp in candidate_workspaces:
                     # Scan workspace config files for domain definitions
                     for conf_file in list(wp.glob("*.conf")) + list(wp.glob("*.env*")) + list(wp.glob("*Caddyfile*")) + list(wp.glob("*.yaml")) + list(wp.glob("*.yml")):
                         try:
@@ -362,14 +377,13 @@ class DomainRegistry:
                                         elif self._is_valid_public_domain(cv_clean):
                                             extracted_domain = cv_clean
 
-                                        # Only map project domain to web/ingress/UI/API containers, never to DBs or internal daemons
+                                        # Map project domain to web/nginx/caddy/frontend/API entrypoints in this workspace
                                         if extracted_domain:
                                             c_lower = c_name.lower()
-                                            is_non_web = any(kw in c_lower for kw in ["redis", "mysql", "postgres", "memcached", "mongo", "db", "clamd", "rspamd", "watchdog", "acme", "netfilter", "unbound", "dovecot", "postfix", "ofelia", "php-fpm"])
-                                            if not is_non_web:
+                                            is_web_candidate = any(kw in c_lower for kw in ["nginx", "caddy", "web", "frontend", "api", "sogo", "httpd", "apache", "proxy", "gateway", "server"])
+                                            is_strictly_internal = any(kw in c_lower for kw in ["redis", "mysql", "postgres", "memcached", "mongo", "db", "clamd", "rspamd", "watchdog", "acme", "netfilter", "unbound", "dovecot", "postfix", "ofelia"])
+                                            if is_web_candidate and not is_strictly_internal:
                                                 domains[c_name] = {"domain": extracted_domain, "source": f"config:{conf_file.name}"}
-                        except Exception:
-                            continue
 
                 # D. Container Mounted Config Directories (Nginx / Caddy / Apache / Proxy mounts)
                 for mount in mounts:
