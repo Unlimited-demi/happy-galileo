@@ -164,7 +164,7 @@ FLEET_KEY=${FLEET_KEY}
 EOF
 
 cd "${INSTALL_DIR}/infra"
-docker compose -f docker-compose.infra.yml --env-file .env up -d
+docker compose -f docker-compose.infra.yml --env-file .env up -d --build
 
 # ── Auto-discover existing containers ──
 echo ""
