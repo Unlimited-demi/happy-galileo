@@ -107,6 +107,47 @@ elif [ -z "$(git config --global user.email 2>/dev/null)" ]; then
   git config --global user.email "bot@datakrib.com"
 fi
 
+# Check GitHub SSH access (essential for private repository access)
+REPO_SSH_URL="git@github.com:Unlimited-demi/happy-galileo.git"
+REPO_HTTPS_URL="https://github.com/Unlimited-demi/happy-galileo.git"
+
+echo "[*] Verifying GitHub SSH Access for private repository..."
+ssh_auth_ok=false
+if ssh -T git@github.com -o StrictHostKeyChecking=accept-new -o BatchMode=yes 2>&1 | grep -E -q "successfully authenticated|You've successfully"; then
+  ssh_auth_ok=true
+  echo "  [✓] GitHub SSH Authentication verified!"
+fi
+
+if [ "$ssh_auth_ok" = false ]; then
+  PUB_KEY="$(cat "${SSH_DIR}/id_ed25519.pub")"
+  echo ""
+  echo "╔══════════════════════════════════════════════════════════════════════╗"
+  echo "║ 🔑 GITHUB SSH KEY REQUIRED FOR PRIVATE REPO ACCESS                   ║"
+  echo "╠══════════════════════════════════════════════════════════════════════╣"
+  echo ""
+  echo "  ${PUB_KEY}"
+  echo ""
+  echo "  👉 Please add this SSH key to GitHub now:"
+  echo "     1. Go to: https://github.com/settings/keys"
+  echo "        (or repo: https://github.com/Unlimited-demi/happy-galileo/settings/keys)"
+  echo "     2. Click 'New SSH Key' (Title: ${NODE_NAME}-server)"
+  echo "     3. Paste the key above (check 'Allow write access' if Deploy Key)"
+  echo ""
+  echo "╚══════════════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "⏳ Waiting for GitHub authorization (checking automatically every 5s)..."
+  while [ "$ssh_auth_ok" = false ]; do
+    sleep 5
+    if ssh -T git@github.com -o StrictHostKeyChecking=accept-new -o BatchMode=yes 2>&1 | grep -E -q "successfully authenticated|You've successfully"; then
+      ssh_auth_ok=true
+      echo ""
+      echo "  [✓] GitHub SSH Key verified and authorized! Proceeding with clone..."
+      echo ""
+      break
+    fi
+  done
+fi
+
 # ── Step 2: Docker ──
 echo "[2/8] Installing Docker & Docker Compose..."
 if ! command -v docker &> /dev/null; then
@@ -118,13 +159,19 @@ if ! command -v docker &> /dev/null; then
 fi
 apt-get install -y docker-compose-plugin 2>/dev/null || true
 
-# ── Step 3: Clone Codebase ──
-echo "[3/8] Fetching workstation codebase..."
+# ── Step 3: Clone Codebase via SSH ──
+echo "[3/8] Fetching workstation codebase via SSH..."
+TARGET_CLONE_URL="${REPO_SSH_URL}"
+
 if [ ! -d "${INSTALL_DIR}" ]; then
   mkdir -p /opt
-  git clone "${REPO_URL}" "${INSTALL_DIR}"
+  if ! git clone "${TARGET_CLONE_URL}" "${INSTALL_DIR}" 2>/dev/null; then
+    echo "  [i] SSH clone failed, trying HTTPS fallback..."
+    git clone "${REPO_HTTPS_URL}" "${INSTALL_DIR}"
+  fi
 else
   cd "${INSTALL_DIR}"
+  git remote set-url origin "${TARGET_CLONE_URL}" 2>/dev/null || true
   git fetch origin master
   git reset --hard origin/master || true
 fi
