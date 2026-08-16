@@ -47,7 +47,7 @@ const createSvg = (paths, size = 18, className = '') =>
     paths
   );
 
-const Icons = {
+const IconsRaw = {
   Server: (props) =>
     createSvg(
       [
@@ -64,6 +64,16 @@ const Icons = {
       [
         React.createElement('path', { key: '1', d: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z' }),
         React.createElement('path', { key: '2', d: 'm9 12 2 2 4-4' }),
+      ],
+      props.size,
+      props.className
+    ),
+  ShieldAlert: (props) =>
+    createSvg(
+      [
+        React.createElement('path', { key: '1', d: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z' }),
+        React.createElement('line', { key: '2', x1: '12', y1: '8', x2: '12', y2: '12' }),
+        React.createElement('line', { key: '3', x1: '12', y1: '16', x2: '12.01', y2: '16' }),
       ],
       props.size,
       props.className
@@ -166,6 +176,11 @@ const Icons = {
       props.className
     ),
 };
+
+// Safe Proxy so undefined icons never crash React rendering
+const Icons = new Proxy(IconsRaw, {
+  get: (target, prop) => target[prop] || ((props) => createSvg([], props?.size, props?.className)),
+});
 
 function copyText(text, callback) {
   navigator.clipboard.writeText(text).then(() => {
