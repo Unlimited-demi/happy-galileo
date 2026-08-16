@@ -334,9 +334,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
             elif path.startswith("/api/incidents/") and path.endswith("/dispatch"):
                 # Extract incident_id: /api/incidents/<id>/dispatch
-                parts = path.strip("/").split("/")
-                if len(parts) >= 3:
-                    inc_id = parts[1]
+                inc_id = path[len("/api/incidents/"): -len("/dispatch")].strip("/")
+                if inc_id:
                     from ai_ops.dispatcher import IncidentDispatcher
                     dispatcher = IncidentDispatcher()
                     result = dispatcher.dispatch(inc_id)
