@@ -43,6 +43,10 @@ services:
       - CENTRAL_HUB_URL=${CENTRAL_HUB_URL:-}
       - FLEET_KEY=${FLEET_KEY:-}
       - PYTHONPATH=/app
+      # LLM API keys for OpenCode autonomous remediation agent
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     command: python3 /app/dashboard/app.py
     networks:
       - dev-net

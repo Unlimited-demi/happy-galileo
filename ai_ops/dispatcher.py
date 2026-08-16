@@ -139,27 +139,23 @@ REMEDIATION WORKFLOW CONTRACT (AGENTS.md):
             target_cwd = workspace_dir if os.path.isdir(workspace_dir) else ("/app" if os.path.isdir("/app") else ".")
             subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", target_cwd, "bash"], check=False)
 
-            # Send the OpenCode command or full diagnostic blueprint to tmux session
+            # Write the remediation prompt to a temp file (avoids shell escaping nightmares)
+            prompt_file = f"/tmp/opencode-prompt-{incident_id}.txt"
+            try:
+                with open(prompt_file, "w") as pf:
+                    pf.write(prompt)
+            except Exception:
+                pass
+
             if has_opencode:
-                # OpenCode is installed — launch it with the remediation prompt
-                cmd = f'opencode --prompt {repr(prompt)}'
+                # OpenCode is installed — launch autonomous remediation via `opencode run`
+                # Uses --auto to auto-approve file edits and commands
+                cmd = f'echo "⚡ Launching OpenCode autonomous remediation agent..."; echo ""; opencode run "$(cat {prompt_file})" --auto'
                 subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "C-m"], check=False)
             else:
-                # OpenCode not installed — display the full remediation blueprint
-                # so the human operator or a future agent install can pick up
-                blueprint_lines = prompt.strip().split('\n')
-                subprocess.run(["tmux", "send-keys", "-t", session_name, "clear", "C-m"], check=False)
-                import time as _time
-                _time.sleep(0.2)
-                for line in blueprint_lines:
-                    safe_line = line.replace("'", "'\\''").replace('"', '\\"')
-                    subprocess.run(["tmux", "send-keys", "-t", session_name, f'echo "{safe_line}"', "C-m"], check=False)
-                # Show workspace info and leave user at an interactive prompt
-                subprocess.run(["tmux", "send-keys", "-t", session_name, 'echo ""', "C-m"], check=False)
-                subprocess.run(["tmux", "send-keys", "-t", session_name, 'echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"', "C-m"], check=False)
-                subprocess.run(["tmux", "send-keys", "-t", session_name, 'echo "⚡ Ready for manual remediation. Type commands below."', "C-m"], check=False)
-                subprocess.run(["tmux", "send-keys", "-t", session_name, 'echo "   To install OpenCode: npm i -g opencode"', "C-m"], check=False)
-                subprocess.run(["tmux", "send-keys", "-t", session_name, 'echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"', "C-m"], check=False)
+                # OpenCode not available — try npx fallback, then manual
+                cmd = f'echo "⚡ OpenCode not found. Attempting npx install..."; echo ""; npx -y opencode-ai run "$(cat {prompt_file})" --auto'
+                subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "C-m"], check=False)
 
             return {
                 "success": True,

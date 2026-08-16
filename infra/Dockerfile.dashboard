@@ -1,7 +1,7 @@
 # ==============================================================================
 # Multi-Stage Dockerfile for ServerGuard Dashboard
 # Stage 1: Build React 18 + Vite + Tailwind + Radix UI Frontend
-# Stage 2: Serve via Python 3.11 Backend with tmux support
+# Stage 2: Serve via Python 3.11 Backend with tmux + OpenCode agent
 # ==============================================================================
 
 # ── Stage 1: Frontend Build ──
@@ -14,24 +14,34 @@ RUN npm install
 COPY dashboard/frontend ./
 RUN npm run build
 
-# ── Stage 2: Production Python Backend & Terminal Bridge ──
+# ── Stage 2: Production Python Backend & OpenCode Agent Runtime ──
 FROM python:3.11-slim
 WORKDIR /app
 
-# Install tmux and git for live agent session attachment
+# Install system dependencies: tmux, git, Node.js 20, and build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tmux \
     git \
     procps \
     curl \
+    ca-certificates \
+    gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Install OpenCode AI coding agent globally
+RUN npm install -g opencode-ai
 
 # Copy backend code
 COPY devctl /app/devctl
 COPY ai_ops /app/ai_ops
 COPY dashboard /app/dashboard
 
-# Copy compiled frontend from Stage 1 into dashboard/dist and dashboard/static
+# Copy compiled frontend from Stage 1
 COPY --from=frontend-builder /build/dist /app/dashboard/dist
 COPY --from=frontend-builder /build/dist /app/dashboard/static
 
