@@ -252,11 +252,17 @@ class AIContainerInference:
         exposed_ports: List[int],
         logs_sample: str,
     ) -> Dict[str, Any]:
-        combined_text = f"{container_name} {image} {cmd} {entrypoint} {' '.join(labels.values())}".lower()
+        name_lower = container_name.lower()
+        image_lower = image.lower()
+        cmd_lower = cmd.lower()
+        entry_lower = entrypoint.lower()
         logs_lower = logs_sample.lower()
 
+        # Primary identity is determined by container image, name, and entrypoint
+        primary_identity = f"{name_lower} {image_lower} {cmd_lower} {entry_lower}"
+
         dependencies = []
-        # Check env keys for dependency hints
+        # Check env keys and compose labels for dependency hints
         for k in env_keys:
             k_upper = k.upper()
             if any(term in k_upper for term in ["POSTGRES", "PG_HOST", "DATABASE_URL", "MYSQL", "MARIADB", "DB_HOST"]):
@@ -272,9 +278,17 @@ class AIContainerInference:
                 if "message_broker" not in dependencies:
                     dependencies.append("message_broker")
 
+        # Helper to check if container is explicitly a database engine (image must match or name is purely db)
+        is_real_db = any(term in image_lower for term in ["postgres", "mysql", "mariadb", "cockroach", "timescale", "mongo", "clickhouse"]) or \
+                     (any(term in name_lower for term in ["postgres", "mysql", "mariadb", "mongo", "db"]) and not any(term in name_lower for term in ["backend", "api", "app", "server", "frontend"]))
+
+        # Helper to check if container is explicitly a cache engine
+        is_real_cache = any(term in image_lower for term in ["redis", "memcached", "valkey", "dragonfly", "keydb"]) or \
+                      (any(term in name_lower for term in ["redis", "memcached", "cache"]) and not any(term in name_lower for term in ["backend", "api", "app", "server", "frontend"]))
+
         # 1. Relational Databases
-        if any(term in combined_text for term in ["postgres", "mysql", "mariadb", "cockroach", "timescale"]):
-            port = 5432 if "postgres" in combined_text else 3306
+        if is_real_db:
+            port = 5432 if "postgres" in primary_identity else 3306
             return {
                 "container_name": container_name,
                 "archetype": ContainerArchetype.RELATIONAL_DB,
@@ -287,8 +301,8 @@ class AIContainerInference:
             }
 
         # 2. In-memory Cache & Key-Value
-        if any(term in combined_text for term in ["redis", "memcached", "valkey", "dragonfly", "keydb"]):
-            port = 6379 if "redis" in combined_text else (11211 if "memcached" in combined_text else 6379)
+        if is_real_cache:
+            port = 6379 if "redis" in primary_identity else (11211 if "memcached" in primary_identity else 6379)
             return {
                 "container_name": container_name,
                 "archetype": ContainerArchetype.CACHE_STORE,

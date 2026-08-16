@@ -351,17 +351,23 @@ class DomainRegistry:
                                     ck_upper = ck.upper().strip()
                                     cv_clean = cv.strip().strip("'\"")
                                     if any(term in ck_upper for term in ["HOSTNAME", "DOMAIN", "URL", "SERVER_NAME", "VIRTUAL_HOST"]):
-                                        # Check if value has a valid domain
+                                        extracted_domain = None
                                         if "://" in cv_clean:
                                             try:
                                                 h = urlparse(cv_clean).hostname
                                                 if h and self._is_valid_public_domain(h):
-                                                    # Associate with web/ingress containers in this project
-                                                    domains[c_name] = {"domain": h, "source": f"config:{conf_file.name}"}
+                                                    extracted_domain = h
                                             except Exception:
                                                 pass
                                         elif self._is_valid_public_domain(cv_clean):
-                                            domains[c_name] = {"domain": cv_clean, "source": f"config:{conf_file.name}"}
+                                            extracted_domain = cv_clean
+
+                                        # Only map project domain to web/ingress/UI/API containers, never to DBs or internal daemons
+                                        if extracted_domain:
+                                            c_lower = c_name.lower()
+                                            is_non_web = any(kw in c_lower for kw in ["redis", "mysql", "postgres", "memcached", "mongo", "db", "clamd", "rspamd", "watchdog", "acme", "netfilter", "unbound", "dovecot", "postfix", "ofelia", "php-fpm"])
+                                            if not is_non_web:
+                                                domains[c_name] = {"domain": extracted_domain, "source": f"config:{conf_file.name}"}
                         except Exception:
                             continue
 
@@ -574,7 +580,9 @@ class DomainRegistry:
                 meta["existing_domain"] = real_domain
                 meta["domain_source"] = real_domain_source
 
-            # Register for MONITORING ONLY — no wildcard URL created unless manually exposed
+            # Register for MONITORING ONLY — ONLY web containers get a public access URL
+            public_url = f"https://{real_domain}" if (real_domain and c_type == SERVICE_TYPE_WEB) else None
+
             entry = self.register(
                 service_name=slug,
                 container_name=c_name,
@@ -582,7 +590,7 @@ class DomainRegistry:
                 domain=real_domain,  # Real domain if detected
                 env="dev",
                 container_type=c_type,
-                url=f"https://{real_domain}" if real_domain else None,
+                url=public_url,
                 metadata=meta,
             )
             discovered.append(entry)
