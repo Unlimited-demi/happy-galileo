@@ -13,7 +13,7 @@ class AuthManager:
     """Manages API keys for dashboard and telemetry authentication."""
     
     def __init__(self, auth_file: Optional[Path] = None):
-        self.auth_file = auth_file or Config.BASE_DIR / "auth.json"
+        self.auth_file = auth_file or Config.DEVCTL_STATE_DIR / "auth.json"
     
     def _load_auth(self) -> Dict[str, Any]:
         if self.auth_file.exists():

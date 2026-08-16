@@ -113,30 +113,34 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 bus = IncidentBus()
                 docker = DockerSocket()
 
-                services = registry.list_services()
-                incidents = bus.list_incidents(only_open=True)
+                services = registry.list_services() or []
+                incidents = bus.list_incidents(only_open=True) or []
 
                 # Query Docker containers quickly via DockerSocket
-                containers = docker.list_containers(all_containers=True)
+                containers = docker.list_containers(all_containers=True) or []
                 container_map = {}
                 for c in containers:
-                    c_img = c.get("Image", "unknown")
+                    if not isinstance(c, dict):
+                        continue
+                    c_img = c.get("Image", "unknown") or "unknown"
                     v_tag = c_img.split(":")[-1] if ":" in c_img else "latest"
-                    for n in c.get("Names", []):
+                    for n in (c.get("Names") or []):
                         clean_n = n.lstrip("/")
                         container_map[clean_n] = {
                             "image": c_img,
                             "version": v_tag,
-                            "status": c.get("Status", "RUNNING"),
-                            "state": c.get("State", "running"),
-                            "id": c.get("Id", "")[:12],
+                            "status": c.get("Status", "RUNNING") or "RUNNING",
+                            "state": c.get("State", "running") or "running",
+                            "id": str(c.get("Id", "") or "")[:12],
                         }
 
                 # Merge service info with container versions
                 merged_services = []
                 for svc in services:
-                    name = svc.get("service_name", "app")
-                    c_name = svc.get("container_name", name)
+                    if not isinstance(svc, dict):
+                        continue
+                    name = svc.get("service_name", "app") or "app"
+                    c_name = svc.get("container_name", name) or name
                     c_info = container_map.get(c_name, {})
                     is_running = c_info.get("state") == "running"
                     merged = {
@@ -179,28 +183,31 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 bus = IncidentBus()
                 params = parse_qs(parsed.query)
                 only_open = params.get("all", ["true"])[0] != "true"
-                local_incidents = bus.list_incidents(only_open=only_open)
+                local_incidents = bus.list_incidents(only_open=only_open) or []
 
                 # Tag local incidents with their source node
                 local_node_name = os.environ.get("NODE_NAME", "vm-01 (Primary)")
                 for inc in local_incidents:
-                    inc["source_node"] = local_node_name
+                    if isinstance(inc, dict):
+                        inc["source_node"] = local_node_name
 
-                # Merge incidents from all remote fleet nodes
-                all_incidents = list(local_incidents)
-                for node_name, node_data in FLEET_STORE.items():
-                    if node_name == local_node_name:
+                # Merge incidents from all remote fleet nodes safely
+                all_incidents = [inc for inc in local_incidents if isinstance(inc, dict)]
+                for node_name, node_data in list(FLEET_STORE.items()):
+                    if not isinstance(node_data, dict) or node_name == local_node_name:
                         continue
-                    # Remote nodes send all_incidents (combined), open_incidents, and resolved_incidents
-                    remote_incidents = node_data.get("all_incidents", []) or node_data.get("open_incidents", [])
-                    for rinc in remote_incidents:
-                        rinc["source_node"] = node_name
-                        if only_open and rinc.get("state") in ["RESOLVED", "CLOSED", "VERIFIED"]:
-                            continue
-                        all_incidents.append(rinc)
+                    remote_incidents = node_data.get("all_incidents") or node_data.get("open_incidents") or []
+                    if isinstance(remote_incidents, list):
+                        for rinc in remote_incidents:
+                            if isinstance(rinc, dict):
+                                r_copy = dict(rinc)
+                                r_copy["source_node"] = node_name
+                                if only_open and r_copy.get("state") in ["RESOLVED", "CLOSED", "VERIFIED"]:
+                                    continue
+                                all_incidents.append(r_copy)
 
-                # Sort newest first
-                all_incidents.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+                # Sort newest first safely
+                all_incidents.sort(key=lambda x: str(x.get("created_at", "") or ""), reverse=True)
                 self._send_json({"incidents": all_incidents})
                 return
 
@@ -229,8 +236,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     registry = DomainRegistry()
                     docker = DockerSocket()
                     bus = IncidentBus()
-                    services = registry.list_services()
-                    containers = docker.list_containers(all_containers=True)
+                    services = registry.list_services() or []
+                    containers = docker.list_containers(all_containers=True) or []
                     FLEET_STORE[local_node_name] = {
                         "node_name": local_node_name,
                         "base_domain": Config.BASE_DOMAIN,
@@ -243,11 +250,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         "online": True,
                     }
 
-                nodes_list = list(FLEET_STORE.values())
+                nodes_list = []
                 current_time = time.time()
-                for n in nodes_list:
-                    # Mark offline if no heartbeat in 90 seconds
-                    n["online"] = (current_time - n.get("timestamp", 0)) < 90
+                for k, n in list(FLEET_STORE.items()):
+                    if isinstance(n, dict):
+                        n_copy = dict(n)
+                        # Mark offline if no heartbeat in 90 seconds
+                        n_copy["online"] = (current_time - float(n_copy.get("timestamp", 0) or 0)) < 90
+                        nodes_list.append(n_copy)
+
                 self._send_json({"nodes": nodes_list, "total_nodes": len(nodes_list)})
                 return
 
@@ -287,6 +298,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             super().do_GET()
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self._send_json({"error": str(e)}, status=500)
 
     def do_POST(self):
@@ -300,8 +313,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     return
 
                 content_length = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(content_length).decode("utf-8")
-                payload = json.loads(body)
+                body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+                payload = json.loads(body) if body else {}
                 node_name = payload.get("node_name", "unknown")
                 payload["received_at"] = time.time()
                 payload["client_ip"] = self.client_address[0]
@@ -311,6 +324,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
             self.send_error(404, "Endpoint not found")
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self._send_json({"error": str(e)}, status=400)
 
 
