@@ -450,9 +450,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
 def run_dashboard(port: int = Config.DASHBOARD_PORT, host: str = Config.DASHBOARD_HOST):
     """Start the multi-threaded dashboard HTTP server."""
+    dist_dir = Path(__file__).resolve().parent / "dist"
+    static_dir = Path(__file__).resolve().parent / "static"
+    serve_dir = str(dist_dir) if dist_dir.exists() and (dist_dir / "index.html").exists() else str(static_dir)
+
+    class CustomDashboardHandler(DashboardHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=serve_dir, **kwargs)
+
     server_address = (host, port)
-    httpd = ThreadingHTTPServer(server_address, DashboardHandler)
-    print(f"🚀 AI-Ops & Multi-Server Fleet Dashboard running at http://{host}:{port}")
+    httpd = ThreadingHTTPServer(server_address, CustomDashboardHandler)
+    print(f"🚀 AI-Ops & Multi-Server Fleet Dashboard serving from '{serve_dir}' at http://{host}:{port}")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -462,3 +470,4 @@ def run_dashboard(port: int = Config.DASHBOARD_PORT, host: str = Config.DASHBOAR
 
 if __name__ == "__main__":
     run_dashboard()
+

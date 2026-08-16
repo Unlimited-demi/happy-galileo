@@ -1,0 +1,43 @@
+# ==============================================================================
+# Multi-Stage Dockerfile for ServerGuard Dashboard
+# Stage 1: Build React 18 + Vite + Tailwind + Radix UI Frontend
+# Stage 2: Serve via Python 3.11 Backend with tmux support
+# ==============================================================================
+
+# ── Stage 1: Frontend Build ──
+FROM node:20-alpine AS frontend-builder
+WORKDIR /build
+
+COPY dashboard/frontend/package.json ./
+RUN npm install
+
+COPY dashboard/frontend ./
+RUN npm run build
+
+# ── Stage 2: Production Python Backend & Terminal Bridge ──
+FROM python:3.11-slim
+WORKDIR /app
+
+# Install tmux and git for live agent session attachment
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tmux \
+    git \
+    procps \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy backend code
+COPY devctl /app/devctl
+COPY ai_ops /app/ai_ops
+COPY dashboard /app/dashboard
+
+# Copy compiled frontend from Stage 1 into dashboard/dist
+COPY --from=frontend-builder /build/../dist /app/dashboard/dist
+
+ENV PYTHONPATH=/app
+ENV DASHBOARD_HOST=0.0.0.0
+ENV DASHBOARD_PORT=8888
+
+EXPOSE 8888
+
+CMD ["python3", "/app/dashboard/app.py"]

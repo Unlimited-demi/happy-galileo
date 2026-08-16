@@ -19,7 +19,10 @@ services:
 
   # 2. Status & Ops Web Dashboard
   dashboard:
-    image: python:3.11-slim
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.dashboard
+    image: serverguard-dashboard:latest
     container_name: devctl-dashboard
     restart: unless-stopped
     working_dir: /app
