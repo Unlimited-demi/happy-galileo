@@ -347,7 +347,7 @@ def cmd_incident(args):
         except Exception as e:
             health_probe_str = f"Health Probe: {e}"
 
-        # 2. Extract git branch and diff from the target service workspace
+        # 2. Extract git branch, commit, diff, and auto-push fix branch to origin
         evidence = inc.get("evidence", {}) or {}
         svc_workspace = evidence.get("workspace_dir") or (svc_entry.get("workspace_dir") if svc_entry else None)
 
@@ -365,31 +365,73 @@ def cmd_incident(args):
                             break
 
         git_branch = "N/A"
+        git_commit = "N/A"
         git_diff_stat = ""
+        git_push_status = "Not applicable (no git repo)"
+        remote_url = ""
 
         # Only run git if the workspace is a valid git repository
         # and NOT the control repo /opt/happy-galileo (unless the failing service is serverguard itself)
         if svc_workspace and os.path.isdir(svc_workspace) and os.path.isdir(os.path.join(svc_workspace, ".git")):
             if svc_workspace != "/opt/happy-galileo" or service_name in ["dashboard", "ai-ops", "caddy"]:
                 try:
+                    # Get active branch
                     b_res = subprocess.run(["git", "-C", svc_workspace, "rev-parse", "--abbrev-ref", "HEAD"], stdout=subprocess.PIPE, text=True, check=False)
                     if b_res.returncode == 0:
                         git_branch = b_res.stdout.strip()
 
+                    # Get remote origin URL
+                    r_res = subprocess.run(["git", "-C", svc_workspace, "config", "--get", "remote.origin.url"], stdout=subprocess.PIPE, text=True, check=False)
+                    if r_res.returncode == 0:
+                        remote_url = r_res.stdout.strip()
+
+                    # Auto-commit if there are uncommitted changes
+                    status_res = subprocess.run(["git", "-C", svc_workspace, "status", "--porcelain"], stdout=subprocess.PIPE, text=True, check=False)
+                    if status_res.returncode == 0 and status_res.stdout.strip():
+                        subprocess.run(["git", "-C", svc_workspace, "add", "-A"], check=False, stdout=subprocess.DEVNULL)
+                        commit_msg = f"fix({service_name}): resolve incident {args.incident_id}\n\n{notes}"
+                        subprocess.run(["git", "-C", svc_workspace, "commit", "-m", commit_msg], check=False, stdout=subprocess.DEVNULL)
+
+                    # Get commit hash
+                    c_res = subprocess.run(["git", "-C", svc_workspace, "rev-parse", "--short", "HEAD"], stdout=subprocess.PIPE, text=True, check=False)
+                    if c_res.returncode == 0:
+                        git_commit = c_res.stdout.strip()
+
+                    # Auto-push fix branch to origin
+                    if git_branch and git_branch != "HEAD":
+                        print(f"[*] Pushing fix branch '{git_branch}' to remote origin...")
+                        p_res = subprocess.run(
+                            ["git", "-C", svc_workspace, "push", "-u", "origin", git_branch],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            check=False
+                        )
+                        if p_res.returncode == 0:
+                            git_push_status = f"Pushed to origin/{git_branch} ({git_commit})"
+                            print(f"[✓] Successfully pushed branch '{git_branch}' to remote origin.")
+                        else:
+                            err_msg = p_res.stderr.strip() or "Push failed"
+                            git_push_status = f"Local ({git_branch}) - {err_msg[:60]}"
+                            print(f"  [i] Git push notice: {err_msg[:80]}")
+
+                    # Extract diff stat
                     d_res = subprocess.run(["git", "-C", svc_workspace, "diff", "--stat", "HEAD~1...HEAD"], stdout=subprocess.PIPE, text=True, check=False)
                     if d_res.returncode == 0 and d_res.stdout.strip():
                         git_diff_stat = d_res.stdout.strip()
                     else:
                         d_res2 = subprocess.run(["git", "-C", svc_workspace, "show", "--stat", "HEAD"], stdout=subprocess.PIPE, text=True, check=False)
                         git_diff_stat = d_res2.stdout.strip() if d_res2.returncode == 0 else "Clean working tree"
-                except Exception:
-                    git_diff_stat = "Git diff not available"
+                except Exception as e:
+                    git_diff_stat = f"Git diff error: {e}"
             else:
                 git_branch = "Pre-built Container (No local repo)"
                 git_diff_stat = "Container runtime stabilized and verified"
+                git_push_status = "N/A (Vendor container)"
         else:
             git_branch = "Pre-built Container (No local repo)"
             git_diff_stat = "Container configuration / environment updated"
+            git_push_status = "N/A (Vendor container)"
 
         # 3. Check container running state
         docker_mgr = DockerManager()
@@ -402,6 +444,9 @@ def cmd_incident(args):
             "response_time_ms": response_time_ms,
             "container_state": container_state,
             "git_branch": git_branch,
+            "git_commit": git_commit,
+            "git_push_status": git_push_status,
+            "remote_url": remote_url,
             "git_diff": git_diff_stat,
             "verified_by": args.agent or inc.get("claimed_by", "OpenCode"),
         }
@@ -416,10 +461,11 @@ def cmd_incident(args):
         print(f"║ State:          {'VERIFIED & RESOLVED':<56}║")
         print(f"║ Resolved By:    {args.agent or inc.get('claimed_by', 'OpenCode'):<56}║")
         print(f"║ Git Branch:     {git_branch:<56}║")
+        print(f"║ Git Push:       {git_push_status[:56]:<56}║")
         print("╠" + "─" * 74 + "╣")
         print("║ 📌 REMEDIATION & ROOT CAUSE SUMMARY:                                     ║")
         for line in notes.splitlines():
-            print(f"║   {line:<71}║")
+            print(f"║   {line[:70]:<70} ║")
         print("╠" + "─" * 74 + "╣")
         print("║ 🧪 LIVE VERIFICATION PROOF:                                               ║")
         print(f"║   ✓ Container Status:  {container_state:<50}║")
@@ -428,7 +474,7 @@ def cmd_incident(args):
         print("╠" + "─" * 74 + "╣")
         print("║ 🛠️ CODE DIFF SUMMARY:                                                    ║")
         for diff_line in git_diff_stat.splitlines()[:5]:
-            print(f"║   {diff_line[:70]:<71}║")
+            print(f"║   {diff_line[:70]:<70} ║")
         print("╚" + "═" * 74 + "╝\n")
 
 

@@ -1214,11 +1214,37 @@ function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
                 React.createElement(
                   'div',
                   { className: 'kpi-card' },
-                  React.createElement('div', { className: 'kpi-title' }, 'Git Branch'),
-                  React.createElement('div', { className: 'kpi-value', style: { fontSize: '0.82rem', fontFamily: 'var(--font-mono)' } }, proof.git_branch || 'master')
+                  React.createElement('div', { className: 'kpi-title' }, 'Git Branch & Commit'),
+                  React.createElement('div', { className: 'kpi-value', style: { fontSize: '0.82rem', fontFamily: 'var(--font-mono)' } }, `${proof.git_branch || 'master'}${proof.git_commit && proof.git_commit !== 'N/A' ? ` (${proof.git_commit})` : ''}`)
                 )
               )
             ),
+
+            // Git Remote Handoff Status
+            proof.git_push_status && proof.git_push_status !== 'Not applicable (no git repo)' &&
+              React.createElement(
+                'div',
+                {
+                  style: {
+                    background: 'var(--bg-surface)',
+                    border: '1px solid var(--border-subtle)',
+                    padding: '12px 16px',
+                    borderRadius: '6px',
+                    fontSize: '0.82rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  },
+                },
+                React.createElement(
+                  'div',
+                  { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+                  React.createElement(Icons.Terminal, { size: 15, color: 'var(--accent-cyan)' }),
+                  React.createElement('span', { style: { fontWeight: '600' } }, 'Git Handoff Status:'),
+                  React.createElement('span', { style: { fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' } }, proof.git_push_status)
+                ),
+                proof.remote_url && React.createElement('span', { style: { fontSize: '0.75rem', color: 'var(--text-muted)' } }, proof.remote_url)
+              ),
 
             // Root cause problem statement
             React.createElement(

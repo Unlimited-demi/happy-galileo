@@ -96,8 +96,10 @@ class IncidentBus:
 - **Health Probe:** `{proof.get('health_probe', 'HTTP 200 OK')}`
 - **Container State:** `{proof.get('container_state', 'RUNNING')}`
 - **Git Branch:** `{proof.get('git_branch', 'N/A')}`
+- **Git Commit:** `{proof.get('git_commit', 'N/A')}`
+- **Git Push Status:** `{proof.get('git_push_status', 'N/A')}`
 
-### 📝 Remediation Summary:
+### 📝 Remediation & Root Cause Insight:
 {resolution_notes or 'Application bug resolved and verified with automated test suite.'}
 
 ### 🛠️ Code Diff & Files Modified:
