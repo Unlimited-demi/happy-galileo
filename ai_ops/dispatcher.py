@@ -80,10 +80,42 @@ class IncidentDispatcher:
             or {}
         )
 
-        workspace_dir = codebase.get("workspace_dir") or (f"/opt/projects/{service_name}" if os.path.isdir(f"/opt/projects/{service_name}") else "/opt/happy-galileo")
-        compose_file = codebase.get("compose_file") or (os.path.join(workspace_dir, "docker-compose.yml") if os.path.isfile(os.path.join(workspace_dir, "docker-compose.yml")) else "docker-compose.yml")
-        base_branch = codebase.get("git_branch") or "master"
-        fix_branch = f"fix/{service_name}-{incident_id}"
+        workspace_dir = codebase.get("workspace_dir") or evidence.get("workspace_dir")
+        compose_file = codebase.get("compose_file") or evidence.get("compose_file")
+
+        # Inspect container labels & mounts directly if not known
+        if not workspace_dir:
+            try:
+                from ai_ops.docker_socket import DockerSocket
+                docker_sock = DockerSocket()
+                c_info = docker_sock.inspect_container(service_name) or docker_sock.inspect_container(incident.get("container_name", service_name))
+                if c_info:
+                    labels = c_info.get("Config", {}).get("Labels", {}) or {}
+                    workspace_dir = labels.get("com.docker.compose.project.working_dir")
+                    compose_file = labels.get("com.docker.compose.project.config_files")
+                    if not workspace_dir:
+                        # Check host mounts
+                        for m in c_info.get("Mounts", []):
+                            src = m.get("Source", "")
+                            if src and os.path.isdir(src) and not src.startswith("/var/") and not src.startswith("/tmp/"):
+                                workspace_dir = src
+                                break
+            except Exception:
+                pass
+
+        # Check standard project paths if still not found
+        if not workspace_dir:
+            for candidate in [f"/opt/{service_name}", f"/opt/projects/{service_name}", f"/srv/{service_name}"]:
+                if os.path.isdir(candidate):
+                    workspace_dir = candidate
+                    break
+
+        # Only use /opt/happy-galileo if the service being fixed is actually dashboard/ai-ops
+        if not workspace_dir and service_name in ["dashboard", "ai-ops", "caddy", "serverguard"]:
+            workspace_dir = "/opt/happy-galileo"
+
+        base_branch = codebase.get("git_branch") or evidence.get("git_branch") or "master"
+        fix_branch = f"fix/{service_name}-{incident_id}" if workspace_dir else "N/A (Docker container)"
 
         # 2. Claim the incident in IncidentBus (20% -> 40%)
         try:
@@ -96,35 +128,38 @@ class IncidentDispatcher:
         staging_url = f"https://{staging_domain}"
         dossier_path = self.bus.incidents_dir / f"{incident_id}.md"
 
+        target_cwd = workspace_dir if (workspace_dir and os.path.isdir(workspace_dir)) else "/app"
+
         prompt = f"""[CRITICAL INCIDENT REMEDIATION DISPATCH]
 Incident ID: {incident_id}
 Target Service: {service_name}
 Severity: {severity}
 Summary: {title}
 
-📁 Host Workspace: {workspace_dir}
-📄 Compose File: {compose_file}
-🌿 Active Git Branch: {fix_branch} (branched from {base_branch})
+📁 Host Workspace: {workspace_dir or 'Docker Container / Pre-built Image'}
+📄 Compose File: {compose_file or 'docker-compose.yml'}
+🌿 Active Git Branch: {fix_branch}
 🌐 Staging Verification Endpoint: {staging_url}
 📋 Diagnostic Dossier: {dossier_path}
 
 REMEDIATION WORKFLOW CONTRACT (AGENTS.md):
-1. Navigate to physical codebase: cd {workspace_dir}
-2. Inspect the error trace in {dossier_path} and identify the bug.
-3. Edit the source code / configuration to fix the root cause.
-4. Rebuild & start container: docker compose up -d
-5. Expose staging route: devctl expose {service_name} <port> --env {Config.STAGING_NAMESPACE}
-6. Verify fix with Playwright: devctl test {service_name}
-7. Once clean, commit changes and resolve incident:
+1. Inspect the error trace in {dossier_path} and identify the bug.
+2. Edit the source code / compose configuration to fix the root cause.
+3. Rebuild & start container: docker compose up -d
+4. Expose staging route: devctl expose {service_name} <port> --env {Config.STAGING_NAMESPACE}
+5. Verify fix with Playwright: devctl test {service_name}
+6. Once clean, commit changes and resolve incident:
    devctl incident resolve {incident_id} --agent "{agent_name}" --notes "Fixed root cause and verified on staging"
 """
 
-        # 4. Prepare git fix branch in the physical codebase
-        if os.path.isdir(workspace_dir) and os.path.isdir(os.path.join(workspace_dir, ".git")):
-            try:
-                subprocess.run(["git", "-C", workspace_dir, "checkout", "-B", fix_branch], check=False, capture_output=True)
-            except Exception:
-                pass
+        # 4. Prepare git fix branch in the physical codebase ONLY if it's a real git repo
+        # and NOT the control repo /opt/happy-galileo (unless service is serverguard itself)
+        if workspace_dir and os.path.isdir(workspace_dir) and os.path.isdir(os.path.join(workspace_dir, ".git")):
+            if workspace_dir != "/opt/happy-galileo" or service_name in ["dashboard", "ai-ops", "caddy"]:
+                try:
+                    subprocess.run(["git", "-C", workspace_dir, "checkout", "-B", fix_branch], check=False, capture_output=True)
+                except Exception:
+                    pass
 
         # 5. Launch OpenCode via tmux or direct background process
         session_name = f"opencode-{incident_id}"
