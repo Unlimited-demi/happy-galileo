@@ -114,6 +114,46 @@ EOF
         echo "[✓] Mailcow Nginx reloaded successfully."
     fi
 
+# Check for existing third-party Caddy container (e.g. agentic-ccs-caddy)
+OTHER_CADDY_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i 'caddy' | grep -v '^caddy$' | head -n 1 || true)
+
+if [ -n "$OTHER_CADDY_CONTAINER" ]; then
+    echo "⚡ Detected active Docker Caddy container: ${OTHER_CADDY_CONTAINER}"
+    echo "   Configuring ${OTHER_CADDY_CONTAINER} to route *.${BASE_DOMAIN} to devctl Caddy on port ${INTERNAL_PORT}..."
+
+    # Find host Caddyfile path via docker inspect mounts
+    HOST_CADDYFILE=$(docker inspect "$OTHER_CADDY_CONTAINER" 2>/dev/null | grep -B 2 -A 5 'Caddyfile' | grep '"Source"' | head -n 1 | awk -F'"' '{print $4}' || true)
+    
+    if [ -z "$HOST_CADDYFILE" ] || [ ! -f "$HOST_CADDYFILE" ]; then
+        # Search common paths
+        for p in "/home/newroot/LegendAgenticCCS/Caddyfile" "/home/newroot/LegendAgenticCCS/caddy/Caddyfile" "/root/LegendAgenticCCS/Caddyfile" "/opt/caddy/Caddyfile"; do
+            if [ -f "$p" ]; then
+                HOST_CADDYFILE="$p"
+                break
+            fi
+        done
+    fi
+
+    if [ -n "$HOST_CADDYFILE" ] && [ -f "$HOST_CADDYFILE" ]; then
+        if ! grep -q "${BASE_DOMAIN}" "$HOST_CADDYFILE"; then
+            echo "" >> "$HOST_CADDYFILE"
+            cat << EOF >> "$HOST_CADDYFILE"
+
+# Auto-configured by devctl for wildcard development routing
+*.${BASE_DOMAIN}, ${BASE_DOMAIN} {
+    reverse_proxy 172.17.0.1:${INTERNAL_PORT}
+}
+EOF
+            echo "[*] Appended wildcard route to ${HOST_CADDYFILE}"
+            docker exec "$OTHER_CADDY_CONTAINER" caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || docker restart "$OTHER_CADDY_CONTAINER" 2>/dev/null || true
+            echo "[✓] ${OTHER_CADDY_CONTAINER} reloaded successfully."
+        else
+            echo "[✓] Wildcard route already present in ${HOST_CADDYFILE}"
+        fi
+    else
+        echo "[!] Notice: Please add '*.${BASE_DOMAIN} { reverse_proxy 172.17.0.1:${INTERNAL_PORT} }' to your ${OTHER_CADDY_CONTAINER} Caddyfile."
+    fi
+
 elif [ "$HAS_NGINX" = true ]; then
     echo "⚡ Detected active Nginx on host."
     echo "   Configuring Nginx reverse-proxy pass to Caddy on port ${INTERNAL_PORT}..."
