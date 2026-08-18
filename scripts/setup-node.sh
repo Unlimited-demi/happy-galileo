@@ -244,26 +244,30 @@ EOF
 chmod +x /usr/local/bin/devctl
 chmod +x "${INSTALL_DIR}/devctl/cli.py"
 
-# ── Step 7: Resolve proxy conflicts & firewall ──
-echo "[7/8] Resolving proxy conflicts & hardening firewall..."
+# ── Step 7: Configure Environment & Resolve Proxy Conflicts ──
+echo "[7/8] Configuring environment, resolving proxy conflicts & hardening firewall..."
+
+# Write initial node .env with telemetry and credentials
+cat << EOF > "${INSTALL_DIR}/infra/.env"
+BASE_DOMAIN=${BASE_DOMAIN}
+NODE_NAME=${NODE_NAME}
+CENTRAL_HUB_URL=${CENTRAL_HUB_URL}
+FLEET_KEY=${FLEET_KEY}
+GITHUB_TOKEN=${GITHUB_TOKEN}
+EOF
+
+# Detect existing host web servers (Nginx/Apache/Caddy) and set internal ports if needed
 if [ -f "${INSTALL_DIR}/infra/security/proxy_resolver.sh" ]; then
   bash "${INSTALL_DIR}/infra/security/proxy_resolver.sh" "${BASE_DOMAIN}"
 fi
+
+# Harden firewall
 if [ -f "${INSTALL_DIR}/infra/security/ufw_setup.sh" ]; then
   bash "${INSTALL_DIR}/infra/security/ufw_setup.sh" 2>/dev/null || true
 fi
 
 # ── Step 8: Start Infrastructure ──
 echo "[8/8] Starting Node Agent Stack (Caddy + AI-Ops + Dashboard)..."
-
-# Write node .env with telemetry configuration
-cat << EOF > "${INSTALL_DIR}/infra/.env"
-BASE_DOMAIN=${BASE_DOMAIN}
-NODE_NAME=${NODE_NAME}
-CENTRAL_HUB_URL=${CENTRAL_HUB_URL}
-FLEET_KEY=${FLEET_KEY}
-EOF
-
 cd "${INSTALL_DIR}/infra"
 docker compose -f docker-compose.infra.yml --env-file .env up -d --build
 

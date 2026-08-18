@@ -17,26 +17,42 @@ PORT_443_PROCESS=$(ss -tulpn 2>/dev/null | grep ':443 ' || true)
 
 HAS_NGINX=false
 HAS_APACHE=false
+HAS_HOST_CADDY=false
 HAS_PORT_CONFLICT=false
 
-if echo "$PORT_80_PROCESS" | grep -iq "nginx" || command -v nginx &>/dev/null && systemctl is-active --quiet nginx 2>/dev/null; then
+if echo "$PORT_80_PROCESS" | grep -iq "nginx" || (command -v nginx &>/dev/null && systemctl is-active --quiet nginx 2>/dev/null); then
     HAS_NGINX=true
     HAS_PORT_CONFLICT=true
-elif echo "$PORT_80_PROCESS" | grep -iq "apache\|httpd" || command -v apache2 &>/dev/null && systemctl is-active --quiet apache2 2>/dev/null; then
+elif echo "$PORT_80_PROCESS" | grep -iq "apache\|httpd" || (command -v apache2 &>/dev/null && systemctl is-active --quiet apache2 2>/dev/null); then
     HAS_APACHE=true
     HAS_PORT_CONFLICT=true
-elif [ -n "$PORT_80_PROCESS" ]; then
-    # Port 80 is occupied by some other process/container
+elif echo "$PORT_80_PROCESS" | grep -iq "caddy" || (command -v caddy &>/dev/null && systemctl is-active --quiet caddy 2>/dev/null); then
+    HAS_HOST_CADDY=true
+    HAS_PORT_CONFLICT=true
+elif [ -n "$PORT_80_PROCESS" ] || [ -n "$PORT_443_PROCESS" ]; then
+    # Port 80/443 is occupied by some other process or container
     HAS_PORT_CONFLICT=true
 fi
 
+# Find an open internal port if 8080 is also occupied
+while ss -tulpn 2>/dev/null | grep -q ":${INTERNAL_PORT} "; do
+    INTERNAL_PORT=$((INTERNAL_PORT + 1))
+done
+
 if [ "$HAS_PORT_CONFLICT" = true ]; then
-    echo "⚡ Port 80 is in use on this server. Configuring Caddy on internal port ${INTERNAL_PORT}..."
+    echo "⚡ Port 80/443 is in use on this server. Configuring Caddy on internal port ${INTERNAL_PORT}..."
     mkdir -p "${PROJECT_DIR}/infra"
-    cat << EOF > "${PROJECT_DIR}/infra/.env"
+    ENV_FILE="${PROJECT_DIR}/infra/.env"
+    touch "${ENV_FILE}"
+    
+    # Remove existing CADDY_HTTP_PORT / CADDY_HTTPS_PORT lines if present
+    sed -i '/^CADDY_HTTP_PORT=/d' "${ENV_FILE}" 2>/dev/null || true
+    sed -i '/^CADDY_HTTPS_PORT=/d' "${ENV_FILE}" 2>/dev/null || true
+    
+    # Safely append internal port configuration
+    cat << EOF >> "${ENV_FILE}"
 CADDY_HTTP_PORT=${INTERNAL_PORT}
 CADDY_HTTPS_PORT=8443
-BASE_DOMAIN=${BASE_DOMAIN}
 EOF
 fi
 
@@ -130,28 +146,31 @@ EOF
         echo "[!] Warning: Nginx syntax test failed. Check /etc/nginx/conf.d/."
     fi
 
-elif [ "$HAS_APACHE" = true ]; then
-    echo "⚡ Detected active Apache on host."
-    echo "   Configuring Apache proxy pass to Caddy on port ${INTERNAL_PORT}..."
-
-    a2enmod proxy proxy_http proxy_wstunnel 2>/dev/null || true
-    APACHE_CONF="/etc/apache2/sites-available/devctl_${BASE_DOMAIN//./_}.conf"
-
-    cat << EOF > "$APACHE_CONF"
-<VirtualHost *:80>
-    ServerName ${BASE_DOMAIN}
-    ServerAlias *.${BASE_DOMAIN}
-
-    ProxyPreserveHost On
-    ProxyPass / http://127.0.0.1:${INTERNAL_PORT}/
-    ProxyPassReverse / http://127.0.0.1:${INTERNAL_PORT}/
-</VirtualHost>
+elif [ "$HAS_HOST_CADDY" = true ]; then
+    echo "⚡ Detected active Caddy on host."
+    echo "   Configuring host Caddy to route *.${BASE_DOMAIN} to internal port ${INTERNAL_PORT}..."
+    if [ -d "/etc/caddy/conf.d" ]; then
+        cat << EOF > "/etc/caddy/conf.d/devctl_${BASE_DOMAIN//./_}.caddy"
+*.${BASE_DOMAIN}, ${BASE_DOMAIN} {
+    reverse_proxy 127.0.0.1:${INTERNAL_PORT}
+}
 EOF
-    a2ensite "devctl_${BASE_DOMAIN//./_}.conf" 2>/dev/null || true
-    systemctl reload apache2 2>/dev/null || true
-    echo "[✓] Apache reloaded successfully."
+        systemctl reload caddy 2>/dev/null || true
+        echo "[✓] Host Caddy reloaded successfully."
+    elif [ -f "/etc/caddy/Caddyfile" ]; then
+        if ! grep -q "${BASE_DOMAIN}" "/etc/caddy/Caddyfile"; then
+            cat << EOF >> "/etc/caddy/Caddyfile"
+
+# Auto-configured by devctl for wildcard routing
+*.${BASE_DOMAIN}, ${BASE_DOMAIN} {
+    reverse_proxy 127.0.0.1:${INTERNAL_PORT}
+}
+EOF
+            systemctl reload caddy 2>/dev/null || true
+            echo "[✓] Added wildcard route to /etc/caddy/Caddyfile and reloaded."
+        fi
+    fi
 
 elif [ "$HAS_PORT_CONFLICT" = false ]; then
     echo "[✓] No host port conflicts detected. Caddy will bind directly to 80/443."
-    rm -f "${PROJECT_DIR}/infra/.env" 2>/dev/null || true
 fi

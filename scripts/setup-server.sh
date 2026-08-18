@@ -186,16 +186,21 @@ chmod +x /usr/local/bin/devctl
 chmod +x "${PROJECT_DIR}/devctl/cli.py"
 
 echo "[8/8] Starting Infrastructure Stack (Caddy + AI-Ops + Status Dashboard)..."
-if [ -f "${PROJECT_DIR}/infra/security/proxy_resolver.sh" ]; then
-  bash "${PROJECT_DIR}/infra/security/proxy_resolver.sh" "${BASE_DOMAIN}"
-fi
-
 cd "${PROJECT_DIR}/infra"
 
 # Auto-generate .env from template if missing
 if [ ! -f ".env" ] && [ -f "${PROJECT_DIR}/.env.example" ]; then
   echo "  [i] Creating infra/.env from .env.example..."
   sed "s/dev-server.datakrib.com/${BASE_DOMAIN}/g" "${PROJECT_DIR}/.env.example" > .env
+fi
+
+if [ -n "${GITHUB_TOKEN}" ]; then
+  echo "GITHUB_TOKEN=${GITHUB_TOKEN}" >> .env
+fi
+
+# Detect existing host web servers (Nginx/Apache/Caddy) and set internal ports if needed
+if [ -f "${PROJECT_DIR}/infra/security/proxy_resolver.sh" ]; then
+  bash "${PROJECT_DIR}/infra/security/proxy_resolver.sh" "${BASE_DOMAIN}"
 fi
 
 docker compose -f docker-compose.infra.yml up -d --build
