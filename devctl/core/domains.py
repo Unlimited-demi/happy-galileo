@@ -596,14 +596,16 @@ class DomainRegistry:
                 meta["existing_domain"] = real_domain
                 meta["domain_source"] = real_domain_source
 
-            # Register for MONITORING ONLY — ONLY web containers get a public access URL
-            public_url = f"https://{real_domain}" if (real_domain and c_type == SERVICE_TYPE_WEB) else None
+            # Register for MONITORING ONLY — Discovery never assigns arbitrary public ingress routes.
+            # All discovered services remain strictly internal until explicitly exposed via `devctl expose <service> <port>`
+            public_url = None
+            public_domain = None
 
             entry = self.register(
                 service_name=slug,
                 container_name=c_name,
                 port=port,
-                domain=real_domain,  # Real domain if detected
+                domain=public_domain,
                 env="dev",
                 container_type=c_type,
                 url=public_url,
