@@ -1,0 +1,27 @@
+# Environment files containing secrets
+.env
+.env.local
+.env.*.local
+infra/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Devctl local runtime state
+.devctl/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
