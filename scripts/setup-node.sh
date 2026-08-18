@@ -33,6 +33,8 @@ GIT_EMAIL="${GIT_EMAIL:-}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 INSTALL_DIR="/opt/happy-galileo"
 REPO_URL="https://github.com/Unlimited-demi/happy-galileo.git"
+REPO_SSH_URL="git@github.com:Unlimited-demi/happy-galileo.git"
+REPO_HTTPS_URL="https://github.com/Unlimited-demi/happy-galileo.git"
 
 while [[ "$#" -gt 0 ]]; do
   case $1 in
@@ -173,14 +175,19 @@ if ! command -v docker &> /dev/null; then
 fi
 apt-get install -y docker-compose-plugin 2>/dev/null || true
 
-# ── Step 3: Clone Codebase via SSH ──
-echo "[3/8] Fetching workstation codebase via SSH..."
-TARGET_CLONE_URL="${REPO_SSH_URL}"
+# ── Step 3: Clone Codebase ──
+if [ -n "${GITHUB_TOKEN}" ]; then
+  TARGET_CLONE_URL="https://${GITHUB_TOKEN}@github.com/Unlimited-demi/happy-galileo.git"
+  echo "[3/8] Fetching workstation codebase via GitHub Token..."
+else
+  TARGET_CLONE_URL="${REPO_SSH_URL}"
+  echo "[3/8] Fetching workstation codebase via SSH..."
+fi
 
 if [ ! -d "${INSTALL_DIR}" ]; then
   mkdir -p /opt
-  if ! git clone "${TARGET_CLONE_URL}" "${INSTALL_DIR}" 2>/dev/null; then
-    echo "  [i] SSH clone failed, trying HTTPS fallback..."
+  if ! git clone "${TARGET_CLONE_URL}" "${INSTALL_DIR}"; then
+    echo "  [i] Clone failed, retrying via HTTPS fallback..."
     git clone "${REPO_HTTPS_URL}" "${INSTALL_DIR}"
   fi
 else
