@@ -7,16 +7,18 @@
 
 set -e
 
-# Parse optional --domain argument
+# Parse optional arguments
 BASE_DOMAIN="${BASE_DOMAIN:-dev-server.datakrib.com}"
 GIT_NAME="${GIT_NAME:-}"
 GIT_EMAIL="${GIT_EMAIL:-}"
+GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 
 while [[ "$#" -gt 0 ]]; do
   case $1 in
     --domain) BASE_DOMAIN="$2"; shift ;;
     --git-name|--git-username) GIT_NAME="$2"; shift ;;
     --git-email) GIT_EMAIL="$2"; shift ;;
+    --github-token|--token) GITHUB_TOKEN="$2"; shift ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
   shift
@@ -25,6 +27,7 @@ done
 echo "========================================================"
 echo "🚀 Bootstrapping AI Remote Development Workstation"
 echo "   Domain Scope: *.${BASE_DOMAIN}"
+echo "   GitHub Auth:  ${GITHUB_TOKEN:+Token (Zero-Touch)}${GITHUB_TOKEN:-SSH Key}"
 echo "========================================================"
 
 # Check root privileges
@@ -55,22 +58,8 @@ apt-get install -y \
   jq \
   openssh-client
 
-# ── GitHub & SSH Deploy Key Setup ──
-echo "[*] Setting up GitHub SSH deploy key & Git identity..."
-SSH_DIR="${HOME}/.ssh"
-mkdir -p "${SSH_DIR}"
-chmod 700 "${SSH_DIR}"
-
-if [ ! -f "${SSH_DIR}/id_ed25519" ]; then
-  echo "  Generating ED25519 SSH Key..."
-  ssh-keygen -t ed25519 -C "${GIT_EMAIL:-server@datakrib.com}" -f "${SSH_DIR}/id_ed25519" -N ""
-fi
-
-# Pre-populate known_hosts for github.com
-ssh-keyscan -t ed25519,rsa github.com >> "${SSH_DIR}/known_hosts" 2>/dev/null || true
-chmod 600 "${SSH_DIR}/known_hosts" 2>/dev/null || true
-
-# Configure Git username & email
+# ── Git Identity & Authentication Setup ──
+echo "[*] Configuring Git identity..."
 if [ -n "${GIT_NAME}" ]; then
   git config --global user.name "${GIT_NAME}"
 elif [ -z "$(git config --global user.name 2>/dev/null)" ]; then
@@ -81,6 +70,33 @@ if [ -n "${GIT_EMAIL}" ]; then
   git config --global user.email "${GIT_EMAIL}"
 elif [ -z "$(git config --global user.email 2>/dev/null)" ]; then
   git config --global user.email "bot@datakrib.com"
+fi
+
+# Method A: GitHub Token (Zero-Touch)
+if [ -n "${GITHUB_TOKEN}" ]; then
+  echo "[*] Configuring Git with GitHub Personal Access Token (Zero-Touch)..."
+  git config --global credential.helper store
+  echo "https://${GITHUB_TOKEN}:x-oauth-basic@github.com" > "${HOME}/.git-credentials"
+  chmod 600 "${HOME}/.git-credentials"
+  git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+  git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+  echo "  [✓] GitHub Token configured successfully. Zero manual SSH steps required!"
+
+# Method B: SSH Key generation
+else
+  echo "[*] Setting up GitHub SSH deploy key..."
+  SSH_DIR="${HOME}/.ssh"
+  mkdir -p "${SSH_DIR}"
+  chmod 700 "${SSH_DIR}"
+
+  if [ ! -f "${SSH_DIR}/id_ed25519" ]; then
+    echo "  Generating ED25519 SSH Key..."
+    ssh-keygen -t ed25519 -C "${GIT_EMAIL:-server@datakrib.com}" -f "${SSH_DIR}/id_ed25519" -N ""
+  fi
+
+  # Pre-populate known_hosts for github.com
+  ssh-keyscan -t ed25519,rsa github.com >> "${SSH_DIR}/known_hosts" 2>/dev/null || true
+  chmod 600 "${SSH_DIR}/known_hosts" 2>/dev/null || true
 fi
 
 echo "[2/8] Installing Docker & Docker Compose..."

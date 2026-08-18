@@ -30,6 +30,7 @@ CENTRAL_HUB_URL="${CENTRAL_HUB_URL:-}"
 FLEET_KEY="${FLEET_KEY:-default-fleet-key}"
 GIT_NAME="${GIT_NAME:-}"
 GIT_EMAIL="${GIT_EMAIL:-}"
+GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 INSTALL_DIR="/opt/happy-galileo"
 REPO_URL="https://github.com/Unlimited-demi/happy-galileo.git"
 
@@ -41,6 +42,7 @@ while [[ "$#" -gt 0 ]]; do
     --fleet-key) FLEET_KEY="$2"; shift ;;
     --git-name|--git-username) GIT_NAME="$2"; shift ;;
     --git-email) GIT_EMAIL="$2"; shift ;;
+    --github-token|--token) GITHUB_TOKEN="$2"; shift ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
   shift
@@ -51,6 +53,7 @@ echo "📡 Setting up FLEET NODE AGENT: ${NODE_NAME}"
 echo "   Domain Scope:     *.${BASE_DOMAIN}"
 echo "   Central Hub:      ${CENTRAL_HUB_URL:-None (Standalone)}"
 echo "   Role:             NODE AGENT (Monitor + Stream Telemetry)"
+echo "   GitHub Auth:      ${GITHUB_TOKEN:+Token (Zero-Touch)}${GITHUB_TOKEN:-SSH Key}"
 echo "========================================================"
 
 if [ "$EUID" -ne 0 ]; then
@@ -79,22 +82,8 @@ apt-get install -y \
   jq \
   openssh-client
 
-# ── GitHub & SSH Deploy Key Setup ──
-echo "[*] Setting up GitHub SSH deploy key & Git identity..."
-SSH_DIR="${HOME}/.ssh"
-mkdir -p "${SSH_DIR}"
-chmod 700 "${SSH_DIR}"
-
-if [ ! -f "${SSH_DIR}/id_ed25519" ]; then
-  echo "  Generating ED25519 SSH Key..."
-  ssh-keygen -t ed25519 -C "${GIT_EMAIL:-node-${NODE_NAME}@datakrib.com}" -f "${SSH_DIR}/id_ed25519" -N ""
-fi
-
-# Pre-populate known_hosts for github.com
-ssh-keyscan -t ed25519,rsa github.com >> "${SSH_DIR}/known_hosts" 2>/dev/null || true
-chmod 600 "${SSH_DIR}/known_hosts" 2>/dev/null || true
-
-# Configure Git username & email
+# ── Git Identity & Authentication Setup ──
+echo "[*] Configuring Git identity..."
 if [ -n "${GIT_NAME}" ]; then
   git config --global user.name "${GIT_NAME}"
 elif [ -z "$(git config --global user.name 2>/dev/null)" ]; then
@@ -107,45 +96,70 @@ elif [ -z "$(git config --global user.email 2>/dev/null)" ]; then
   git config --global user.email "bot@datakrib.com"
 fi
 
-# Check GitHub SSH access (essential for private repository access)
-REPO_SSH_URL="git@github.com:Unlimited-demi/happy-galileo.git"
-REPO_HTTPS_URL="https://github.com/Unlimited-demi/happy-galileo.git"
+# Method A: GitHub Token (Zero-Touch, No SSH key copying needed!)
+if [ -n "${GITHUB_TOKEN}" ]; then
+  echo "[*] Configuring Git with GitHub Personal Access Token (Zero-Touch)..."
+  git config --global credential.helper store
+  echo "https://${GITHUB_TOKEN}:x-oauth-basic@github.com" > "${HOME}/.git-credentials"
+  chmod 600 "${HOME}/.git-credentials"
+  git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+  git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+  echo "  [✓] GitHub Token configured successfully. Zero manual SSH steps required!"
 
-echo "[*] Verifying GitHub SSH Access for private repository..."
-ssh_auth_ok=false
-if ssh -T git@github.com -o StrictHostKeyChecking=accept-new -o BatchMode=yes 2>&1 | grep -E -q "successfully authenticated|You've successfully"; then
-  ssh_auth_ok=true
-  echo "  [✓] GitHub SSH Authentication verified!"
-fi
+# Method B: SSH Key generation & authorization
+else
+  echo "[*] Setting up GitHub SSH deploy key..."
+  SSH_DIR="${HOME}/.ssh"
+  mkdir -p "${SSH_DIR}"
+  chmod 700 "${SSH_DIR}"
 
-if [ "$ssh_auth_ok" = false ]; then
-  PUB_KEY="$(cat "${SSH_DIR}/id_ed25519.pub")"
-  echo ""
-  echo "╔══════════════════════════════════════════════════════════════════════╗"
-  echo "║ 🔑 GITHUB SSH KEY REQUIRED FOR PRIVATE REPO ACCESS                   ║"
-  echo "╠══════════════════════════════════════════════════════════════════════╣"
-  echo ""
-  echo "  ${PUB_KEY}"
-  echo ""
-  echo "  👉 Please add this SSH key to GitHub now:"
-  echo "     1. Go to: https://github.com/settings/keys"
-  echo "        (or repo: https://github.com/Unlimited-demi/happy-galileo/settings/keys)"
-  echo "     2. Click 'New SSH Key' (Title: ${NODE_NAME}-server)"
-  echo "     3. Paste the key above (check 'Allow write access' if Deploy Key)"
-  echo ""
-  echo "╚══════════════════════════════════════════════════════════════════════╝"
-  echo ""
-  echo "⏳ Waiting for GitHub authorization (checking automatically every 5s)..."
-  while [ "$ssh_auth_ok" = false ]; do
-    sleep 5
-    if ssh -T git@github.com -o StrictHostKeyChecking=accept-new -o BatchMode=yes 2>&1 | grep -E -q "successfully authenticated|You've successfully"; then
-      ssh_auth_ok=true
-      echo ""
-      echo "  [✓] GitHub SSH Key verified and authorized! Proceeding with clone..."
-      echo ""
-      break
-    fi
-  done
+  if [ ! -f "${SSH_DIR}/id_ed25519" ]; then
+    echo "  Generating ED25519 SSH Key..."
+    ssh-keygen -t ed25519 -C "${GIT_EMAIL:-node-${NODE_NAME}@datakrib.com}" -f "${SSH_DIR}/id_ed25519" -N ""
+  fi
+
+  # Pre-populate known_hosts for github.com
+  ssh-keyscan -t ed25519,rsa github.com >> "${SSH_DIR}/known_hosts" 2>/dev/null || true
+  chmod 600 "${SSH_DIR}/known_hosts" 2>/dev/null || true
+
+  # Check GitHub SSH access
+  echo "[*] Verifying GitHub SSH Access for private repository..."
+  ssh_auth_ok=false
+  if ssh -T git@github.com -o StrictHostKeyChecking=accept-new -o BatchMode=yes 2>&1 | grep -E -q "successfully authenticated|You've successfully"; then
+    ssh_auth_ok=true
+    echo "  [✓] GitHub SSH Authentication verified!"
+  fi
+
+  if [ "$ssh_auth_ok" = false ]; then
+    PUB_KEY="$(cat "${SSH_DIR}/id_ed25519.pub")"
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════════════╗"
+    echo "║ 🔑 GITHUB SSH KEY REQUIRED FOR PRIVATE REPO ACCESS                   ║"
+    echo "╠══════════════════════════════════════════════════════════════════════╣"
+    echo ""
+    echo "  ${PUB_KEY}"
+    echo ""
+    echo "  👉 Please add this SSH key to GitHub now:"
+    echo "     1. Go to: https://github.com/settings/keys"
+    echo "        (or repo: https://github.com/Unlimited-demi/happy-galileo/settings/keys)"
+    echo "     2. Click 'New SSH Key' (Title: ${NODE_NAME}-server)"
+    echo "     3. Paste the key above (check 'Allow write access' if Deploy Key)"
+    echo ""
+    echo "  💡 TIP: Avoid this step on future servers by passing --github-token <token>!"
+    echo "╚══════════════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "⏳ Waiting for GitHub authorization (checking automatically every 5s)..."
+    while [ "$ssh_auth_ok" = false ]; do
+      sleep 5
+      if ssh -T git@github.com -o StrictHostKeyChecking=accept-new -o BatchMode=yes 2>&1 | grep -E -q "successfully authenticated|You've successfully"; then
+        ssh_auth_ok=true
+        echo ""
+        echo "  [✓] GitHub SSH Key verified and authorized! Proceeding with clone..."
+        echo ""
+        break
+      fi
+    done
+  fi
 fi
 
 # ── Step 2: Docker ──
