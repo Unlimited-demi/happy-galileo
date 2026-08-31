@@ -4,6 +4,7 @@ Monitors ALL containers via Docker state inspection and log scanning.
 Detects crashes, restarts, OOM kills, and runtime errors in container logs.
 """
 
+import hashlib
 import time
 import re
 from typing import Dict, List, Any, Optional
