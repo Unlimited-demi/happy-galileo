@@ -62,14 +62,14 @@ export function FleetMatrixView({ nodes, onCopy }) {
                       <th className="py-3 px-6">Type</th>
                       <th className="py-3 px-6">Port</th>
                       <th className="py-3 px-6">Container State</th>
-                      <th className="py-3 px-6">Workspace Directory</th>
+                      <th className="py-3 px-6">Codebase / Git</th>
                       <th className="py-3 px-6 text-right">Access Endpoint</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/40 font-mono text-xs">
                     {services.length === 0 ? (
                       <tr>
-                        <td colSpan="6" className="py-8 text-center text-muted-foreground font-sans">
+                        <td colSpan="5" className="py-8 text-center text-muted-foreground font-sans">
                           No active services discovered on this node.
                         </td>
                       </tr>
@@ -77,6 +77,7 @@ export function FleetMatrixView({ nodes, onCopy }) {
                       services.map((svc) => {
                         const isWeb = svc.container_type === 'web' || !!svc.url;
                         const isRunning = svc.status === 'RUNNING';
+                        const codebase = svc.codebase || {};
                         return (
                           <tr key={svc.name} className="hover:bg-muted/30 transition-colors">
                             <td className="py-3 px-6 font-semibold text-slate-200">{svc.name}</td>
@@ -98,8 +99,17 @@ export function FleetMatrixView({ nodes, onCopy }) {
                                 </span>
                               </div>
                             </td>
-                            <td className="py-3 px-6 text-muted-foreground truncate max-w-xs" title={svc.workspace_dir}>
-                              {svc.workspace_dir || '[host container]'}
+                            <td className="py-3 px-6 text-muted-foreground truncate max-w-xs">
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-slate-300 truncate" title={codebase.workspace_dir}>
+                                  {codebase.workspace_dir || svc.workspace_dir || '[host container]'}
+                                </span>
+                                {codebase.git_url && (
+                                  <span className="text-[10px] text-sky-500/80 truncate">
+                                    {codebase.git_url.replace('https://github.com/', 'gh:')}
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="py-3 px-6 text-right font-sans">
                               {isWeb && svc.url ? (

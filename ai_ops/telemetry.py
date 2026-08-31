@@ -37,6 +37,8 @@ class FleetTelemetryStreamer:
         self.bus = IncidentBus()
         self.running = False
         self._thread: Optional[threading.Thread] = None
+        # Results of hub-issued commands, reported back on the next heartbeat
+        self._command_results: list = []
 
     def collect_node_telemetry(self) -> Dict[str, Any]:
         """Gather current node metrics and active services."""
@@ -85,7 +87,16 @@ class FleetTelemetryStreamer:
             }
             enriched_services.append(enriched)
 
-        return {
+        # Latest degradation-trend verdicts written by the AI-Ops daemon
+        trends = {}
+        try:
+            trends_path = Config.DEVCTL_STATE_DIR / "trends.json"
+            if trends_path.exists():
+                trends = json.loads(trends_path.read_text(encoding="utf-8")).get("trends", {})
+        except Exception:
+            pass
+
+        payload = {
             "node_name": self.node_name,
             "base_domain": Config.BASE_DOMAIN,
             "timestamp": time.time(),
@@ -99,9 +110,91 @@ class FleetTelemetryStreamer:
             "resolved_incidents": resolved_incidents[:20],
             "all_incidents": (open_incidents + resolved_incidents)[:30],
             "memory_mb": mem_info,
+            "trends": trends,
+        }
+        if self._command_results:
+            payload["command_results"] = self._command_results[-10:]
+        return payload
+
+    # ── Hub → Node command channel (piggybacked on heartbeat response) ──
+    # The node never opens an inbound port: the hub queues commands, and this
+    # streamer receives them in the heartbeat response and executes a strict
+    # whitelist of infra actions. Arbitrary shell commands are NOT accepted.
+
+    ALLOWED_COMMANDS = {"restart_container", "resync_network", "purge_incidents"}
+
+    def _execute_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        action = command.get("action", "")
+        target = command.get("target", "")
+        cmd_id = command.get("id", "")
+        result: Dict[str, Any] = {
+            "id": cmd_id,
+            "action": action,
+            "target": target,
+            "executed_at": time.time(),
+            "success": False,
         }
 
-    def send_heartbeat(self) -> bool:
+        if action not in self.ALLOWED_COMMANDS:
+            result["error"] = f"Action '{action}' is not in the node command whitelist"
+            return result
+
+        try:
+            if action == "restart_container":
+                result["success"] = self.docker.restart_container(target)
+            elif action == "resync_network":
+                reconnected = self.docker.connect_to_network(target, Config.DOCKER_NETWORK)
+                # Detect which proxy is running and reload it
+                proxy_reloaded = False
+                proxy_type = None
+                try:
+                    containers = self.docker.list_containers()
+                    for c in containers:
+                        names = [n.lstrip("/") for n in c.get("Names", [])]
+                        cname = names[0] if names else ""
+                        if cname in ("caddy", "nginx", "apache", "httpd"):
+                            proxy_type = "caddy" if cname == "caddy" else ("nginx" if cname == "nginx" else "apache")
+                            reload_cmds = {
+                                "caddy": ["caddy", "reload", "--config", "/etc/caddy/Caddyfile"],
+                                "nginx": ["nginx", "-s", "reload"],
+                                "apache": ["apachectl", "graceful"],
+                            }
+                            cmd = reload_cmds.get(proxy_type)
+                            if cmd:
+                                proxy_reloaded = self.docker.exec_in_container(cname, cmd)
+                            break
+                except Exception:
+                    pass
+                result["success"] = bool(reconnected)
+                result["proxy_reloaded"] = proxy_reloaded
+                result["proxy_type"] = proxy_type
+            elif action == "purge_incidents":
+                result["purged"] = self.bus.purge_all_incidents()
+                result["success"] = True
+        except Exception as e:
+            result["error"] = str(e)
+
+        print(f"[fleet] Executed hub command {action}({target}) → success={result['success']}")
+        return result
+
+    def _handle_pending_commands(self, response_body: str):
+        try:
+            data = json.loads(response_body) if response_body else {}
+        except Exception:
+            return
+        pending = data.get("pending_commands") or []
+        if not pending:
+            return
+        for command in pending[:10]:
+            self._command_results.append(self._execute_command(command))
+        self._command_results = self._command_results[-20:]
+        # Push results back to the hub immediately instead of waiting a full interval
+        try:
+            self.send_heartbeat(handle_commands=False)
+        except Exception:
+            pass
+
+    def send_heartbeat(self, handle_commands: bool = True) -> bool:
         """Send one telemetry heartbeat to the Central Hub."""
         if not self.hub_url:
             return False
@@ -131,6 +224,9 @@ class FleetTelemetryStreamer:
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE
             with urllib.request.urlopen(req, timeout=5, context=ctx) as res:
+                body = res.read().decode("utf-8", errors="replace")
+                if res.status == 200 and handle_commands:
+                    self._handle_pending_commands(body)
                 return res.status == 200
         except Exception as e:
             print(f"[!] Telemetry heartbeat to {self.hub_url} failed: {e}")

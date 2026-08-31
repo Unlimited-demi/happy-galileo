@@ -598,15 +598,24 @@ def cmd_dispatch(args):
     if opencode_path and not args.dry_run:
         # Default to tmux if available so user can disconnect safely
         use_tmux = bool(tmux_path) and not args.no_tmux
-        
+
+        # Write prompt to temp file (avoids shell escaping issues with long prompts)
+        prompt_file = f"/tmp/opencode-prompt-{incident_id}.txt"
+        try:
+            with open(prompt_file, "w") as pf:
+                pf.write(prompt)
+        except Exception:
+            pass
+
         if use_tmux:
-            session_name = f"opencode-{service_name}"
+            session_name = f"opencode-{incident_id}"
             print(f"[*] Launching OpenCode inside persistent tmux session: '{session_name}'...")
             subprocess.run(["tmux", "kill-session", "-t", session_name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            # 1. Create persistent interactive tmux window with working directory
+            # Create persistent interactive tmux window with working directory
             subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", str(svc_dir)], check=False)
-            # 2. Send OpenCode command directly into the tmux shell
-            send_cmd = f"{opencode_path} run {json.dumps(prompt)}"
+            # Send OpenCode command — reads prompt from file, --auto for autonomous mode
+            # Chain rm to clean up temp file after OpenCode exits
+            send_cmd = f'{opencode_path} run "$(cat {prompt_file})" --auto; rm -f {prompt_file}'
             subprocess.run(["tmux", "send-keys", "-t", session_name, send_cmd, "C-m"], check=False)
             print(f"\n[✓] OpenCode Agent is actively diagnosing '{service_name}' in the background!")
             print(f"    To watch OpenCode live:     tmux attach -t {session_name}")
@@ -614,9 +623,16 @@ def cmd_dispatch(args):
         else:
             print(f"[*] Launching OpenCode agent live with Incident Dossier...\n")
             try:
-                subprocess.run([opencode_path, "run", prompt], cwd=str(svc_dir))
+                # --auto for autonomous mode (no manual approval needed)
+                subprocess.run([opencode_path, "run", prompt, "--auto"], cwd=str(svc_dir))
             except Exception as e:
                 print(f"[!] OpenCode process completed or interrupted: {e}")
+            finally:
+                # Clean up prompt file
+                try:
+                    os.remove(prompt_file)
+                except OSError:
+                    pass
     else:
         print(f"\n🚀 Ready for OpenCode execution:")
         print(f"   cd {svc_dir} && opencode run \"Resolve incident {incident_id} in {service_name}\"")

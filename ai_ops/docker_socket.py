@@ -15,34 +15,71 @@ class DockerSocketError(Exception):
 
 
 class DockerSocket:
-    """Lightweight Docker Engine API client over Unix socket."""
+    """Lightweight Docker Engine API client over Unix socket with connection reuse."""
 
     SOCK_PATH = "/var/run/docker.sock"
 
+    def __init__(self):
+        self._conn: Optional[http.client.HTTPConnection] = None
+        self._lock = __import__("threading").Lock()
+
+    def _get_conn(self) -> http.client.HTTPConnection:
+        """Return a reusable HTTP connection over the Docker Unix socket."""
+        if self._conn is not None:
+            return self._conn
+        conn = http.client.HTTPConnection("localhost")
+        sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        sock.connect(self.SOCK_PATH)
+        conn.sock = sock
+        self._conn = conn
+        return conn
+
     def _request(self, method: str, path: str, body: Optional[bytes] = None) -> Any:
         """Send an HTTP request through the Docker Unix socket."""
-        conn = http.client.HTTPConnection("localhost")
-        try:
-            sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
-            sock.connect(self.SOCK_PATH)
-            conn.sock = sock
-            headers = {"Content-Type": "application/json"} if body else {}
-            conn.request(method, path, body=body, headers=headers)
-            resp = conn.getresponse()
-            data = resp.read().decode("utf-8", errors="replace")
-            if resp.status >= 400:
-                return None
+        with self._lock:
             try:
-                return json.loads(data)
-            except json.JSONDecodeError:
-                return data
-        except Exception:
-            return None
-        finally:
+                conn = self._get_conn()
+                headers = {"Content-Type": "application/json"} if body else {}
+                conn.request(method, path, body=body, headers=headers)
+                resp = conn.getresponse()
+                data = resp.read().decode("utf-8", errors="replace")
+                if resp.status >= 400:
+                    return None
+                try:
+                    return json.loads(data)
+                except json.JSONDecodeError:
+                    return data
+            except Exception:
+                # Connection may be stale — tear down and retry once
+                self._close_conn()
+                try:
+                    conn = self._get_conn()
+                    headers = {"Content-Type": "application/json"} if body else {}
+                    conn.request(method, path, body=body, headers=headers)
+                    resp = conn.getresponse()
+                    data = resp.read().decode("utf-8", errors="replace")
+                    if resp.status >= 400:
+                        return None
+                    try:
+                        return json.loads(data)
+                    except json.JSONDecodeError:
+                        return data
+                except Exception:
+                    self._close_conn()
+                    return None
+
+    def _close_conn(self):
+        """Tear down the persistent connection."""
+        if self._conn is not None:
             try:
-                conn.close()
+                self._conn.close()
             except Exception:
                 pass
+            self._conn = None
+
+    def close(self):
+        """Public close method."""
+        self._close_conn()
 
     # ── Container Operations ──
 
@@ -111,3 +148,56 @@ class DockerSocket:
         body = json.dumps({"Container": container}).encode()
         result = self._request("POST", f"/networks/{network}/connect", body=body)
         return result is not None
+
+    def get_networks(self, name_or_id: str) -> List[str]:
+        """List the Docker networks a container is attached to."""
+        info = self.inspect_container(name_or_id)
+        if not info:
+            return []
+        networks = info.get("NetworkSettings", {}).get("Networks", {}) or {}
+        return list(networks.keys())
+
+    def stats_container(self, name_or_id: str) -> Optional[Dict[str, Any]]:
+        """
+        One-shot resource stats snapshot (no streaming).
+        Returns {"mem_bytes", "mem_limit", "cpu_pct"} or None.
+        """
+        raw = self._request("GET", f"/containers/{name_or_id}/stats?stream=false")
+        if not isinstance(raw, dict):
+            return None
+        try:
+            mem = raw.get("memory_stats", {}) or {}
+            mem_usage = mem.get("usage")
+            mem_limit = mem.get("limit")
+            # Exclude page cache where the kernel reports it (cgroup v1/v2)
+            cache = (mem.get("stats", {}) or {}).get("inactive_file", 0) or 0
+            if mem_usage is not None:
+                mem_usage = max(0, mem_usage - cache)
+
+            cpu_pct = None
+            cpu = raw.get("cpu_stats", {}) or {}
+            precpu = raw.get("precpu_stats", {}) or {}
+            cpu_delta = (cpu.get("cpu_usage", {}).get("total_usage", 0) or 0) - \
+                        (precpu.get("cpu_usage", {}).get("total_usage", 0) or 0)
+            sys_delta = (cpu.get("system_cpu_usage", 0) or 0) - (precpu.get("system_cpu_usage", 0) or 0)
+            if cpu_delta > 0 and sys_delta > 0:
+                online_cpus = cpu.get("online_cpus") or len(cpu.get("cpu_usage", {}).get("percpu_usage", []) or [1])
+                cpu_pct = (cpu_delta / sys_delta) * online_cpus * 100.0
+
+            return {"mem_bytes": mem_usage, "mem_limit": mem_limit, "cpu_pct": cpu_pct}
+        except Exception:
+            return None
+
+    def exec_in_container(self, name_or_id: str, cmd: List[str]) -> bool:
+        """
+        Run a command inside a container via the Docker Engine exec API
+        (no docker CLI needed). Returns True if the command exited 0.
+        """
+        body = json.dumps({"AttachStdout": True, "AttachStderr": True, "Cmd": cmd}).encode()
+        created = self._request("POST", f"/containers/{name_or_id}/exec", body=body)
+        if not isinstance(created, dict) or "Id" not in created:
+            return False
+        exec_id = created["Id"]
+        self._request("POST", f"/exec/{exec_id}/start", body=json.dumps({"Detach": False, "Tty": False}).encode())
+        inspect = self._request("GET", f"/exec/{exec_id}/json")
+        return isinstance(inspect, dict) and inspect.get("ExitCode") == 0

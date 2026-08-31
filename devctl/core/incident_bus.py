@@ -4,6 +4,7 @@ Tracks, stores, and manages incidents and handoffs between AI-Ops and OpenCode.
 """
 
 import json
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,7 @@ class IncidentBus:
     def __init__(self, incidents_dir: Optional[Path] = None):
         self.incidents_dir = incidents_dir or Config.INCIDENTS_DIR
         self.incidents_dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
 
     def create_incident(
         self,
@@ -58,13 +60,14 @@ class IncidentBus:
             "recommendation": recommendation,
         }
 
-        # Save JSON
+        # Save JSON (locked for concurrent safety)
         json_path = self.incidents_dir / f"{incident_id}.json"
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(incident, f, indent=2)
+        with self._lock:
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(incident, f, indent=2)
 
-        # Save Markdown dossier
-        self._write_markdown_dossier(incident)
+            # Save Markdown dossier
+            self._write_markdown_dossier(incident)
 
         return incident
 
@@ -173,8 +176,9 @@ devctl incident resolve {incident_id} --notes "Resolved {incident['service_name'
         if not json_path.exists():
             return None
         try:
-            with open(json_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            with self._lock:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
         except Exception:
             return None
 
@@ -188,10 +192,11 @@ devctl incident resolve {incident_id} --notes "Resolved {incident['service_name'
         incident["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         json_path = self.incidents_dir / f"{incident_id}.json"
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(incident, f, indent=2)
+        with self._lock:
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(incident, f, indent=2)
 
-        self._write_markdown_dossier(incident)
+            self._write_markdown_dossier(incident)
         return incident
 
     def claim_incident(self, incident_id: str, agent_name: str = "OpenCode") -> Optional[Dict[str, Any]]:
@@ -216,15 +221,16 @@ devctl incident resolve {incident_id} --notes "Resolved {incident['service_name'
     def list_incidents(self, only_open: bool = False) -> List[Dict[str, Any]]:
         """List all incidents."""
         incidents = []
-        for file in self.incidents_dir.glob("INC-*.json"):
-            try:
-                with open(file, "r", encoding="utf-8") as f:
-                    inc = json.load(f)
-                    if only_open and inc.get("state") in [IncidentState.RESOLVED, IncidentState.CLOSED, IncidentState.VERIFIED]:
-                        continue
-                    incidents.append(inc)
-            except Exception:
-                continue
+        with self._lock:
+            for file in self.incidents_dir.glob("INC-*.json"):
+                try:
+                    with open(file, "r", encoding="utf-8") as f:
+                        inc = json.load(f)
+                        if only_open and inc.get("state") in [IncidentState.RESOLVED, IncidentState.CLOSED, IncidentState.VERIFIED]:
+                            continue
+                        incidents.append(inc)
+                except Exception:
+                    continue
         # Sort newest first
         incidents.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         return incidents
@@ -232,10 +238,11 @@ devctl incident resolve {incident_id} --notes "Resolved {incident['service_name'
     def purge_all_incidents(self) -> int:
         """Delete all incident files. Returns count of deleted incidents."""
         count = 0
-        for file in self.incidents_dir.glob("INC-*"):
-            try:
-                file.unlink()
-                count += 1
-            except Exception:
-                pass
+        with self._lock:
+            for file in self.incidents_dir.glob("INC-*"):
+                try:
+                    file.unlink()
+                    count += 1
+                except Exception:
+                    pass
         return count

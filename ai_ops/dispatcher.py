@@ -185,11 +185,12 @@ REMEDIATION WORKFLOW CONTRACT (AGENTS.md):
             if has_opencode:
                 # OpenCode is installed — launch autonomous remediation via `opencode run`
                 # Uses --auto to auto-approve file edits and commands
-                cmd = f'echo "⚡ Launching OpenCode autonomous remediation agent..."; echo ""; opencode run "$(cat {prompt_file})" --auto'
+                # Chain rm to clean up the prompt file after OpenCode exits
+                cmd = f'echo "⚡ Launching OpenCode autonomous remediation agent..."; echo ""; opencode run "$(cat {prompt_file})" --auto; rm -f {prompt_file}'
                 subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "C-m"], check=False)
             else:
                 # OpenCode not available — try npx fallback, then manual
-                cmd = f'echo "⚡ OpenCode not found. Attempting npx install..."; echo ""; npx -y opencode-ai run "$(cat {prompt_file})" --auto'
+                cmd = f'echo "⚡ OpenCode not found. Attempting npx install..."; echo ""; npx -y opencode-ai run "$(cat {prompt_file})" --auto; rm -f {prompt_file}'
                 subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "C-m"], check=False)
 
             return {
@@ -201,14 +202,18 @@ REMEDIATION WORKFLOW CONTRACT (AGENTS.md):
                 "message": f"OpenCode dispatched in tmux session '{session_name}'. Attach with: tmux attach -t {session_name}",
             }
         else:
-            # Fallback: start background process
+            # No tmux available — nothing was actually launched. Report honestly
+            # so the daemon prints the manual-dispatch hint instead of claiming
+            # an agent is working the incident.
             return {
-                "success": True,
-                "session_name": "background",
+                "success": False,
+                "session_name": None,
                 "workspace_dir": workspace_dir,
                 "fix_branch": fix_branch,
-                "status": "DISPATCHED",
-                "message": f"Incident claimed and prepared in branch {fix_branch}.",
+                "status": "PREPARED_NOT_DISPATCHED",
+                "error": "tmux not available — OpenCode was not launched",
+                "message": f"Incident claimed and fix branch '{fix_branch}' prepared. "
+                           f"Dispatch manually: devctl dispatch {incident_id}",
             }
 
     @classmethod

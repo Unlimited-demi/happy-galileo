@@ -1,0 +1,925 @@
+<title>ServerGuard Operations Manual</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --bg: #12141a;
+    --bg-card: #1a1d25;
+    --bg-code: #0d0f14;
+    --border: #2a2d37;
+    --border-accent: #3a3d47;
+    --text: #e2e4ea;
+    --text-muted: #8b8fa3;
+    --text-dim: #5c6070;
+    --accent: #38bdf8;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --rose: #fb7185;
+    --purple: #a78bfa;
+    --cyan: #22d3ee;
+    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f8f9fc;
+      --bg-card: #ffffff;
+      --bg-code: #f1f3f8;
+      --border: #e2e4ea;
+      --border-accent: #d0d3dc;
+      --text: #1a1d25;
+      --text-muted: #5c6070;
+      --text-dim: #8b8fa3;
+      --accent: #0284c7;
+      --green: #16a34a;
+      --amber: #d97706;
+      --rose: #e11d48;
+      --purple: #7c3aed;
+      --cyan: #0891b2;
+    }
+  }
+
+  :root[data-theme="light"] {
+    --bg: #f8f9fc;
+    --bg-card: #ffffff;
+    --bg-code: #f1f3f8;
+    --border: #e2e4ea;
+    --border-accent: #d0d3dc;
+    --text: #1a1d25;
+    --text-muted: #5c6070;
+    --text-dim: #8b8fa3;
+    --accent: #0284c7;
+    --green: #16a34a;
+    --amber: #d97706;
+    --rose: #e11d48;
+    --purple: #7c3aed;
+    --cyan: #0891b2;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    max-width: 1200px;
+    margin: 0 auto;
+    min-height: 100vh;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 32px 20px 32px 24px;
+    border-right: 1px solid var(--border);
+  }
+
+  .sidebar-brand {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--green);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .sidebar-subtitle {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 28px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar nav a {
+    display: block;
+    font-size: 13px;
+    color: var(--text-muted);
+    text-decoration: none;
+    padding: 6px 0;
+    transition: color 0.15s;
+  }
+
+  .sidebar nav a:hover, .sidebar nav a.active {
+    color: var(--accent);
+  }
+
+  .sidebar nav .nav-group {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-top: 20px;
+    margin-bottom: 6px;
+  }
+
+  /* Main content */
+  .main {
+    padding: 48px 56px 96px;
+    max-width: 820px;
+  }
+
+  h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+    text-wrap: balance;
+  }
+
+  .lead {
+    font-size: 15px;
+    color: var(--text-muted);
+    margin-bottom: 48px;
+    max-width: 580px;
+  }
+
+  h2 {
+    font-size: 20px;
+    font-weight: 700;
+    margin-top: 56px;
+    margin-bottom: 16px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    letter-spacing: -0.01em;
+  }
+
+  h2:first-of-type { border-top: none; margin-top: 0; }
+
+  h3 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-top: 28px;
+    margin-bottom: 10px;
+    color: var(--text);
+  }
+
+  p { margin-bottom: 14px; color: var(--text); }
+  p + p { margin-top: 0; }
+
+  strong { font-weight: 600; }
+  em { font-style: italic; color: var(--text-muted); }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Code blocks */
+  code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    background: var(--bg-code);
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+
+  pre {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    margin: 12px 0 20px;
+    position: relative;
+  }
+
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: var(--text);
+  }
+
+  .copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: var(--border);
+    border: none;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .copy-btn:hover { background: var(--border-accent); color: var(--text); }
+
+  /* Callout boxes */
+  .callout {
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 16px 0 20px;
+    font-size: 13.5px;
+    border-left: 3px solid;
+  }
+  .callout-info { background: color-mix(in srgb, var(--accent) 8%, transparent); border-color: var(--accent); }
+  .callout-warn { background: color-mix(in srgb, var(--amber) 8%, transparent); border-color: var(--amber); }
+  .callout-critical { background: color-mix(in srgb, var(--rose) 8%, transparent); border-color: var(--rose); }
+  .callout-success { background: color-mix(in srgb, var(--green) 8%, transparent); border-color: var(--green); }
+
+  .callout-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 4px;
+  }
+  .callout-info .callout-label { color: var(--accent); }
+  .callout-warn .callout-label { color: var(--amber); }
+  .callout-critical .callout-label { color: var(--rose); }
+  .callout-success .callout-label { color: var(--green); }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 20px;
+    font-size: 13.5px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    background: var(--bg-code);
+  }
+  td code { font-size: 12px; }
+
+  /* Flow diagram */
+  .flow-diagram {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 28px 24px;
+    margin: 20px 0 28px;
+    overflow-x: auto;
+  }
+
+  .flow-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+    min-width: max-content;
+  }
+
+  .flow-node {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    white-space: nowrap;
+    border: 1px solid;
+  }
+
+  .flow-node.green { background: color-mix(in srgb, var(--green) 12%, transparent); border-color: color-mix(in srgb, var(--green) 30%, transparent); color: var(--green); }
+  .flow-node.amber { background: color-mix(in srgb, var(--amber) 12%, transparent); border-color: color-mix(in srgb, var(--amber) 30%, transparent); color: var(--amber); }
+  .flow-node.rose { background: color-mix(in srgb, var(--rose) 12%, transparent); border-color: color-mix(in srgb, var(--rose) 30%, transparent); color: var(--rose); }
+  .flow-node.purple { background: color-mix(in srgb, var(--purple) 12%, transparent); border-color: color-mix(in srgb, var(--purple) 30%, transparent); color: var(--purple); }
+  .flow-node.cyan { background: color-mix(in srgb, var(--cyan) 12%, transparent); border-color: color-mix(in srgb, var(--cyan) 30%, transparent); color: var(--cyan); }
+  .flow-node.accent { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--accent); }
+
+  .flow-arrow {
+    color: var(--text-dim);
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+
+  .flow-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* Steps */
+  .step {
+    position: relative;
+    padding-left: 36px;
+    margin-bottom: 24px;
+  }
+  .step::before {
+    content: attr(data-step);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--bg);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .step-title {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 6px;
+  }
+
+  /* Env var table */
+  .env-table td:first-child {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--cyan);
+    white-space: nowrap;
+  }
+  .env-table td:nth-child(2) {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* Responsive */
+  @media (max-width: 800px) {
+    .layout { grid-template-columns: 1fr; }
+    .sidebar { display: none; }
+    .main { padding: 24px 20px 64px; }
+  }
+
+  /* Smooth scroll */
+  html { scroll-behavior: smooth; }
+
+  /* Section targets offset for sticky */
+  section[id] { scroll-margin-top: 24px; }
+</style>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-brand">ServerGuard</div>
+    <div class="sidebar-subtitle">Operations Manual v2.0</div>
+    <nav>
+      <div class="nav-group">Architecture</div>
+      <a href="#flow">Monitoring Flow</a>
+      <a href="#tiers">Remediation Tiers</a>
+      <a href="#telemetry">Telemetry Model</a>
+
+      <div class="nav-group">Setup</div>
+      <a href="#hub-setup">Hub Server Setup</a>
+      <a href="#node-enroll">Enroll a Sub-Node</a>
+      <a href="#verify">Verify Connection</a>
+
+      <div class="nav-group">Operations</div>
+      <a href="#opencode">OpenCode Dispatch</a>
+      <a href="#redeploy">Push &amp; Redeploy</a>
+      <a href="#commands">CLI Reference</a>
+
+      <div class="nav-group">Reference</div>
+      <a href="#env-vars">Environment Variables</a>
+      <a href="#tests">Running Tests</a>
+      <a href="#troubleshooting">Troubleshooting</a>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <h1>ServerGuard Operations Manual</h1>
+    <p class="lead">End-to-end guide for deploying the autonomous AI-Ops platform: from hub setup through node enrollment, monitoring, incident dispatch, and redeployment.</p>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <section id="flow">
+    <h2>How Monitoring Works</h2>
+
+    <p>The AI-Ops daemon (<code>ai_ops/daemon.py</code>) runs a continuous loop on every node — both the hub and sub-nodes. Each cycle performs four operations:</p>
+
+    <div class="flow-diagram">
+      <div class="flow-label">Continuous Loop (every 15s)</div>
+      <div class="flow-row">
+        <span class="flow-node cyan">Discover Containers</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node green">Health Check</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node amber">Record Metrics</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node accent">Send Heartbeat</span>
+      </div>
+    </div>
+
+    <h3>Step-by-step lifecycle</h3>
+
+    <div class="step" data-step="1">
+      <div class="step-title">Container Discovery (every 4th cycle)</div>
+      <p><code>DomainRegistry.discover_and_index_containers()</code> scans all running Docker containers. For each one it classifies the type (web/database/cache/worker/infra), detects exposed ports, resolves the host workspace directory and git repository via <code>CodebaseResolver</code>, and registers the service for monitoring. No public URLs are assigned — discovery is monitoring-only.</p>
+    </div>
+
+    <div class="step" data-step="2">
+      <div class="step-title">Health Check (every cycle)</div>
+      <p><code>HealthChecker.check_all_services()</code> inspects each registered service:</p>
+      <ul style="margin: 8px 0 12px 20px; color: var(--text-muted); font-size: 14px;">
+        <li>Docker container state — is it running?</li>
+        <li>OOM kill detection — was it killed by memory exhaustion?</li>
+        <li>Restart delta — did it restart since the last check?</li>
+        <li>Docker HEALTHCHECK status — does the container define a health probe?</li>
+        <li>Log scanning — last 30 lines analyzed by <code>AnomalyClassifier</code> for errors, crashes, stack traces</li>
+      </ul>
+      <p>Log hashes use <code>hashlib.md5</code> for deterministic dedup across Python runs.</p>
+    </div>
+
+    <div class="step" data-step="3">
+      <div class="step-title">Time-Series Metrics (every cycle)</div>
+      <p><code>MetricsStore.record_sample()</code> captures latency (HTTP probe with 5s timeout), memory usage, CPU%, and restart count into a local SQLite database (WAL mode). Every 20 cycles, <code>_check_trends()</code> runs degradation detection:</p>
+      <ul style="margin: 8px 0 12px 20px; color: var(--text-muted); font-size: 14px;">
+        <li><strong>MEMORY_CREEP</strong> — memory grew 30%+ and ≥50MB over the window</li>
+        <li><strong>LATENCY_DRIFT</strong> — response time increased 50%+ and ≥200ms</li>
+        <li><strong>RESTART_CHURN</strong> — 3+ restarts within the window</li>
+        <li><strong>FLAPPING</strong> — health flipped 4+ times (unstable service)</li>
+      </ul>
+    </div>
+
+    <div class="step" data-step="4">
+      <div class="step-title">Heartbeat to Hub (every cycle)</div>
+      <p><code>FleetTelemetryStreamer.send_heartbeat()</code> POSTs node telemetry (services, containers, incidents, memory, trends) to the hub's <code>/api/telemetry/ingest</code> endpoint. The hub response may contain pending commands (restart, resync, purge) which the node executes from a strict whitelist. <strong>No inbound ports are required on sub-nodes.</strong></p>
+    </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <section id="tiers">
+    <h2>Remediation Tiers</h2>
+
+    <p>When a health check fails, the <code>RemediationEngine</code> escalates through four levels:</p>
+
+    <table>
+      <thead>
+        <tr><th>Level</th><th>Trigger</th><th>Action</th><th>Scope</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>L0</code></td>
+          <td>Healthy</td>
+          <td>Observe — clear incident tracking</td>
+          <td>No action</td>
+        </tr>
+        <tr>
+          <td><code>L1</code></td>
+          <td>Container stopped/crashed</td>
+          <td>Auto-restart (up to 3 attempts)</td>
+          <td>Container</td>
+        </tr>
+        <tr>
+          <td><code>L2</code></td>
+          <td>Network desync (container fell off dev-net)</td>
+          <td>Re-attach to dev-net + reload reverse proxy</td>
+          <td>Network + Proxy</td>
+        </tr>
+        <tr>
+          <td><code>L3</code></td>
+          <td>App bug, OOM, repeated crash</td>
+          <td>Create incident dossier → dispatch OpenCode</td>
+          <td>Source code</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout callout-info">
+      <div class="callout-label">Multi-Proxy Support</div>
+      L2 automatically detects which reverse proxy is running — Caddy, Nginx, Apache, or httpd — and sends the correct reload command. Works on servers that already have their own proxy installed.
+    </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <section id="telemetry">
+    <h2>Telemetry Model</h2>
+
+    <p>The system uses an <strong>outbound-only</strong> communication model. Sub-nodes never open inbound ports:</p>
+
+    <div class="flow-diagram">
+      <div class="flow-label">Node → Hub (outbound)</div>
+      <div class="flow-row" style="margin-bottom: 12px;">
+        <span class="flow-node cyan">Sub-Node Daemon</span>
+        <span class="flow-arrow">—POST heartbeat—→</span>
+        <span class="flow-node green">Hub /api/telemetry/ingest</span>
+      </div>
+      <div class="flow-label">Hub → Node (piggybacked on response)</div>
+      <div class="flow-row">
+        <span class="flow-node green">Hub</span>
+        <span class="flow-arrow">—pending_commands—→</span>
+        <span class="flow-node cyan">Sub-Node executes whitelist</span>
+      </div>
+    </div>
+
+    <p><strong>Command whitelist</strong> — the only actions a hub can request from a node:</p>
+    <table>
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>restart_container &lt;name&gt;</code></td><td>Restart a specific container</td></tr>
+        <tr><td><code>resync_network &lt;name&gt;</code></td><td>Re-attach container to dev-net + reload proxy</td></tr>
+        <tr><td><code>purge_incidents</code></td><td>Clear all incident dossiers on the node</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout callout-warn">
+      <div class="callout-label">Security</div>
+      Telemetry is authenticated via <code>X-Fleet-Key</code> header. TLS verification is off by default (bootstrap mode) — enable with <code>FLEET_TLS_VERIFY=true</code> for production.
+    </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <section id="hub-setup">
+    <h2>Hub Server Setup</h2>
+
+    <p>The hub is the central server that runs the Fleet Dashboard and aggregates telemetry from all sub-nodes. Run the setup script:</p>
+
+    <pre><code># Clone the repo on your master server
+git clone https://github.com/YOUR_ORG/happy-galileo.git /opt/happy-galileo
+cd /opt/happy-galileo
+
+# Run the hub setup script
+sudo bash scripts/setup-hub.sh \
+  --domain "your-domain.com" \
+  --git-name "Your Name" \
+  --git-email "you@email.com" \
+  --github-token "ghp_YOUR_TOKEN"</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+
+    <h3>What setup-hub.sh does</h3>
+    <ol style="margin: 8px 0 16px 20px; color: var(--text-muted); font-size: 14px; line-height: 2;">
+      <li>Installs system packages (Docker, Node.js 20, tmux, git)</li>
+      <li>Installs OpenCode CLI (<code>npm i -g opencode-ai</code>) and Playwright</li>
+      <li>Creates the <code>dev-net</code> Docker bridge network</li>
+      <li>Configures UFW firewall (SSH + HTTP/HTTPS only) and Fail2ban</li>
+      <li>Installs the <code>devctl</code> CLI into a Python venv</li>
+      <li>Runs <code>proxy_resolver.sh</code> to detect existing Nginx/Apache/Caddy</li>
+      <li>Launches the infra stack via <code>docker compose -f infra/docker-compose.infra.yml</code></li>
+    </ol>
+
+    <h3>Infra stack containers</h3>
+    <table>
+      <thead><tr><th>Container</th><th>Role</th><th>Port</th></tr></thead>
+      <tbody>
+        <tr><td><code>caddy</code></td><td>Reverse proxy + TLS termination</td><td>80, 443</td></tr>
+        <tr><td><code>dashboard</code></td><td>Fleet Status Dashboard (React + Python)</td><td>8888 → status.your-domain.com</td></tr>
+        <tr><td><code>ai-ops</code></td><td>Monitoring daemon (health, remediation, dispatch)</td><td>Internal only</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout callout-success">
+      <div class="callout-label">After Setup</div>
+      The dashboard is live at <code>https://status.your-domain.com</code>. The AI-Ops daemon starts monitoring immediately. Run <code>devctl doctor</code> to verify everything is healthy.
+    </div>
+
+    <h3>Post-setup: get your fleet enrollment credentials</h3>
+    <p>After setup, the hub prints the enrollment command for sub-nodes. You can also find the values in <code>infra/.env</code>:</p>
+    <pre><code># These are in infra/.env on the hub
+BASE_DOMAIN=your-domain.com
+NODE_NAME=hub-hostname
+CENTRAL_HUB_URL=              # Empty on the hub itself
+FLEET_KEY=your-fleet-key      # Shared secret for node auth</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+    </section>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <section id="node-enroll">
+    <h2>Enroll a Sub-Node</h2>
+
+    <p>To connect any server (new or already running services) to the fleet, paste this single command:</p>
+
+    <pre><code># Run on the sub-node server (as root)
+curl -sSL https://raw.githubusercontent.com/YOUR_ORG/happy-galileo/main/scripts/setup-node.sh \
+  | sudo bash -s -- \
+    --node-name "vm-02" \
+    --domain "vm02.your-domain.com" \
+    --hub-url "https://status.your-domain.com/api/telemetry/ingest" \
+    --fleet-key "your-fleet-key" \
+    --github-token "ghp_YOUR_TOKEN"</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+
+    <h3>What setup-node.sh does</h3>
+    <ol style="margin: 8px 0 16px 20px; color: var(--text-muted); font-size: 14px; line-height: 2;">
+      <li>Installs prerequisites (Docker, Node.js, tmux, git)</li>
+      <li>Clones the repo to <code>/opt/happy-galileo</code> (or pulls latest if exists)</li>
+      <li>Installs OpenCode CLI + Playwright for autonomous remediation</li>
+      <li>Creates the <code>dev-net</code> Docker network</li>
+      <li>Installs <code>devctl</code> CLI with <code>CENTRAL_HUB_URL</code> and <code>FLEET_KEY</code> baked in</li>
+      <li>Runs <code>proxy_resolver.sh</code> — detects existing Nginx/Apache/Caddy and configures forwarding</li>
+      <li>Launches the infra stack (Caddy, Dashboard, AI-Ops daemon)</li>
+      <li><strong>Runs <code>devctl discover</code></strong> — auto-indexes all existing containers, their workspaces, and git repos</li>
+      <li><strong>Sends initial heartbeat</strong> — node appears on the hub dashboard within 15 seconds</li>
+    </ol>
+
+    <div class="callout callout-info">
+      <div class="callout-label">Existing Servers</div>
+      If the server already has services running (Nginx, Apache, Mailcow, any Docker stack), the enrollment script detects them automatically. <code>proxy_resolver.sh</code> configures the existing proxy to forward wildcard traffic to ServerGuard's Caddy, and <code>devctl discover</code> indexes every running container with its workspace path, compose file, and git repository.
+    </div>
+
+    <h3>Autonomous enrollment flow</h3>
+    <div class="flow-diagram">
+      <div class="flow-label">What happens after you paste the script</div>
+      <div class="flow-row" style="margin-bottom: 10px;">
+        <span class="flow-node cyan">setup-node.sh</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node green">Docker + Infra</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node amber">devctl discover</span>
+      </div>
+      <div class="flow-row" style="margin-bottom: 10px;">
+        <span class="flow-node amber">CodebaseResolver</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node purple">Labels → Mounts → .git/config</span>
+      </div>
+      <div class="flow-row">
+        <span class="flow-node accent">send_heartbeat()</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node green">Hub Dashboard</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node rose">Node appears online</span>
+      </div>
+    </div>
+
+    <p>The <code>CodebaseResolver</code> chains three strategies to find each container's source code:</p>
+    <ol style="margin: 8px 0 16px 20px; color: var(--text-muted); font-size: 14px; line-height: 2;">
+      <li><strong>Docker labels</strong> — <code>com.docker.compose.project.working_dir</code> (most reliable)</li>
+      <li><strong>Bind mounts</strong> — walks up 3 parent directories from mount sources</li>
+      <li><strong>Git metadata</strong> — reads <code>.git/config</code> for remote URL and <code>.git/HEAD</code> for branch</li>
+    </ol>
+    </section>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <section id="verify">
+    <h2>Verify Connection</h2>
+
+    <h3>From the sub-node</h3>
+    <pre><code># Check daemon is running
+docker logs ai-ops-daemon --tail 20
+
+# Send a manual heartbeat and check response
+devctl heartbeat
+
+# Run diagnostics
+devctl doctor</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+
+    <h3>From the hub dashboard</h3>
+    <p>Open <code>https://status.your-domain.com</code>. The Fleet Matrix tab shows all connected nodes with:</p>
+    <ul style="margin: 8px 0 12px 20px; color: var(--text-muted); font-size: 14px;">
+      <li>Online/offline status (green dot = heartbeat received within 90s)</li>
+      <li>Container count, service count, open incidents</li>
+      <li>Each service's workspace path and git URL</li>
+      <li>Container state (running/stopped)</li>
+    </ul>
+
+    <h3>From the hub CLI</h3>
+    <pre><code># Check fleet nodes via API
+curl -s https://status.your-domain.com/api/fleet/nodes \
+  -H "Authorization: Bearer YOUR_DASHBOARD_KEY" | python3 -m json.tool
+
+# Check queued commands
+curl -s https://status.your-domain.com/api/fleet/commands \
+  -H "Authorization: Bearer YOUR_DASHBOARD_KEY" | python3 -m json.tool</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+    </section>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <section id="opencode">
+    <h2>How OpenCode Fixes Incidents</h2>
+
+    <p>When L1 (restart) and L2 (network fix) fail, or the failure is an application bug, the system escalates to <strong>Level 3</strong>:</p>
+
+    <div class="flow-diagram">
+      <div class="flow-label">L3 Escalation Pipeline</div>
+      <div class="flow-row" style="margin-bottom: 10px;">
+        <span class="flow-node rose">Health failure detected</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node amber">DossierBuilder collects evidence</span>
+      </div>
+      <div class="flow-row" style="margin-bottom: 10px;">
+        <span class="flow-node amber">IncidentBus creates dossier (.json + .md)</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node purple">Git fix branch created</span>
+      </div>
+      <div class="flow-row">
+        <span class="flow-node purple">OpenCode launched in tmux</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node green">Autonomous fix → rebuild → verify</span>
+      </div>
+    </div>
+
+    <h3>What the Incident Dossier contains</h3>
+    <ul style="margin: 8px 0 12px 20px; color: var(--text-muted); font-size: 14px;">
+      <li>Container state, restart count, OOM status, exit code</li>
+      <li>Last 50 lines of container logs with extracted stack trace</li>
+      <li>Workspace directory path and Docker Compose file</li>
+      <li>Git branch, commit, and remote URL</li>
+      <li>Resource usage snapshot (CPU, memory)</li>
+      <li>AI-generated fix recommendation based on error pattern</li>
+    </ul>
+
+    <h3>OpenCode autonomous workflow</h3>
+    <p>OpenCode receives the dossier and follows this contract:</p>
+    <ol style="margin: 8px 0 16px 20px; color: var(--text-muted); font-size: 14px; line-height: 2;">
+      <li>Read the error trace and identify the root cause</li>
+      <li>Edit source code / config to fix the bug</li>
+      <li>Rebuild and restart: <code>docker compose up -d --build</code></li>
+      <li>Expose staging route: <code>devctl expose &lt;service&gt; &lt;port&gt; --env staging</code></li>
+      <li>Verify with Playwright: <code>devctl test &lt;service&gt;</code></li>
+      <li>Commit and resolve: <code>devctl incident resolve &lt;id&gt; --notes "..."</code></li>
+    </ol>
+
+    <div class="callout callout-info">
+      <div class="callout-label">Monitoring OpenCode</div>
+      Each dispatch runs in a tmux session named <code>opencode-&lt;incident_id&gt;</code>. You can watch live: <code>tmux attach -t opencode-INC-20260831-A1B2C3</code>. The dashboard's Incident Console also shows worker logs via the API.
+    </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <section id="redeploy">
+    <h2>Push &amp; Redeploy</h2>
+
+    <p>To push your latest changes and redeploy on the master server (or any node):</p>
+
+    <h3>Full platform redeploy</h3>
+    <pre><code>cd /opt/happy-galileo
+
+# Pull latest code
+git pull origin main
+
+# Rebuild and restart all infra containers
+docker compose -f infra/docker-compose.infra.yml up -d --build
+
+# Verify everything is healthy
+devctl doctor</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+
+    <h3>Redeploy a single component</h3>
+    <pre><code># Just the dashboard
+docker compose -f infra/docker-compose.infra.yml up -d --build dashboard
+
+# Just the AI-Ops daemon
+docker compose -f infra/docker-compose.infra.yml up -d --build ai-ops
+
+# Just Caddy (after config changes)
+docker compose -f infra/docker-compose.infra.yml up -d --build caddy</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+
+    <h3>Force re-discovery of containers</h3>
+    <pre><code># Re-scan all running containers and update the service registry
+devctl discover --force
+
+# Re-index (flushes cached state and rebuilds)
+devctl reindex</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+
+    <div class="callout callout-warn">
+      <div class="callout-label">Zero Downtime</div>
+      Docker Compose <code>up -d --build</code> performs a rolling restart — existing containers keep running until the new image is ready. The AI-Ops daemon gracefully handles SIGTERM and stops its monitoring loop before exiting.
+    </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <section id="commands">
+    <h2>CLI Reference</h2>
+
+    <table>
+      <thead><tr><th>Command</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>devctl discover [--force]</code></td><td>Auto-discover all running containers, classify types, resolve codebases</td></tr>
+        <tr><td><code>devctl reindex</code></td><td>Force flush and rebuild the service registry</td></tr>
+        <tr><td><code>devctl list</code></td><td>List all registered services with URLs</td></tr>
+        <tr><td><code>devctl expose &lt;svc&gt; [port]</code></td><td>Expose a service via Caddy with automatic HTTPS</td></tr>
+        <tr><td><code>devctl hide &lt;svc&gt;</code></td><td>Remove a service's public route</td></tr>
+        <tr><td><code>devctl heartbeat</code></td><td>Send a manual telemetry heartbeat to the hub</td></tr>
+        <tr><td><code>devctl logs &lt;svc&gt;</code></td><td>Tail container logs</td></tr>
+        <tr><td><code>devctl test &lt;target&gt;</code></td><td>Run Playwright diagnostic test against a service</td></tr>
+        <tr><td><code>devctl incident list</code></td><td>List open incidents</td></tr>
+        <tr><td><code>devctl incident inspect &lt;id&gt;</code></td><td>View an incident dossier</td></tr>
+        <tr><td><code>devctl incident resolve &lt;id&gt;</code></td><td>Mark an incident as resolved</td></tr>
+        <tr><td><code>devctl incident purge</code></td><td>Delete all incident dossiers</td></tr>
+        <tr><td><code>devctl dispatch [incident_id]</code></td><td>Launch OpenCode for autonomous remediation</td></tr>
+        <tr><td><code>devctl doctor</code></td><td>Health check: Docker, dev-net, Caddy, DNS</td></tr>
+      </tbody>
+    </table>
+    </section>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <section id="env-vars">
+    <h2>Environment Variables</h2>
+
+    <p>All configuration lives in environment variables, loaded from <code>.env</code> or set by the setup scripts:</p>
+
+    <table class="env-table">
+      <thead><tr><th>Variable</th><th>Default</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td>BASE_DOMAIN</td><td>dev-server.datakrib.com</td><td>Wildcard domain for all services</td></tr>
+        <tr><td>NODE_NAME</td><td>hostname</td><td>Display name for this node in the dashboard</td></tr>
+        <tr><td>CENTRAL_HUB_URL</td><td><em>empty</em></td><td>Hub telemetry endpoint (empty = standalone mode)</td></tr>
+        <tr><td>FLEET_KEY</td><td>default-fleet-key</td><td>Shared secret for node→hub auth</td></tr>
+        <tr><td>DOCKER_NETWORK</td><td>dev-net</td><td>Internal Docker bridge network name</td></tr>
+        <tr><td>MONITOR_INTERVAL_SECONDS</td><td>15</td><td>Health check cycle interval</td></tr>
+        <tr><td>AUTO_REMEDIATION_ENABLED</td><td>true</td><td>Enable/disable L1-L2 auto-healing</td></tr>
+        <tr><td>MAX_AUTO_RESTARTS</td><td>3</td><td>Max L1 restart attempts before L3 escalation</td></tr>
+        <tr><td>METRICS_ENABLED</td><td>true</td><td>Enable time-series metrics recording</td></tr>
+        <tr><td>TREND_WINDOW_HOURS</td><td>2</td><td>Lookback window for degradation detection</td></tr>
+        <tr><td>TREND_CHECK_INTERVAL_CYCLES</td><td>20</td><td>How often to run trend analysis</td></tr>
+        <tr><td>DASHBOARD_PORT</td><td>8888</td><td>Dashboard web port</td></tr>
+        <tr><td>FLEET_TLS_VERIFY</td><td>false</td><td>Verify TLS certs on hub connection</td></tr>
+        <tr><td>GITHUB_TOKEN</td><td><em>none</em></td><td>PAT for cloning private repos (set by setup script)</td></tr>
+      </tbody>
+    </table>
+    </section>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <section id="tests">
+    <h2>Running Tests</h2>
+
+    <pre><code>cd /opt/happy-galileo
+
+# Proxy remediation tests (Caddy, Nginx, Apache, httpd)
+python3 test_proxy_remediation.py
+
+# Autonomous enrollment & codebase resolution test
+python3 test_enrollment.py
+
+# Full devctl unit/integration tests
+python3 -m pytest tests/test_devctl.py -v
+
+# End-to-end live server test (requires Docker)
+bash tests/test_e2e_proof.sh
+
+# Chaos/stress test (triggers deliberate faults)
+bash services/chaos-api/stress-test.sh</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+    </section>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <section id="troubleshooting">
+    <h2>Troubleshooting</h2>
+
+    <h3>Node not appearing on dashboard</h3>
+    <div class="callout callout-warn">
+      <div class="callout-label">Check</div>
+      <p>1. Is <code>CENTRAL_HUB_URL</code> set correctly in <code>infra/.env</code>?<br>
+      2. Can the node reach the hub? <code>curl -k $CENTRAL_HUB_URL</code><br>
+      3. Is <code>FLEET_KEY</code> the same on both hub and node?<br>
+      4. Check daemon logs: <code>docker logs ai-ops-daemon --tail 30</code></p>
+    </div>
+
+    <h3>Services not being discovered</h3>
+    <div class="callout callout-info">
+      <div class="callout-label">Fix</div>
+      <p>Run <code>devctl discover --force</code> to flush and re-scan. Check that containers are running (<code>docker ps</code>) and connected to <code>dev-net</code>. The daemon auto-discovers every 4th cycle (~60s).</p>
+    </div>
+
+    <h3>OpenCode not dispatching</h3>
+    <div class="callout callout-critical">
+      <div class="callout-label">Requirements</div>
+      <p>OpenCode dispatch requires: (1) <code>tmux</code> installed on the host, (2) <code>opencode</code> or <code>npx</code> available, (3) the service workspace must be a real git repo on disk. Check the daemon output for the specific failure reason. If tmux is missing, incidents are still created but marked <code>PREPARED_NOT_DISPATCHED</code>.</p>
+    </div>
+
+    <h3>False LATENCY_DRIFT warnings</h3>
+    <p>The latency probe timeout was increased to 5 seconds and timeouts are reported as <code>status: -1</code> (distinct from dead services). If you still see false positives, increase <code>TREND_LATENCY_FACTOR</code> (default 1.5) or <code>TREND_MIN_SAMPLES</code> (default 20) in your environment.</p>
+
+    <h3>Dashboard shows stale data</h3>
+    <p>The dashboard polls every 4 seconds. If nodes appear offline, check that the heartbeat interval (15s) hasn't been disrupted. Nodes are marked offline after 90 seconds without a heartbeat. Restart the dashboard container: <code>docker restart dashboard</code>.</p>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  // Copy-to-clipboard for code blocks
+  function copyCode(btn) {
+    const pre = btn.closest('pre');
+    const code = pre.querySelector('code').textContent;
+    navigator.clipboard.writeText(code).then(() => {
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    });
+  }
+
+  // Active sidebar link tracking
+  const sections = document.querySelectorAll('section[id]');
+  const links = document.querySelectorAll('.sidebar nav a');
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const active = document.querySelector(`.sidebar nav a[href="#${entry.target.id}"]`);
+        if (active) active.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  sections.forEach(s => observer.observe(s));
+</script>

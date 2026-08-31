@@ -29,7 +29,7 @@ class HealthChecker:
             return None
 
         # Dedup: skip if logs haven't changed since last scan
-        log_hash = str(hash(logs))
+        log_hash = hashlib.md5(logs.encode("utf-8", errors="replace")).hexdigest()
         if self._prev_log_hashes.get(container_name) == log_hash:
             return None
         self._prev_log_hashes[container_name] = log_hash

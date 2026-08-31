@@ -50,54 +50,56 @@ export function IncidentConsoleView({ incidents, onSelect, onDispatch, onPurge }
           return (
             <Card
               key={inc.id}
-              className={`border-l-4 transition-all ${
+              className={`border-l-4 transition-all duration-300 ${
                 isResolved
-                  ? 'border-l-emerald-500 border-border/60 bg-card/40 opacity-85'
+                  ? 'border-l-emerald-500 border-border/60 bg-card/40 opacity-70'
                   : isClaimed
-                  ? 'border-l-amber-500 border-border bg-card/80'
-                  : 'border-l-rose-500 border-border bg-card'
+                  ? 'border-l-amber-500 border-border/60 bg-card/80'
+                  : 'border-l-rose-500 border-border/60 bg-card/80'
               }`}
             >
-              <CardContent className="p-5 space-y-3.5">
+              <CardContent className="p-5 space-y-4">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 font-mono text-xs">
-                    <Badge variant="outline" className="font-mono bg-zinc-900 border-border text-slate-200">
+                  <div className="flex items-center gap-2 font-mono text-[11px]">
+                    <Badge variant="outline" className="font-mono bg-zinc-950 border-border/50 text-slate-400">
                       {inc.id}
                     </Badge>
-                    <Badge variant={isResolved ? 'success' : isClaimed ? 'warning' : 'destructive'}>
+                    <Badge variant={isResolved ? 'success' : isClaimed ? 'warning' : 'destructive'} className="text-[10px]">
                       {isClaimed ? `CLAIMED (${inc.claimed_by || 'OpenCode'})` : inc.state || 'DETECTED'}
                     </Badge>
-                    <span className="text-muted-foreground font-sans text-xs">
+                    <span className="text-muted-foreground font-sans opacity-70">
                       • {inc.source_node || 'Primary Node'}
                     </span>
                   </div>
-                  <span className="text-[11px] text-muted-foreground font-mono">
+                  <span className="text-[10px] text-muted-foreground font-mono opacity-60">
                     {inc.created_at || ''}
                   </span>
                 </div>
 
-                <div>
+                <div className="flex items-baseline gap-2">
                   <h4 className="text-sm font-bold text-slate-100">
-                    {inc.service_name && <span className="text-sky-400">[{inc.service_name}] </span>}
+                    {inc.service_name && <span className="text-sky-400 font-mono">[ {inc.service_name} ]</span>}
                     {inc.title}
                   </h4>
                 </div>
 
                 {!isResolved && (
-                  <div className="rounded-lg bg-zinc-950/80 border border-border/50 p-3 font-mono text-xs text-rose-300 max-h-24 overflow-y-auto whitespace-pre-wrap">
+                  <div className="rounded-lg bg-zinc-950 border border-border/40 p-3 font-mono text-xs text-rose-300/90 max-h-28 overflow-y-auto whitespace-pre-wrap shadow-inner leading-relaxed">
+                    <div className="text-[10px] text-zinc-500 uppercase mb-1 border-b border-border/30 pb-1 flex items-center gap-1">
+                      <TerminalIcon className="w-3 h-3" /> Execution Trace
+                    </div>
                     {stack}
                   </div>
                 )}
 
-                {/* Progress bar */}
-                <div className="space-y-1.5 pt-1">
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>{isClaimed ? 'Remediation: In Progress (OpenCode)' : 'Remediation Pipeline'}</span>
+                <div className="space-y-2 pt-1">
+                  <div className="flex justify-between text-[10px] text-muted-foreground font-medium">
+                    <span>{isClaimed ? 'Auto-Repair Sequence' : 'Remediation Pipeline'}</span>
                     <span className="font-mono">{pct}%</span>
                   </div>
                   <Progress
                     value={pct}
-                    className={`h-1.5 ${
+                    className={`h-1 ${
                       isResolved
                         ? '[&>div]:bg-emerald-400'
                         : isClaimed
@@ -107,13 +109,12 @@ export function IncidentConsoleView({ incidents, onSelect, onDispatch, onPurge }
                   />
                 </div>
 
-                {/* Action Buttons */}
                 <div className="flex items-center gap-2 pt-1">
                   <Button
                     variant="secondary"
                     size="sm"
                     onClick={() => onSelect(inc)}
-                    className="flex-1 text-xs gap-1.5 h-8"
+                    className="flex-1 text-xs gap-1.5 h-8 bg-muted/50 hover:bg-muted transition-colors"
                   >
                     <FileText className="w-3.5 h-3.5" />
                     Diagnostic Dossier
@@ -123,7 +124,7 @@ export function IncidentConsoleView({ incidents, onSelect, onDispatch, onPurge }
                       variant={isClaimed ? 'amber' : 'default'}
                       size="sm"
                       onClick={() => onDispatch && onDispatch(inc.id)}
-                      className="text-xs gap-1.5 h-8 font-semibold"
+                      className="text-xs gap-1.5 h-8 font-semibold shadow-sm"
                     >
                       <TerminalIcon className="w-3.5 h-3.5" />
                       {isClaimed ? 'Re-Dispatch' : '⚡ Dispatch OpenCode'}

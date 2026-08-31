@@ -87,7 +87,8 @@ export function App() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="min-h-screen bg-slate-950 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black selection:bg-sky-500/30">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <Navbar baseDomain={status.base_domain} onRefresh={fetchData} />
 
       <KpiMetrics
@@ -174,6 +175,7 @@ export function App() {
           {toast}
         </div>
       )}
+      </div>
     </div>
   );
 }

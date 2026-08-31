@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Happy Galileo vs the Field</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #F4F6F7;
+    --surface: #FDFDFE;
+    --ink: #1B2733;
+    --ink-soft: #4A5763;
+    --ink-faint: #75828D;
+    --line: #D8DEE2;
+    --accent: #0B7285;
+    --accent-ink: #085A69;
+    --accent-wash: #E3F0F3;
+    --yes: #2B8A3E;
+    --yes-wash: #E6F2E9;
+    --part: #B7791F;
+    --part-wash: #F6EEDD;
+    --no: #8A949C;
+    --no-wash: #EDF0F2;
+    --callout: #EAF1F3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #141B22;
+      --surface: #1C242D;
+      --ink: #E4EAEE;
+      --ink-soft: #A9B5BE;
+      --ink-faint: #7C8893;
+      --line: #313C46;
+      --accent: #4FB3C6;
+      --accent-ink: #6EC5D6;
+      --accent-wash: #17313A;
+      --yes: #69C97C;
+      --yes-wash: #1B3122;
+      --part: #D9A94E;
+      --part-wash: #382D17;
+      --no: #79858F;
+      --no-wash: #242E37;
+      --callout: #1A2732;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #141B22;
+    --surface: #1C242D;
+    --ink: #E4EAEE;
+    --ink-soft: #A9B5BE;
+    --ink-faint: #7C8893;
+    --line: #313C46;
+    --accent: #4FB3C6;
+    --accent-ink: #6EC5D6;
+    --accent-wash: #17313A;
+    --yes: #69C97C;
+    --yes-wash: #1B3122;
+    --part: #D9A94E;
+    --part-wash: #382D17;
+    --no: #79858F;
+    --no-wash: #242E37;
+    --callout: #1A2732;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+    font-size: 17px;
+    line-height: 1.65;
+  }
+  .page {
+    max-width: 1020px;
+    margin: 0 auto;
+    padding: 56px 24px 88px;
+  }
+  .col { max-width: 70ch; }
+
+  /* ── Header ── */
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: "Archivo", "Segoe UI", sans-serif;
+    font-weight: 800;
+    font-size: clamp(34px, 5.5vw, 52px);
+    line-height: 1.05;
+    letter-spacing: -0.015em;
+    margin: 0 0 18px;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 20px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    margin: 0 0 12px;
+    text-wrap: balance;
+  }
+  .meta-line {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    margin: 0;
+  }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 36px; margin-bottom: 44px; }
+
+  h2 {
+    font-family: "Archivo", "Segoe UI", sans-serif;
+    font-weight: 700;
+    font-size: 26px;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+    margin: 56px 0 16px;
+    text-wrap: balance;
+  }
+  h2:first-child { margin-top: 0; }
+  p { margin: 0 0 16px; }
+  strong { font-weight: 600; }
+  code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.85em;
+    background: var(--no-wash);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+
+  /* ── Layer cards ── */
+  .layers {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+    margin: 24px 0 8px;
+  }
+  .layer {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 18px 20px;
+  }
+  .layer .tag {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    display: block;
+    margin-bottom: 8px;
+  }
+  .layer h3 {
+    font-family: "Archivo", sans-serif;
+    font-size: 17px;
+    font-weight: 700;
+    margin: 0 0 6px;
+  }
+  .layer p { font-size: 15px; color: var(--ink-soft); margin: 0; line-height: 1.55; }
+
+  /* ── Matrix ── */
+  .matrix-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    margin: 24px 0 10px;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 780px;
+    font-size: 15px;
+  }
+  thead th {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    text-align: left;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody th {
+    font-family: "Archivo", sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    text-align: left;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+    vertical-align: top;
+  }
+  tbody tr:last-child th { border-bottom: none; }
+  tr.hero-row { background: var(--accent-wash); }
+  tr.hero-row th { color: var(--accent-ink); }
+  .cell-note { display: block; font-size: 12.5px; color: var(--ink-faint); margin-top: 2px; }
+
+  .mark {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .m-yes  { color: var(--yes);  background: var(--yes-wash); }
+  .m-part { color: var(--part); background: var(--part-wash); }
+  .m-no   { color: var(--no);   background: var(--no-wash); }
+
+  .legend {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--ink-faint);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+    margin: 0 0 8px;
+  }
+
+  /* ── Tool sections ── */
+  .tool { margin: 34px 0; }
+  .tool-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .tool-head h3 {
+    font-family: "Archivo", sans-serif;
+    font-weight: 700;
+    font-size: 21px;
+    margin: 0;
+  }
+  .verdict {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    background: var(--accent-wash);
+    border-radius: 999px;
+    padding: 3px 11px;
+  }
+  .tool p { color: var(--ink-soft); }
+  .tool p strong { color: var(--ink); }
+
+  /* ── Gaps ── */
+  .gaps { list-style: none; padding: 0; margin: 20px 0 0; display: grid; gap: 12px; }
+  .gaps li {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--part);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 18px;
+    font-size: 15.5px;
+    color: var(--ink-soft);
+  }
+  .gaps li strong { color: var(--ink); }
+
+  /* ── Bottom line ── */
+  .bottom {
+    background: var(--callout);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 28px 30px;
+    margin-top: 56px;
+  }
+  .bottom .tag {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    display: block;
+    margin-bottom: 10px;
+  }
+  .bottom p { font-size: 18px; line-height: 1.6; margin: 0 0 14px; }
+  .bottom p:last-child { margin-bottom: 0; }
+
+  footer {
+    margin-top: 56px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+
+  a { color: var(--accent-ink); }
+  @media (max-width: 640px) {
+    .page { padding: 36px 16px 64px; }
+    body { font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header>
+    <p class="eyebrow">Competitive positioning · AIOps &amp; self-healing platforms</p>
+    <h1>Happy Galileo vs the Field</h1>
+    <p class="standfirst">How a self-hosted, Docker-native AI-Ops workstation compares to Kubiya, Robusta, Keep, Sweep&hairsp;/&hairsp;Plandex, and Sentry — and where it stands alone.</p>
+    <p class="meta-line">happy-galileo · *.dev-server.datakrib.com · August 2026</p>
+  </header>
+
+  <div class="col">
+    <h2>What Happy Galileo actually is</h2>
+    <p>None of the tools in the field bundle what this platform bundles. It runs on plain Ubuntu VMs with Docker — no Kubernetes required — and combines three layers that elsewhere require three separate products:</p>
+  </div>
+
+  <div class="layers">
+    <div class="layer">
+      <span class="tag">Layer 1 · Ingress</span>
+      <h3>devctl + Caddy wildcard TLS</h3>
+      <p>One command (<code>devctl expose app 3000</code>) yields an instant HTTPS URL. Zero host ports exposed; all traffic rides the private <code>dev-net</code> bridge behind Caddy.</p>
+    </div>
+    <div class="layer">
+      <span class="tag">Layer 2 · AI-Ops daemon</span>
+      <h3>Detect &amp; self-heal</h3>
+      <p>Docker-socket health checks, a language-agnostic log-grammar classifier, and tiered remediation: L1 restarts, L2 network and Caddy resync — bounded, autonomous, audited.</p>
+    </div>
+    <div class="layer">
+      <span class="tag">Layer 3 · Escalation</span>
+      <h3>Incident Dossier → coding agent</h3>
+      <p>Application bugs are never touched autonomously. Stack trace, git diff, logs, and Playwright screenshots are packaged into a dossier and handed to OpenCode to fix the code.</p>
+    </div>
+  </div>
+
+  <h2>The matrix</h2>
+  <p class="legend">
+    <span><span class="mark m-yes">YES</span> native capability</span>
+    <span><span class="mark m-part">PARTIAL</span> limited or via another layer</span>
+    <span><span class="mark m-no">NO</span> out of scope</span>
+  </p>
+  <div class="matrix-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Platform</th>
+          <th>Deployment</th>
+          <th>Detects issues itself</th>
+          <th>Fixes infra</th>
+          <th>Fixes code</th>
+          <th>Needs Kubernetes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="hero-row">
+          <th>Happy Galileo</th>
+          <td>Fully self-hosted<span class="cell-note">Docker on plain VMs</span></td>
+          <td><span class="mark m-yes">YES</span><span class="cell-note">HTTP probes + log grammar</span></td>
+          <td><span class="mark m-yes">YES</span><span class="cell-note">tiered, safety-bounded</span></td>
+          <td><span class="mark m-part">PARTIAL</span><span class="cell-note">via OpenCode handoff</span></td>
+          <td><span class="mark m-no">NO</span></td>
+        </tr>
+        <tr>
+          <th>Kubiya</th>
+          <td>Hybrid<span class="cell-note">SaaS control plane + local runner</span></td>
+          <td><span class="mark m-no">NO</span><span class="cell-note">reacts to alerts</span></td>
+          <td><span class="mark m-yes">YES</span></td>
+          <td><span class="mark m-yes">YES</span><span class="cell-note">via Git</span></td>
+          <td><span class="mark m-no">NO</span></td>
+        </tr>
+        <tr>
+          <th>Robusta</th>
+          <td>Self-hosted</td>
+          <td><span class="mark m-part">PARTIAL</span><span class="cell-note">via Prometheus alerts</span></td>
+          <td><span class="mark m-yes">YES</span><span class="cell-note">K8s playbooks</span></td>
+          <td><span class="mark m-no">NO</span></td>
+          <td><span class="mark m-yes">YES</span></td>
+        </tr>
+        <tr>
+          <th>Keep</th>
+          <td>Fully self-hosted</td>
+          <td><span class="mark m-no">NO</span><span class="cell-note">ingests alerts</span></td>
+          <td><span class="mark m-part">PARTIAL</span><span class="cell-note">via authored workflows</span></td>
+          <td><span class="mark m-part">PARTIAL</span></td>
+          <td><span class="mark m-no">NO</span></td>
+        </tr>
+        <tr>
+          <th>Sweep / Plandex</th>
+          <td>Self-hosted</td>
+          <td><span class="mark m-no">NO</span></td>
+          <td><span class="mark m-part">PARTIAL</span><span class="cell-note">via IaC edits</span></td>
+          <td><span class="mark m-yes">YES</span></td>
+          <td><span class="mark m-no">NO</span></td>
+        </tr>
+        <tr>
+          <th>Sentry</th>
+          <td>Self-hosted</td>
+          <td><span class="mark m-yes">YES</span><span class="cell-note">app errors, needs SDK</span></td>
+          <td><span class="mark m-no">NO</span></td>
+          <td><span class="mark m-part">PARTIAL</span><span class="cell-note">explains root cause only</span></td>
+          <td><span class="mark m-no">NO</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <h2>Tool by tool</h2>
+
+    <div class="tool">
+      <div class="tool-head"><h3>Robusta</h3><span class="verdict">Closest peer</span></div>
+      <p>Alert triage plus automated infrastructure playbooks — the same conceptual shape, but <strong>Kubernetes-only and stops at infrastructure</strong>. Happy Galileo covers the same ground for Docker-on-VM setups, a segment Robusta simply doesn't address, and goes one tier further by handing application bugs to a coding agent. Robusta is more mature on detection, though: it rides on Prometheus/AlertManager with a large library of enrichers, where Happy Galileo's health checker and anomaly classifier form a self-contained heuristic engine with no metrics backend.</p>
+    </div>
+
+    <div class="tool">
+      <div class="tool-head"><h3>Keep</h3><span class="verdict">Opposite bet</span></div>
+      <p>Keep is an alert <em>router</em>: it ingests alerts from monitoring tools you already run and triggers workflows. Happy Galileo made the opposite design choice — it <strong>is</strong> the monitoring source (HTTP probes plus the Docker socket), so there is nothing to integrate. Keep wins on flexibility: any alert source, arbitrary workflows. Happy Galileo wins on turnkey: run <code>setup-server.sh</code> and it's monitoring, with opinionated built-in tiers instead of YAML workflows the operator must author.</p>
+    </div>
+
+    <div class="tool">
+      <div class="tool-head"><h3>Kubiya</h3><span class="verdict">Different model</span></div>
+      <p>Conversational and hybrid-SaaS — their control plane, your runner. Happy Galileo is <strong>fully self-hosted with no vendor dependency</strong>, and it's a daemon, not a chatbot: it acts on its own schedule rather than waiting for instructions. Kubiya has far more integrations (Jira, Datadog, AWS); Happy Galileo has none, by design.</p>
+    </div>
+
+    <div class="tool">
+      <div class="tool-head"><h3>Sweep / Plandex / Aider</h3><span class="verdict">Complementary</span></div>
+      <p>These are the "AI fixes the code" half of the story. Happy Galileo doesn't compete with them — <strong>it slots one in</strong>. OpenCode plays that role today, and the Incident Dossier is the glue those tools lack: they need someone to feed them error context, and the dossier builder automates exactly that.</p>
+    </div>
+
+    <div class="tool">
+      <div class="tool-head"><h3>Sentry + agent integration</h3><span class="verdict">DIY analogue</span></div>
+      <p>Wiring self-hosted Sentry to a coding agent is the do-it-yourself version of Happy Galileo's Level-3 pipeline. Sentry captures richer runtime errors — in-process SDKs, breadcrumbs, release tracking — than log scraping ever can, but it requires instrumenting every application. Happy Galileo's classifier works on any container's logs with <strong>zero app changes</strong>: shallower signal, universal coverage.</p>
+    </div>
+
+    <h2>Honest gaps</h2>
+    <ul class="gaps">
+      <li><strong>No metrics or trends.</strong> The daemon probes current state but keeps no time series, so gradual degradation — memory creep, latency drift — that Prometheus-backed tools catch will pass unnoticed. The fleet telemetry streamer is a start toward closing this.</li>
+      <li><strong>Heuristic classifier vs. AI root-cause analysis.</strong> The regex grammars are fast and free, but Robusta and Kubiya run LLM analysis on failures. An optional LLM pass over the dossier before the OpenCode handoff would close the gap cheaply.</li>
+      <li><strong>Battle-testing.</strong> Established tools have thousands of production deployments behind their noise filters and dedup logic; the noise-pattern list and incident dedup here will need iteration against real-world log diversity.</li>
+      <li><strong>No Kubernetes path.</strong> Fine for the target — dev workstations and small fleets via Ansible — but it caps the addressable use case that Robusta owns.</li>
+    </ul>
+  </div>
+
+  <div class="bottom">
+    <span class="tag">Bottom line</span>
+    <p>Nothing in the field is a direct competitor. The closest description of Happy Galileo is <strong>"Robusta for Docker VMs, fused with a self-hosted ngrok/Coolify-style ingress, with a Sentry-to-AI-coder pipeline built in."</strong></p>
+    <p>The tiered safety boundary — fully autonomous for infrastructure, dossier-and-escalate for code — is a genuinely distinctive design choice: the fully-autonomous tools lack it, and the PR-only tools can't match it on infrastructure.</p>
+  </div>
+
+  <footer>Compared: Kubiya · Robusta · Keep · Sweep / Plandex · Sentry — against the happy-galileo repository as of 2026-08-30.</footer>
+</div>
+
+</body>
+</html>

@@ -527,6 +527,9 @@ class DomainRegistry:
         existing_domains = self.detect_existing_domains()
 
         # ── Step 4: Register all remaining containers for monitoring ──
+        from ai_ops.codebase_resolver import CodebaseResolver
+        resolver = CodebaseResolver()
+
         for c_name in running_names:
             slug = self.sanitize_slug(c_name)
             if slug in registered:
@@ -584,11 +587,15 @@ class DomainRegistry:
                 web_ports = [p for p in ports if p in self.WEB_PORTS]
                 port = web_ports[0] if web_ports else ports[0]
 
+            # Resolve codebase metadata (git repo, workspace, compose file)
+            codebase = resolver.resolve(c_name)
+
             meta = {
                 "auto_discovered": True,
                 "detected_ports": ports,
                 "image": image,
                 "ai_inference": ai_profile,
+                "codebase": codebase,
             }
 
             # If we detected a real domain, store it in metadata

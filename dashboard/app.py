@@ -21,6 +21,11 @@ from devctl.core.auth import AuthManager
 
 STATIC_DIR = Path(__file__).parent / "static"
 FLEET_STORE = {}
+# Pending hub → node commands, keyed by node name. Delivered (and drained) in
+# the telemetry heartbeat response; nodes execute a strict whitelist only.
+FLEET_COMMANDS = {}
+FLEET_COMMAND_LOG = []
+ALLOWED_NODE_ACTIONS = {"restart_container", "resync_network", "purge_incidents"}
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
@@ -267,6 +272,40 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_json({"incident": inc})
                 return
 
+            elif path == "/api/metrics":
+                # Time-series metrics & degradation trends recorded by the AI-Ops daemon.
+                # /api/metrics                     → trend summary for all services
+                # /api/metrics?service=X&hours=2   → raw sample history for one service
+                from ai_ops.metrics_store import MetricsStore
+                qs = parse_qs(parsed.query)
+                service = (qs.get("service") or [""])[0]
+                hours = float((qs.get("hours") or ["2"])[0])
+                store = MetricsStore()
+                try:
+                    if service:
+                        self._send_json({
+                            "service": service,
+                            "hours": hours,
+                            "samples": store.history(service, hours=hours),
+                            "trends": store.detect_trends(service, window_hours=hours),
+                        })
+                    else:
+                        self._send_json({
+                            "services": store.services(),
+                            "trends": store.trend_summary(Config.TREND_WINDOW_HOURS),
+                        })
+                finally:
+                    store.close()
+                return
+
+            elif path == "/api/fleet/commands":
+                self._send_json({
+                    "queued": FLEET_COMMANDS,
+                    "results": FLEET_COMMAND_LOG[-50:],
+                    "allowed_actions": sorted(ALLOWED_NODE_ACTIONS),
+                })
+                return
+
             elif path == "/api/fleet/nodes":
                 # Ensure local node is always populated
                 local_node_name = os.environ.get("NODE_NAME", "vm-01 (Primary)")
@@ -425,7 +464,63 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 payload["received_at"] = time.time()
                 payload["client_ip"] = self.client_address[0]
                 FLEET_STORE[node_name] = payload
-                self._send_json({"status": "received", "node": node_name})
+
+                # Record command results reported back by the node
+                for res in payload.get("command_results", []) or []:
+                    if isinstance(res, dict) and not any(
+                        r.get("id") == res.get("id") and r.get("node") == node_name
+                        for r in FLEET_COMMAND_LOG if r.get("id")
+                    ):
+                        FLEET_COMMAND_LOG.append({**res, "node": node_name})
+                del FLEET_COMMAND_LOG[:-100]
+
+                # Deliver (and drain) any commands queued for this node
+                pending = FLEET_COMMANDS.pop(node_name, [])
+                self._send_json({
+                    "status": "received",
+                    "node": node_name,
+                    "pending_commands": pending,
+                })
+                return
+
+            elif path == "/api/fleet/command":
+                # Queue a whitelisted infra command for a sub-node. It is delivered
+                # in that node's next heartbeat response (usually within ~15s).
+                if not self._check_auth():
+                    self._send_json({"error": "Unauthorized"}, status=401)
+                    return
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+                payload = json.loads(body) if body else {}
+                node = payload.get("node", "")
+                action = payload.get("action", "")
+                target = payload.get("target", "")
+
+                if action not in ALLOWED_NODE_ACTIONS:
+                    self._send_json({
+                        "error": f"Action '{action}' not allowed",
+                        "allowed": sorted(ALLOWED_NODE_ACTIONS),
+                    }, status=400)
+                    return
+                if not node:
+                    self._send_json({"error": "Missing 'node'"}, status=400)
+                    return
+
+                command = {
+                    "id": f"CMD-{int(time.time())}-{os.urandom(3).hex()}",
+                    "action": action,
+                    "target": target,
+                    "queued_at": time.time(),
+                }
+                queue = FLEET_COMMANDS.setdefault(node, [])
+                # Cap per-node command queue to prevent unbounded growth
+                if len(queue) >= 20:
+                    self._send_json({
+                        "error": f"Command queue full for node '{node}' (max 20 pending)",
+                    }, status=429)
+                    return
+                queue.append(command)
+                self._send_json({"status": "queued", "node": node, "command": command})
                 return
 
             elif path.startswith("/api/incidents/") and path.endswith("/dispatch"):

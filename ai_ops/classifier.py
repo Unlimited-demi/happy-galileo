@@ -6,11 +6,57 @@ across ANY programming language, SDK, or framework without hardcoding vendor nam
 """
 
 import re
+from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
 
+def _load_pattern_file(path: Path) -> List[str]:
+    """Load one regex per line; '#' lines are comments. Invalid regexes are skipped."""
+    patterns = []
+    try:
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    re.compile(line)
+                    patterns.append(line)
+                except re.error:
+                    print(f"[classifier] Skipping invalid regex in {path.name}: {line}")
+    except Exception:
+        pass
+    return patterns
+
+
 class AnomalyClassifier:
-    """Universal grammar-based anomaly detector and classifier."""
+    """Universal grammar-based anomaly detector and classifier.
+
+    Operators can extend classification WITHOUT code changes by dropping regex
+    files into the devctl state directory (~/.devctl by default):
+      - noise_patterns.txt : one regex per line; matching log lines are IGNORED
+      - error_patterns.txt : one regex per line; matching log lines are flagged
+        as "Operator-Defined Error" anomalies
+    Files are re-read at most every 60s.
+    """
+
+    _custom_noise: List[str] = []
+    _custom_errors: List[str] = []
+    _custom_loaded_at: float = 0.0
+
+    @classmethod
+    def _refresh_custom_patterns(cls):
+        import time
+        if time.time() - cls._custom_loaded_at < 60:
+            return
+        cls._custom_loaded_at = time.time()
+        try:
+            from devctl.core.config import Config
+            state_dir = Config.DEVCTL_STATE_DIR
+        except Exception:
+            return
+        cls._custom_noise = _load_pattern_file(state_dir / "noise_patterns.txt")
+        cls._custom_errors = _load_pattern_file(state_dir / "error_patterns.txt")
 
     # 1. Structural Noise Patterns to Discard (Routine access traffic, self-logs, scanner noise)
     NOISE_PATTERNS = [
@@ -102,6 +148,8 @@ class AnomalyClassifier:
     CONFIG_ERROR_PATTERNS = [
         (r'Error:\s+adapting config using caddyfile:\s*(.*)', 'Caddyfile Syntax / Option Error'),
         (r'nginx:\s*\[emerg\]\s*(.*)', 'Nginx Syntax / Configuration Crash'),
+        (r'httpd:\s*\[emerg\]\s*(.*)', 'Apache Syntax / Configuration Crash'),
+        (r'apache2:\s*\[emerg\]\s*(.*)', 'Apache Syntax / Configuration Crash'),
         (r'FATAL:\s+password authentication failed for user "([^"]+)"', 'Database Authentication Refusal'),
         (r'FATAL:\s+database "([^"]+)" does not exist', 'Target Database Not Found'),
         (r'FATAL:\s+Role "([^"]+)" does not exist', 'Database Role Not Found'),
@@ -114,6 +162,9 @@ class AnomalyClassifier:
         if not clean:
             return True
         for pattern in cls.NOISE_PATTERNS:
+            if re.search(pattern, clean, re.IGNORECASE):
+                return True
+        for pattern in cls._custom_noise:
             if re.search(pattern, clean, re.IGNORECASE):
                 return True
         return False
@@ -131,13 +182,24 @@ class AnomalyClassifier:
         if any(sc in c_lower for sc in cls.SELF_MONITOR_CONTAINERS):
             return None
 
+        cls._refresh_custom_patterns()
         candidates: List[Tuple[str, str]] = []
 
         for line in logs.splitlines():
             if cls.is_noise(line):
                 continue
-            
+
             clean_line = line.strip()
+
+            # 0. Operator-defined error patterns (from ~/.devctl/error_patterns.txt)
+            matched_custom = False
+            for pat in cls._custom_errors:
+                if re.search(pat, clean_line, re.IGNORECASE):
+                    candidates.append((clean_line, "Operator-Defined Error"))
+                    matched_custom = True
+                    break
+            if matched_custom:
+                continue
 
             # 1. Check Configuration & Database Authentication Crashes
             for pat, cat in cls.CONFIG_ERROR_PATTERNS:

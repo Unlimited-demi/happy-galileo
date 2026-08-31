@@ -46,11 +46,21 @@ class Config:
     AUTO_REMEDIATION_ENABLED = os.environ.get("AUTO_REMEDIATION_ENABLED", "true").lower() == "true"
     MAX_AUTO_RESTARTS = int(os.environ.get("MAX_AUTO_RESTARTS", "3"))
 
+    # Metrics & Trend Detection (time-series degradation monitoring)
+    METRICS_ENABLED = os.environ.get("METRICS_ENABLED", "true").lower() == "true"
+    METRICS_RETENTION_HOURS = int(os.environ.get("METRICS_RETENTION_HOURS", "168"))  # 7 days
+    TREND_CHECK_INTERVAL_CYCLES = int(os.environ.get("TREND_CHECK_INTERVAL_CYCLES", "20"))
+    TREND_WINDOW_HOURS = float(os.environ.get("TREND_WINDOW_HOURS", "2"))
+    TREND_MIN_SAMPLES = int(os.environ.get("TREND_MIN_SAMPLES", "20"))
+    TREND_MEM_GROWTH_FACTOR = float(os.environ.get("TREND_MEM_GROWTH_FACTOR", "1.3"))
+    TREND_LATENCY_FACTOR = float(os.environ.get("TREND_LATENCY_FACTOR", "1.5"))
+
     # Dashboard settings
     DASHBOARD_PORT = int(os.environ.get("DASHBOARD_PORT", "8888"))
     DASHBOARD_HOST = os.environ.get("DASHBOARD_HOST", "0.0.0.0")
 
     # Paths
+    DEVCTL_STATE_DIR = DEVCTL_STATE_DIR
     STATE_FILE = DEVCTL_STATE_DIR / "state.json"
     INCIDENTS_DIR = INCIDENTS_DIR
     SCREENSHOTS_DIR = SCREENSHOTS_DIR

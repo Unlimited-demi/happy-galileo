@@ -4,7 +4,7 @@ Implements tiered autonomous operations (Level 0 - Level 3) with strict safety b
 Uses Docker socket API directly (no docker CLI dependency).
 """
 
-from typing import Dict, Any, Set
+from typing import Dict, Any, Optional, Set, Tuple
 from devctl.core.config import Config
 from devctl.core.incident_bus import IncidentBus
 from ai_ops.docker_socket import DockerSocket
@@ -22,6 +22,8 @@ class RemediationEngine:
         # In-memory dedup: set of service names with open incidents
         # This is the PRIMARY dedup guard — prevents spam even if file I/O is slow
         self._open_incidents: Set[str] = set()
+        # Services already given a Level 2 network fix this unhealthy episode
+        self._l2_fixed: Set[str] = set()
 
         # Seed from any existing incidents on disk
         try:
@@ -32,6 +34,62 @@ class RemediationEngine:
                     self._open_incidents.add(svc)
         except Exception:
             pass
+
+    def _detect_proxy_container(self) -> Optional[Tuple[str, str]]:
+        """
+        Detect which reverse proxy is running on the node.
+        Returns (container_name, proxy_type) or None if none found.
+        """
+        try:
+            containers = self.docker.list_containers()
+            for c in containers:
+                name = c.get("Names", [""])[0].lstrip("/")
+                if name in ("caddy", "nginx", "apache", "httpd"):
+                    proxy_type = "caddy" if name == "caddy" else ("nginx" if name == "nginx" else "apache")
+                    return name, proxy_type
+        except Exception:
+            pass
+        return None
+
+    def _try_level2_network_fix(self, service_name: str, container_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Level 2 remediation: if the container is no longer attached to the
+        internal Docker network, re-attach it and reload Caddy so its route
+        resolves again. Returns a result dict when a fix was applied, else None.
+        Applied at most once per service per unhealthy episode (cleared on healthy).
+        """
+        if service_name in self._l2_fixed:
+            return None
+        try:
+            networks = self.docker.get_networks(container_name)
+        except Exception:
+            return None
+        if not networks or Config.DOCKER_NETWORK in networks:
+            return None  # attached (or container unknown) — not a network desync
+
+        print(f"[Level 2] '{container_name}' detached from '{Config.DOCKER_NETWORK}' "
+              f"(on: {', '.join(networks)}) — re-attaching and reloading proxy")
+        reconnected = self.docker.connect_to_network(container_name, Config.DOCKER_NETWORK)
+        proxy_reloaded = False
+        if reconnected:
+            proxy_info = self._detect_proxy_container()
+            if proxy_info:
+                proxy_name, proxy_type = proxy_info
+                commands = {
+                    "caddy": ["caddy", "reload", "--config", "/etc/caddy/Caddyfile"],
+                    "nginx": ["nginx", "-s", "reload"],
+                    "apache": ["apachectl", "graceful"],
+                }
+                cmd = commands.get(proxy_type)
+                if cmd:
+                    proxy_reloaded = self.docker.exec_in_container(proxy_name, cmd)
+        self._l2_fixed.add(service_name)
+        return {
+            "level": 2,
+            "action": "REATTACH_NETWORK",
+            "success": reconnected,
+            "proxy_reloaded": proxy_reloaded,
+        }
 
     def handle_health_result(self, health: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -56,6 +114,7 @@ class RemediationEngine:
         if is_healthy:
             self.restart_tracker[service_name] = 0
             self._open_incidents.discard(service_name)
+            self._l2_fixed.discard(service_name)
             return {"level": 0, "action": "OBSERVE", "status": "HEALTHY"}
 
         reasons_str = "; ".join(failure_reasons) if failure_reasons else "Container unhealthy"
@@ -74,6 +133,14 @@ class RemediationEngine:
                     "success": restarted,
                     "attempt": restarts + 1,
                 }
+
+        # Level 2: Deployment / network desync → re-attach dev-net & re-sync Caddy
+        # A container that is running but fell off the internal network (compose
+        # recreate, manual disconnect) is an infra problem, not an app bug.
+        if container_running and Config.AUTO_REMEDIATION_ENABLED:
+            l2_result = self._try_level2_network_fix(service_name, container_name)
+            if l2_result is not None:
+                return l2_result
 
         # ── DEDUP GUARD ──
         # Only create ONE incident per service. Never spam.
