@@ -33,6 +33,7 @@ COPY --from=frontend-builder /build/dist /app/dashboard/dist
 COPY --from=frontend-builder /build/dist /app/dashboard/static
 
 ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
 ENV DASHBOARD_HOST=0.0.0.0
 ENV DASHBOARD_PORT=8888
 

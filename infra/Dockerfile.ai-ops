@@ -31,5 +31,6 @@ COPY devctl /app/devctl
 COPY ai_ops /app/ai_ops
 
 ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
 
 CMD ["python3", "/app/ai_ops/daemon.py"]
