@@ -7,12 +7,24 @@
 
 set -e
 
-echo "🔒 Configuring UFW Firewall for dev-server.datakrib.com..."
+echo "🔒 Configuring UFW Firewall..."
 
 # Check root privileges
 if [ "$EUID" -ne 0 ]; then
   echo "❌ Please run as root (sudo ./ufw_setup.sh)"
   exit 1
+fi
+
+# Safety: refuse to run if Mailcow or other mail services are detected
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qi 'mailcow\|postfix\|dovecot'; then
+  echo "[!] SKIPPING UFW: Mail server (Mailcow/Postfix/Dovecot) detected."
+  echo "    UFW would block mail ports (25, 587, 993, etc). Configure UFW manually."
+  exit 0
+fi
+if systemctl is-active --quiet postfix 2>/dev/null || systemctl is-active --quiet dovecot 2>/dev/null; then
+  echo "[!] SKIPPING UFW: Host mail service (Postfix/Dovecot) detected."
+  echo "    Configure UFW manually to avoid blocking mail ports."
+  exit 0
 fi
 
 # Detect active SSH port (default to 22 if commented or unspecified)
@@ -31,6 +43,18 @@ ufw allow "${SSH_PORT}/tcp" comment "SSH Remote Workstation Access" || ufw allow
 echo "✓ Allowing HTTP (80) and HTTPS (443)..."
 ufw allow 80/tcp comment "Caddy HTTP Ingress & ACME Challenge"
 ufw allow 443/tcp comment "Caddy HTTPS Ingress"
+
+# Auto-detect Docker published ports and allow them
+echo "✓ Scanning for Docker published ports..."
+DOCKER_PORTS=$(docker ps --format '{{range $p, $conf := .Ports}}{{$conf}} {{end}}' 2>/dev/null | grep -oP '\d+(?=->)' | sort -un || true)
+for port in $DOCKER_PORTS; do
+  # Skip already-allowed ports
+  if [ "$port" = "80" ] || [ "$port" = "443" ] || [ "$port" = "$SSH_PORT" ]; then
+    continue
+  fi
+  echo "  Allowing Docker-published port ${port}..."
+  ufw allow "${port}/tcp" comment "Docker published port" 2>/dev/null || true
+done
 
 # Enable UFW non-interactively
 echo "✓ Enabling UFW..."

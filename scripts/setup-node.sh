@@ -258,11 +258,21 @@ EOF
 
 # Detect existing host web servers (Nginx/Apache/Caddy) and set internal ports if needed
 if [ -f "${INSTALL_DIR}/infra/security/proxy_resolver.sh" ]; then
-  bash "${INSTALL_DIR}/infra/security/proxy_resolver.sh" "${BASE_DOMAIN}"
+  bash "${INSTALL_DIR}/infra/security/proxy_resolver.sh" "${BASE_DOMAIN}" "${CADDY_INTERNAL_PORT:-8080}"
 fi
 
-# Harden firewall
-if [ -f "${INSTALL_DIR}/infra/security/ufw_setup.sh" ]; then
+# Harden firewall — SKIP if Mailcow or other mail server is detected
+HAS_MAIL_SERVER=false
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qi 'mailcow\|postfix\|dovecot\|exim'; then
+  HAS_MAIL_SERVER=true
+  echo "[!] Mail server detected (Mailcow/Postfix/Dovecot). Skipping UFW to avoid blocking mail ports."
+  echo "    To manually configure UFW, run: bash ${INSTALL_DIR}/infra/security/ufw_setup.sh"
+elif systemctl is-active --quiet postfix 2>/dev/null || systemctl is-active --quiet dovecot 2>/dev/null; then
+  HAS_MAIL_SERVER=true
+  echo "[!] Host mail service detected. Skipping UFW to avoid blocking mail ports."
+fi
+
+if [ "$HAS_MAIL_SERVER" = false ] && [ -f "${INSTALL_DIR}/infra/security/ufw_setup.sh" ]; then
   bash "${INSTALL_DIR}/infra/security/ufw_setup.sh" 2>/dev/null || true
 fi
 
