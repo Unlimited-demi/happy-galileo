@@ -39,7 +39,7 @@ services:
       - DEVCTL_STATE_DIR=/app/.devctl
       - DASHBOARD_HOST=0.0.0.0
       - DASHBOARD_PORT=8888
-      - NODE_NAME=${NODE_NAME:-}
+      - NODE_NAME=${NODE_NAME:-Primary Workstation}
       - CENTRAL_HUB_URL=${CENTRAL_HUB_URL:-}
       - FLEET_KEY=${FLEET_KEY:-}
       - PYTHONPATH=/app
@@ -69,7 +69,7 @@ services:
       - DEVCTL_STATE_DIR=/app/.devctl
       - MONITOR_INTERVAL_SECONDS=15
       - AUTO_REMEDIATION_ENABLED=true
-      - NODE_NAME=${NODE_NAME:-}
+      - NODE_NAME=${NODE_NAME:-Primary Workstation}
       - CENTRAL_HUB_URL=${CENTRAL_HUB_URL:-}
       - FLEET_KEY=${FLEET_KEY:-}
       - PYTHONPATH=/app

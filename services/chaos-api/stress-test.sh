@@ -52,23 +52,25 @@ echo -e "${GREEN}[OK] Baseline operations successful${NC}"
 echo ""
 
 # ─────────────────────────────────────────────
-# Phase 2: Trigger Bug #1 — Memory Leak
+# Phase 2: Trigger Bug #1 — Database Connection Failure
 # ─────────────────────────────────────────────
-echo -e "${YELLOW}[Phase 2] Triggering Bug #1 — Rapid Analytics Requests (/api/analytics)${NC}"
-for i in $(seq 1 30); do
-    curl -k -s "$API_URL/api/analytics" > /dev/null 2>&1 &
+echo -e "${YELLOW}[Phase 2] Triggering Bug #1 — Database Connection Error (/api/chaos/inject?type=db_connection)${NC}"
+echo "  Injecting PrismaClientInitializationError into chaos-api stderr..."
+FAULT1=$(curl -k -s "$API_URL/api/chaos/inject?type=db_connection" 2>/dev/null)
+echo -e "  Server Response: ${YELLOW}$FAULT1${NC}"
+# Fire a few more to ensure the error appears in recent logs
+for i in $(seq 1 3); do
+    curl -k -s "$API_URL/api/chaos/inject?type=db_connection" > /dev/null 2>&1
 done
-wait
-ANALYTICS=$(curl -k -s "$API_URL/api/analytics" 2>/dev/null)
-echo "  Payload: $ANALYTICS" | head -c 140
 echo ""
 
 # ─────────────────────────────────────────────
 # Phase 3: Trigger Bug #2 — Runtime TypeError Exception
 # ─────────────────────────────────────────────
-echo -e "${RED}[Phase 3] Triggering Bug #2 — Runtime Application Exception (/api/users/999)${NC}"
-ERR_RESP=$(curl -k -s "$API_URL/api/users/999" 2>/dev/null)
-echo -e "  Server Response: ${YELLOW}$ERR_RESP${NC}"
+echo -e "${RED}[Phase 3] Triggering Bug #2 — Null Pointer TypeError (/api/chaos/inject?type=null_pointer)${NC}"
+echo "  Injecting TypeError: Cannot read properties of undefined..."
+FAULT2=$(curl -k -s "$API_URL/api/chaos/inject?type=null_pointer" 2>/dev/null)
+echo -e "  Server Response: ${YELLOW}$FAULT2${NC}"
 echo ""
 
 # ─────────────────────────────────────────────

@@ -136,6 +136,13 @@ class AnomalyClassifier:
         (r'panic:\s+(.*)', 'Runtime Panic'),
         (r'Segmentation fault', 'Memory Segmentation Fault (SIGSEGV)'),
         (r'OOMKilled|out of memory|killed\s+process\s+\d+', 'Process Memory Exhaustion (OOM)'),
+        # Node.js / V8 Runtime Errors (printed at start of line by V8 engine)
+        (r'^(?:SyntaxError|TypeError|ReferenceError|RangeError|URIError|EvalError)\s*:', 'Node.js Runtime Error'),
+        (r'Unexpected token\b', 'JSON / Syntax Parse Error'),
+        (r'Cannot find module\s', 'Node.js Module Not Found'),
+        (r'Cannot read properties of (?:undefined|null)', 'Null / Undefined Property Access'),
+        (r'\[ERROR\]\s+', 'Application Error Log'),
+        (r'\[FATAL\]\s+', 'Application Fatal Log'),
     ]
 
     # Generic Socket / Network Drops (Cross-language POSIX error codes)

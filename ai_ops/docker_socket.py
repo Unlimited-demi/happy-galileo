@@ -34,36 +34,50 @@ class DockerSocket:
         self._conn = conn
         return conn
 
+    def _do_request(self, method: str, path: str, body: Optional[bytes] = None, raw: bool = False) -> Any:
+        """Internal: send an HTTP request through the Docker Unix socket.
+
+        If raw=True, returns the response body as bytes (needed for Docker
+        multiplexed log streams). Otherwise decodes as UTF-8 / JSON.
+        """
+        conn = self._get_conn()
+        headers = {"Content-Type": "application/json"} if body else {}
+        conn.request(method, path, body=body, headers=headers)
+        resp = conn.getresponse()
+        resp_data = resp.read()
+        if resp.status >= 400:
+            return None
+        if raw:
+            return resp_data
+        text = resp_data.decode("utf-8", errors="replace")
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return text
+
     def _request(self, method: str, path: str, body: Optional[bytes] = None) -> Any:
-        """Send an HTTP request through the Docker Unix socket."""
+        """Send an HTTP request through the Docker Unix socket (with retry)."""
         with self._lock:
             try:
-                conn = self._get_conn()
-                headers = {"Content-Type": "application/json"} if body else {}
-                conn.request(method, path, body=body, headers=headers)
-                resp = conn.getresponse()
-                data = resp.read().decode("utf-8", errors="replace")
-                if resp.status >= 400:
-                    return None
-                try:
-                    return json.loads(data)
-                except json.JSONDecodeError:
-                    return data
+                return self._do_request(method, path, body)
             except Exception:
                 # Connection may be stale — tear down and retry once
                 self._close_conn()
                 try:
-                    conn = self._get_conn()
-                    headers = {"Content-Type": "application/json"} if body else {}
-                    conn.request(method, path, body=body, headers=headers)
-                    resp = conn.getresponse()
-                    data = resp.read().decode("utf-8", errors="replace")
-                    if resp.status >= 400:
-                        return None
-                    try:
-                        return json.loads(data)
-                    except json.JSONDecodeError:
-                        return data
+                    return self._do_request(method, path, body)
+                except Exception:
+                    self._close_conn()
+                    return None
+
+    def _request_raw(self, method: str, path: str) -> Optional[bytes]:
+        """Send a request and return raw bytes (for binary Docker log streams)."""
+        with self._lock:
+            try:
+                return self._do_request(method, path, raw=True)
+            except Exception:
+                self._close_conn()
+                try:
+                    return self._do_request(method, path, raw=True)
                 except Exception:
                     self._close_conn()
                     return None
@@ -97,31 +111,53 @@ class DockerSocket:
         return result if isinstance(result, dict) else None
 
     def get_logs(self, name_or_id: str, tail: int = 100) -> str:
-        """Fetch recent container logs."""
-        result = self._request(
+        """Fetch recent container logs, properly decoding Docker multiplexed frames."""
+        raw_data = self._request_raw(
             "GET",
             f"/containers/{name_or_id}/logs?stdout=true&stderr=true&tail={tail}"
         )
-        if result is None:
+        if not raw_data:
             return ""
-        if isinstance(result, str):
-            # Docker multiplexed log stream has 8-byte header frames per chunk.
-            # Header format: [stream_type(1), 0, 0, 0, size(4)] where stream_type is 1=stdout, 2=stderr
-            # Only strip when the first byte matches Docker stream magic bytes.
+
+        # Docker multiplexed stream format (non-TTY containers):
+        # Each frame: [stream_type(1 byte), 0, 0, 0, size(4 bytes big-endian)][payload]
+        # stream_type: 0=stdin, 1=stdout, 2=stderr
+        # TTY containers return plain text with no headers.
+
+        # Detect multiplexed format: first byte is 0, 1, or 2, followed by three zero bytes
+        is_multiplexed = (
+            len(raw_data) > 8
+            and raw_data[0] in (0, 1, 2)
+            and raw_data[1] == 0
+            and raw_data[2] == 0
+            and raw_data[3] == 0
+        )
+
+        if is_multiplexed:
             lines = []
-            for line in result.split("\n"):
-                raw = line.encode("utf-8", errors="replace")
-                if len(raw) > 8 and raw[0] in (0, 1, 2) and raw[1] == 0 and raw[2] == 0 and raw[3] == 0:
-                    # This is a Docker multiplexed stream frame — strip the 8-byte header
-                    cleaned = raw[8:]
-                else:
-                    # Plain text log line — keep as-is
-                    cleaned = raw
-                decoded = cleaned.decode("utf-8", errors="replace").rstrip()
-                if decoded:
-                    lines.append(decoded)
+            offset = 0
+            while offset + 8 <= len(raw_data):
+                # Read 8-byte header
+                stream_type = raw_data[offset]
+                frame_size = int.from_bytes(raw_data[offset + 4 : offset + 8], "big")
+                offset += 8
+                if frame_size == 0 or offset + frame_size > len(raw_data):
+                    break
+                frame_data = raw_data[offset : offset + frame_size]
+                offset += frame_size
+                # Decode frame content and split into lines
+                text = frame_data.decode("utf-8", errors="replace")
+                for line in text.splitlines():
+                    stripped = line.rstrip()
+                    if stripped:
+                        lines.append(stripped)
             return "\n".join(lines)
-        return str(result)
+        else:
+            # Plain text (TTY container) — decode directly
+            text = raw_data.decode("utf-8", errors="replace")
+            return "\n".join(
+                line.rstrip() for line in text.splitlines() if line.strip()
+            )
 
     def restart_container(self, name_or_id: str, timeout: int = 10) -> bool:
         """Restart a container."""
