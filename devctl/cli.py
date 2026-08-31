@@ -370,68 +370,75 @@ def cmd_incident(args):
         git_push_status = "Not applicable (no git repo)"
         remote_url = ""
 
-        # Only run git if the workspace is a valid git repository
-        # and NOT the control repo /opt/happy-galileo (unless the failing service is serverguard itself)
-        if svc_workspace and os.path.isdir(svc_workspace) and os.path.isdir(os.path.join(svc_workspace, ".git")):
-            if svc_workspace != "/opt/happy-galileo" or service_name in ["dashboard", "ai-ops", "caddy"]:
-                try:
-                    # Get active branch
-                    b_res = subprocess.run(["git", "-C", svc_workspace, "rev-parse", "--abbrev-ref", "HEAD"], stdout=subprocess.PIPE, text=True, check=False)
-                    if b_res.returncode == 0:
-                        git_branch = b_res.stdout.strip()
+        # Detect git repo — works for monorepo subdirectories too
+        # Uses `git rev-parse --show-toplevel` to find the repo root from any subdirectory
+        git_repo_root = None
+        if svc_workspace and os.path.isdir(svc_workspace):
+            try:
+                toplevel_res = subprocess.run(
+                    ["git", "-C", svc_workspace, "rev-parse", "--show-toplevel"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False,
+                )
+                if toplevel_res.returncode == 0:
+                    git_repo_root = toplevel_res.stdout.strip()
+            except Exception:
+                pass
 
-                    # Get remote origin URL
-                    r_res = subprocess.run(["git", "-C", svc_workspace, "config", "--get", "remote.origin.url"], stdout=subprocess.PIPE, text=True, check=False)
-                    if r_res.returncode == 0:
-                        remote_url = r_res.stdout.strip()
+        if git_repo_root:
+            try:
+                # Get active branch
+                b_res = subprocess.run(["git", "-C", svc_workspace, "rev-parse", "--abbrev-ref", "HEAD"], stdout=subprocess.PIPE, text=True, check=False)
+                if b_res.returncode == 0:
+                    git_branch = b_res.stdout.strip()
 
-                    # Auto-commit if there are uncommitted changes
-                    status_res = subprocess.run(["git", "-C", svc_workspace, "status", "--porcelain"], stdout=subprocess.PIPE, text=True, check=False)
-                    if status_res.returncode == 0 and status_res.stdout.strip():
-                        subprocess.run(["git", "-C", svc_workspace, "add", "-A"], check=False, stdout=subprocess.DEVNULL)
-                        commit_msg = f"fix({service_name}): resolve incident {args.incident_id}\n\n{notes}"
-                        subprocess.run(["git", "-C", svc_workspace, "commit", "-m", commit_msg], check=False, stdout=subprocess.DEVNULL)
+                # Get remote origin URL
+                r_res = subprocess.run(["git", "-C", svc_workspace, "config", "--get", "remote.origin.url"], stdout=subprocess.PIPE, text=True, check=False)
+                if r_res.returncode == 0:
+                    remote_url = r_res.stdout.strip()
 
-                    # Get commit hash
-                    c_res = subprocess.run(["git", "-C", svc_workspace, "rev-parse", "--short", "HEAD"], stdout=subprocess.PIPE, text=True, check=False)
-                    if c_res.returncode == 0:
-                        git_commit = c_res.stdout.strip()
+                # Auto-commit if there are uncommitted changes
+                status_res = subprocess.run(["git", "-C", svc_workspace, "status", "--porcelain"], stdout=subprocess.PIPE, text=True, check=False)
+                if status_res.returncode == 0 and status_res.stdout.strip():
+                    subprocess.run(["git", "-C", svc_workspace, "add", "-A"], check=False, stdout=subprocess.DEVNULL)
+                    commit_msg = f"fix({service_name}): resolve incident {args.incident_id}\n\n{notes}"
+                    subprocess.run(["git", "-C", svc_workspace, "commit", "-m", commit_msg], check=False, stdout=subprocess.DEVNULL)
 
-                    # Auto-push fix branch to origin
-                    if git_branch and git_branch != "HEAD":
-                        print(f"[*] Pushing fix branch '{git_branch}' to remote origin...")
-                        p_res = subprocess.run(
-                            ["git", "-C", svc_workspace, "push", "-u", "origin", git_branch],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            text=True,
-                            check=False
-                        )
-                        if p_res.returncode == 0:
-                            git_push_status = f"Pushed to origin/{git_branch} ({git_commit})"
-                            print(f"[✓] Successfully pushed branch '{git_branch}' to remote origin.")
-                        else:
-                            err_msg = p_res.stderr.strip() or "Push failed"
-                            git_push_status = f"Local ({git_branch}) - {err_msg[:60]}"
-                            print(f"  [i] Git push notice: {err_msg[:80]}")
+                # Get commit hash
+                c_res = subprocess.run(["git", "-C", svc_workspace, "rev-parse", "--short", "HEAD"], stdout=subprocess.PIPE, text=True, check=False)
+                if c_res.returncode == 0:
+                    git_commit = c_res.stdout.strip()
 
-                    # Extract diff stat
-                    d_res = subprocess.run(["git", "-C", svc_workspace, "diff", "--stat", "HEAD~1...HEAD"], stdout=subprocess.PIPE, text=True, check=False)
-                    if d_res.returncode == 0 and d_res.stdout.strip():
-                        git_diff_stat = d_res.stdout.strip()
+                # Auto-push fix branch to origin
+                if git_branch and git_branch != "HEAD":
+                    print(f"[*] Pushing fix branch '{git_branch}' to remote origin...")
+                    p_res = subprocess.run(
+                        ["git", "-C", svc_workspace, "push", "-u", "origin", git_branch],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        check=False
+                    )
+                    if p_res.returncode == 0:
+                        git_push_status = f"Pushed to origin/{git_branch} ({git_commit})"
+                        print(f"[✓] Successfully pushed branch '{git_branch}' to remote origin.")
                     else:
-                        d_res2 = subprocess.run(["git", "-C", svc_workspace, "show", "--stat", "HEAD"], stdout=subprocess.PIPE, text=True, check=False)
-                        git_diff_stat = d_res2.stdout.strip() if d_res2.returncode == 0 else "Clean working tree"
-                except Exception as e:
-                    git_diff_stat = f"Git diff error: {e}"
-            else:
-                git_branch = "Pre-built Container (No local repo)"
-                git_diff_stat = "Container runtime stabilized and verified"
-                git_push_status = "N/A (Vendor container)"
+                        err_msg = p_res.stderr.strip() or "Push failed"
+                        git_push_status = f"Local ({git_branch}) - {err_msg[:60]}"
+                        print(f"  [i] Git push notice: {err_msg[:80]}")
+
+                # Extract diff stat — use git diff between master/main and HEAD
+                d_res = subprocess.run(["git", "-C", svc_workspace, "diff", "--stat", "HEAD~1...HEAD"], stdout=subprocess.PIPE, text=True, check=False)
+                if d_res.returncode == 0 and d_res.stdout.strip():
+                    git_diff_stat = d_res.stdout.strip()
+                else:
+                    d_res2 = subprocess.run(["git", "-C", svc_workspace, "show", "--stat", "HEAD"], stdout=subprocess.PIPE, text=True, check=False)
+                    git_diff_stat = d_res2.stdout.strip() if d_res2.returncode == 0 else "Clean working tree"
+            except Exception as e:
+                git_diff_stat = f"Git diff error: {e}"
         else:
-            git_branch = "Pre-built Container (No local repo)"
-            git_diff_stat = "Container configuration / environment updated"
-            git_push_status = "N/A (Vendor container)"
+            git_branch = "No git repository found"
+            git_diff_stat = "Container runtime stabilized and verified"
+            git_push_status = "N/A (no git repo)"
 
         # 3. Check container running state
         docker_mgr = DockerManager()

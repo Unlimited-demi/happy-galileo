@@ -120,18 +120,25 @@ class RemediationEngine:
         reasons_str = "; ".join(failure_reasons) if failure_reasons else "Container unhealthy"
         print(f"\n[AI-Ops ALERT] Unhealthy: {service_name} — {reasons_str}")
 
-        # Level 1: Container crashed or stopped → Auto-restart
-        if not container_running:
+        # Level 1: Container crashed, stopped, or returning 502/503 → Auto-restart
+        http_error = health.get("http_error")
+        http_code = health.get("http_status_code")
+        should_restart = not container_running or (
+            container_running and http_code and http_code >= 500
+        )
+        if should_restart:
             restarts = self.restart_tracker.get(service_name, 0)
             if Config.AUTO_REMEDIATION_ENABLED and restarts < Config.MAX_AUTO_RESTARTS:
                 self.restart_tracker[service_name] = restarts + 1
-                print(f"[Level 1] Auto-restarting '{container_name}' (attempt {restarts + 1}/{Config.MAX_AUTO_RESTARTS})")
+                reason = f"HTTP {http_code}" if http_code and http_code >= 500 else "container stopped"
+                print(f"[Level 1] Auto-restarting '{container_name}' ({reason}, attempt {restarts + 1}/{Config.MAX_AUTO_RESTARTS})")
                 restarted = self.docker.restart_container(container_name)
                 return {
                     "level": 1,
                     "action": "RESTART_CONTAINER",
                     "success": restarted,
                     "attempt": restarts + 1,
+                    "reason": reason,
                 }
 
         # Level 2: Deployment / network desync → re-attach dev-net & re-sync Caddy

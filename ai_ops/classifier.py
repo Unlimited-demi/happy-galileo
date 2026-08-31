@@ -143,6 +143,18 @@ class AnomalyClassifier:
         (r'Cannot read properties of (?:undefined|null)', 'Null / Undefined Property Access'),
         (r'\[ERROR\]\s+', 'Application Error Log'),
         (r'\[FATAL\]\s+', 'Application Fatal Log'),
+        # PHP / Laravel Errors
+        (r'\]\s+\w+\.ERROR:\s+', 'Laravel Application Error'),
+        (r'^(?:Fatal error|Parse error|Catchable fatal error)\s*:', 'PHP Fatal Error'),
+        (r'^(?:Warning|Notice)\s*:.*in\s+/.*on\s+line\s+\d+', 'PHP Runtime Warning'),
+        (r'SQLSTATE\[\w+\]', 'Laravel / PDO Database Error'),
+        # Ruby / Rails Errors
+        (r'^\w+Error\s*:\s+', 'Ruby Runtime Error'),
+        (r'Completed\s+5\d{2}\s+Internal Server Error', 'Rails Internal Server Error'),
+        # Java / Spring Boot Errors
+        (r'Exception in thread\s+', 'Java Thread Exception'),
+        (r'Caused by:\s+\w+\.\w+', 'Java Exception Cause'),
+        (r'^\w+(?:\.\w+)+(?:Exception|Error)\s*:', 'Java Qualified Exception'),
     ]
 
     # Generic Socket / Network Drops (Cross-language POSIX error codes)
