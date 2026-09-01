@@ -224,9 +224,18 @@ class DomainRegistry:
         domains = {}  # container_name -> {"domain": ..., "source": ...}
 
         # ── 1. Host Reverse Proxy Configs (Nginx, Caddy, Apache, etc.) ──
-        # Host Nginx
-        for conf_path in glob.glob('/etc/nginx/sites-enabled/*') + glob.glob('/etc/nginx/conf.d/*.conf'):
+        # Host Nginx — scan ALL possible config locations
+        nginx_paths = (
+            glob.glob('/etc/nginx/sites-enabled/*') +
+            glob.glob('/etc/nginx/sites-available/*') +
+            glob.glob('/etc/nginx/conf.d/*.conf') +
+            glob.glob('/etc/nginx/nginx.conf')
+        )
+        for conf_path in nginx_paths:
             try:
+                # Skip directories
+                if not os.path.isfile(conf_path):
+                    continue
                 with open(conf_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
                 server_names = re.findall(r'server_name\s+([^;]+);', content)
@@ -250,9 +259,17 @@ class DomainRegistry:
             except Exception:
                 continue
 
-        # Host Caddy
-        for conf_path in glob.glob('/etc/caddy/conf.d/*.caddy') + glob.glob('/etc/caddy/Caddyfile'):
+        # Host Caddy — scan all config locations
+        caddy_paths = (
+            glob.glob('/etc/caddy/conf.d/*') +
+            glob.glob('/etc/caddy/Caddyfile') +
+            glob.glob('/etc/caddy/*.caddy')
+        )
+        for conf_path in caddy_paths:
             try:
+                # Skip directories
+                if not os.path.isfile(conf_path):
+                    continue
                 with open(conf_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
                 blocks = re.findall(r'([a-zA-Z0-9\.\-_]+)\s*\{([^}]+)\}', content)
@@ -272,9 +289,18 @@ class DomainRegistry:
             except Exception:
                 continue
 
-        # Host Apache
-        for conf_path in glob.glob('/etc/apache2/sites-enabled/*.conf') + glob.glob('/etc/httpd/conf.d/*.conf'):
+        # Host Apache — scan both sites-enabled and sites-available
+        apache_paths = (
+            glob.glob('/etc/apache2/sites-enabled/*.conf') +
+            glob.glob('/etc/apache2/sites-available/*.conf') +
+            glob.glob('/etc/httpd/conf.d/*.conf') +
+            glob.glob('/etc/httpd/conf/httpd.conf')
+        )
+        for conf_path in apache_paths:
             try:
+                # Skip directories
+                if not os.path.isfile(conf_path):
+                    continue
                 with open(conf_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
                 server_names = re.findall(r'ServerName\s+([^\s]+)', content)
