@@ -199,6 +199,23 @@ class DomainRegistry:
             return False
         if candidate in ["localhost", "0.0.0.0", "127.0.0.1", "dev-net", "bridge", "host"]:
             return False
+        # Exclude well-known vendor/documentation domains (not actual service URLs)
+        vendor_domains = [
+            "github.com", "github.io", "gitlab.com",
+            "redis.io", "download.redis.io",
+            "apache.org", "kafka.apache.org", "zookeeper.apache.org",
+            "nginx.org", "caddyserver.com",
+            "docker.com", "docker.io", "hub.docker.com",
+            "postgresql.org", "mysql.com", "mongodb.com", "mongo.com",
+            "grafana.com", "prometheus.io",
+            "python.org", "pypi.org", "nodejs.org", "npmjs.com",
+            "stackoverflow.com", "stackexchange.com",
+            "wikipedia.org", "google.com", "microsoft.com",
+            "amazon.com", "aws.amazon.com", "azure.microsoft.com",
+            "cloudflare.com", "fastly.com",
+        ]
+        if candidate in vendor_domains:
+            return False
         # Match standard FQDN (at least one dot, valid TLD of 2-24 chars)
         match = re.match(r'^(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$', candidate)
         return bool(match)
