@@ -462,13 +462,21 @@ class DomainRegistry:
                             if "Caddyfile" in conf_file.name or conf_file.suffix == ".caddy":
                                 for dom, body in re.findall(r'([a-zA-Z0-9\.\-_]+)\s*\{([^}]+)\}', f_text):
                                     if self._is_valid_public_domain(dom):
-                                        # Map to upstreams and proxy
-                                        for up in re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_]+)', body):
-                                            for candidate_c in all_containers:
-                                                if up in candidate_c:
-                                                    domains[candidate_c] = {"domain": dom.strip(), "source": f"workspace:{conf_file.name}"}
-                                        if "caddy" in c_name:
-                                            domains[c_name] = {"domain": dom.strip(), "source": f"workspace:{conf_file.name}"}
+                                        domain_info = {"domain": dom.strip(), "source": f"workspace:{conf_file.name}"}
+                                        # Map to upstreams (include colon for host:port format)
+                                        upstreams = re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_:]+)', body)
+                                        for up in upstreams:
+                                            up = up.strip()
+                                            up_host = up.split(':')[0]
+                                            # Store by upstream key for later matching
+                                            domains[up] = domain_info
+                                            domains[up_host] = domain_info
+                                            if ':' in up:
+                                                up_port = up.split(':')[1]
+                                                domains[f":{up_port}"] = domain_info
+                                        # If this container is a Caddy/proxy, also map domain to it
+                                        if "caddy" in c_name.lower() or "proxy" in c_name.lower():
+                                            domains[c_name] = domain_info
 
                             # Generic key-value configs (*.conf, *.env)
                             for line in f_text.splitlines():
