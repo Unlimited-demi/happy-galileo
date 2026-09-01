@@ -1,74 +1,72 @@
 import React from 'react';
-import { Server, Cpu, Globe, AlertTriangle } from 'lucide-react';
-import { Card } from '@/components/ui/card';
+import { Server, Box, Activity, AlertTriangle } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 
-export function KpiMetrics({ totalNodes, totalContainers, totalServices, openIncidentsCount }) {
+export function KpiMetrics({ totalNodes, totalContainers, totalServices, openIncidentsCount, metrics }) {
+  const serverMetrics = metrics?.server || {};
+  const loadAvg = serverMetrics.load_average || {};
+  const memory = serverMetrics.memory || {};
+
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-      <Card className="p-5 flex items-center justify-between border-border/60 bg-card/60 backdrop-blur-sm hover:border-border transition-all duration-300">
-        <div>
-          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">
-            Total Nodes
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      <Card className="border-border/40">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Nodes</span>
+            <Server className="w-4 h-4 text-muted-foreground" />
           </div>
-          <div className="text-2xl font-bold text-slate-100 tracking-tight">{totalNodes}</div>
-        </div>
-        <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-inner">
-          <Server className="w-5 h-5" />
-        </div>
+          <div className="text-2xl font-bold tabular-nums">{totalNodes}</div>
+          <Badge variant="secondary" className="mt-1 text-[10px]">
+            {totalContainers} containers
+          </Badge>
+        </CardContent>
       </Card>
 
-      <Card className="p-5 flex items-center justify-between border-border/60 bg-card/60 backdrop-blur-sm hover:border-border transition-all duration-300">
-        <div>
-          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">
-            Monitored Containers
+      <Card className="border-border/40">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Services</span>
+            <Activity className="w-4 h-4 text-muted-foreground" />
           </div>
-          <div className="text-2xl font-bold text-slate-100 tracking-tight">{totalContainers}</div>
-        </div>
-        <div className="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 shadow-inner">
-          <Cpu className="w-5 h-5" />
-        </div>
+          <div className="text-2xl font-bold tabular-nums">{totalServices}</div>
+          <Badge variant="outline" className="mt-1 text-[10px]">
+            monitored
+          </Badge>
+        </CardContent>
       </Card>
 
-      <Card className="p-5 flex items-center justify-between border-border/60 bg-card/60 backdrop-blur-sm hover:border-border transition-all duration-300">
-        <div>
-          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">
-            Active Services
+      <Card className="border-border/40">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Load</span>
+            <Box className="w-4 h-4 text-muted-foreground" />
           </div>
-          <div className="text-2xl font-bold text-slate-100 tracking-tight">{totalServices}</div>
-        </div>
-        <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shadow-inner">
-          <Globe className="w-5 h-5" />
-        </div>
+          <div className="text-2xl font-bold tabular-nums">
+            {loadAvg['5min']?.toFixed(2) || '—'}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1 font-mono">
+            {loadAvg['1min']?.toFixed(2) || '0'} / {loadAvg['15min']?.toFixed(2) || '0'}
+          </div>
+        </CardContent>
       </Card>
 
-      <Card
-        className={`p-5 flex items-center justify-between transition-all duration-300 border-border/60 backdrop-blur-sm ${
-          openIncidentsCount > 0
-            ? 'border-rose-500/40 bg-rose-500/10'
-            : 'bg-card/60 hover:border-border'
-        }`}
-      >
-        <div>
-          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">
-            Open Incidents
+      <Card className={`border-border/40 ${openIncidentsCount > 0 ? 'border-destructive/40' : ''}`}>
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Incidents</span>
+            <AlertTriangle className={`w-4 h-4 ${openIncidentsCount > 0 ? 'text-destructive' : 'text-muted-foreground'}`} />
           </div>
-          <div
-            className={`text-2xl font-bold tracking-tight ${
-              openIncidentsCount > 0 ? 'text-rose-400' : 'text-slate-100'
-            }`}
-          >
+          <div className={`text-2xl font-bold tabular-nums ${openIncidentsCount > 0 ? 'text-destructive' : ''}`}>
             {openIncidentsCount}
           </div>
-        </div>
-        <div
-          className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-inner ${
-            openIncidentsCount > 0
-              ? 'bg-rose-500/20 border border-rose-500/30 text-rose-400'
-              : 'bg-muted/50 border border-border/60 text-muted-foreground'
-          }`}
-        >
-          <AlertTriangle className="w-5 h-5" />
-        </div>
+          <Badge
+            variant={openIncidentsCount > 0 ? 'destructive' : 'secondary'}
+            className="mt-1 text-[10px]"
+          >
+            {openIncidentsCount > 0 ? 'active' : 'clear'}
+          </Badge>
+        </CardContent>
       </Card>
     </div>
   );
