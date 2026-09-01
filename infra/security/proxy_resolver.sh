@@ -128,6 +128,7 @@ EOF
             fi
         fi
     fi
+fi
 
 # Check for existing third-party Caddy container (e.g. agentic-ccs-caddy)
 OTHER_CADDY_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i 'caddy' | grep -v '^caddy$' | head -n 1 || true)
