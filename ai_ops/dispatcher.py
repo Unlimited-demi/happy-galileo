@@ -24,6 +24,28 @@ class IncidentDispatcher:
     def __init__(self):
         self.bus = IncidentBus()
         self.registry = DomainRegistry()
+        self._host_tmux_available = None
+
+    def _check_host_tmux(self) -> bool:
+        """Check if we can run tmux on the host via nsenter (container → host bridge)."""
+        if self._host_tmux_available is not None:
+            return self._host_tmux_available
+        try:
+            result = subprocess.run(
+                ["nsenter", "-t", "1", "-m", "-p", "--", "tmux", "-V"],
+                capture_output=True, text=True, timeout=5,
+            )
+            self._host_tmux_available = result.returncode == 0
+            if self._host_tmux_available:
+                print(f"  [dispatcher] Host tmux bridge available: {result.stdout.strip()}")
+        except Exception:
+            self._host_tmux_available = False
+        return self._host_tmux_available
+
+    def _run_on_host(self, cmd: list, **kwargs) -> subprocess.CompletedProcess:
+        """Run a command on the host via nsenter (PID 1 namespace)."""
+        nsenter_cmd = ["nsenter", "-t", "1", "-m", "-p", "--"] + cmd
+        return subprocess.run(nsenter_cmd, **kwargs)
 
     def dispatch(
         self,
@@ -161,18 +183,25 @@ REMEDIATION WORKFLOW CONTRACT (AGENTS.md):
                 except Exception:
                     pass
 
-        # 5. Launch OpenCode via tmux or direct background process
+        # 5. Launch OpenCode via tmux on the HOST (not inside Docker container)
         session_name = f"opencode-{incident_id}"
-        has_tmux = shutil.which("tmux") is not None
+
+        # Check for host tmux bridge (nsenter) — this is how we create
+        # tmux sessions visible to the user on the host, not inside the container
+        has_host_tmux = self._check_host_tmux()
+        has_local_tmux = shutil.which("tmux") is not None
         has_opencode = shutil.which("opencode") is not None
 
-        if use_tmux and has_tmux:
+        if use_tmux and (has_host_tmux or has_local_tmux):
+            # Determine whether to use host bridge or local tmux
+            run_tmux = self._run_on_host if has_host_tmux else lambda cmd, **kw: subprocess.run(cmd, **kw)
+
             # Kill any existing stale session, then create fresh
-            subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+            run_tmux(["tmux", "kill-session", "-t", session_name], capture_output=True)
 
             # Create tmux session with interactive bash in the workspace
-            target_cwd = workspace_dir if os.path.isdir(workspace_dir) else ("/app" if os.path.isdir("/app") else ".")
-            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", target_cwd, "bash"], check=False)
+            target_cwd = workspace_dir if os.path.isdir(workspace_dir) else ("/opt/happy-galileo" if os.path.isdir("/opt/happy-galileo") else "/app")
+            run_tmux(["tmux", "new-session", "-d", "-s", session_name, "-c", target_cwd, "bash"], check=False)
 
             # Write the remediation prompt to a temp file (avoids shell escaping nightmares)
             prompt_file = f"/tmp/opencode-prompt-{incident_id}.txt"
@@ -184,14 +213,15 @@ REMEDIATION WORKFLOW CONTRACT (AGENTS.md):
 
             if has_opencode:
                 # OpenCode is installed — launch autonomous remediation via `opencode run`
-                # Uses --auto to auto-approve file edits and commands
-                # Chain rm to clean up the prompt file after OpenCode exits
                 cmd = f'echo "⚡ Launching OpenCode autonomous remediation agent..."; echo ""; opencode run "$(cat {prompt_file})" --auto; rm -f {prompt_file}'
-                subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "C-m"], check=False)
+                run_tmux(["tmux", "send-keys", "-t", session_name, cmd, "C-m"], check=False)
             else:
-                # OpenCode not available — try npx fallback, then manual
+                # OpenCode not available — try npx fallback
                 cmd = f'echo "⚡ OpenCode not found. Attempting npx install..."; echo ""; npx -y opencode-ai run "$(cat {prompt_file})" --auto; rm -f {prompt_file}'
-                subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "C-m"], check=False)
+                run_tmux(["tmux", "send-keys", "-t", session_name, cmd, "C-m"], check=False)
+
+            dispatch_mode = "host" if has_host_tmux else "container"
+            print(f"  [dispatcher] tmux session '{session_name}' created on {dispatch_mode}")
 
             return {
                 "success": True,
@@ -199,19 +229,17 @@ REMEDIATION WORKFLOW CONTRACT (AGENTS.md):
                 "workspace_dir": workspace_dir,
                 "fix_branch": fix_branch,
                 "status": "DISPATCHED",
-                "message": f"OpenCode dispatched in tmux session '{session_name}'. Attach with: tmux attach -t {session_name}",
+                "message": f"OpenCode dispatched in tmux session '{session_name}' ({dispatch_mode}). Attach with: tmux attach -t {session_name}",
             }
         else:
-            # No tmux available — nothing was actually launched. Report honestly
-            # so the daemon prints the manual-dispatch hint instead of claiming
-            # an agent is working the incident.
+            # No tmux available at all — nothing was actually launched
             return {
                 "success": False,
                 "session_name": None,
                 "workspace_dir": workspace_dir,
                 "fix_branch": fix_branch,
                 "status": "PREPARED_NOT_DISPATCHED",
-                "error": "tmux not available — OpenCode was not launched",
+                "error": "tmux not available (host or container) — OpenCode was not launched",
                 "message": f"Incident claimed and fix branch '{fix_branch}' prepared. "
                            f"Dispatch manually: devctl dispatch {incident_id}",
             }

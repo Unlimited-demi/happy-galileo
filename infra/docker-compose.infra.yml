@@ -56,12 +56,14 @@ services:
     container_name: ai-ops-daemon
     restart: unless-stopped
     working_dir: /app
+    pid: host
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../.devctl:/app/.devctl
       - ../devctl:/app/devctl
       - ../ai_ops:/app/ai_ops
       - /opt:/opt
+      - /usr/bin/nsenter:/usr/bin/nsenter:ro
     environment:
       - BASE_DOMAIN=${BASE_DOMAIN:-dev-server.datakrib.com}
       - CADDY_ADMIN_API=http://caddy:2019
