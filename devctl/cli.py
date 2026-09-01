@@ -830,11 +830,95 @@ def cmd_merge(args):
 
     if args.deploy:
         print(f"\n[*] Redeploying service...")
-        print(f"    Run: devctl restart {service_name}")
+        print(f"    Run: devctl deploy {service_name}")
     else:
         print(f"\n[*] To redeploy the merged code:")
-        print(f"    devctl restart {service_name}")
+        print(f"    devctl deploy {service_name}")
 
+    print()
+
+
+def cmd_deploy(args):
+    """Redeploy a service (rebuild and restart containers)."""
+    import subprocess
+    from pathlib import Path
+
+    service = args.service or "all"
+
+    print(f"\n{'═' * 70}")
+    print(f"🚀 DEPLOY: {service}")
+    print(f"{'═' * 70}")
+
+    # Pull latest code if requested
+    if args.pull:
+        print(f"\n[*] Pulling latest code from git...")
+        result = subprocess.run(
+            ["git", "pull", "origin", "master"],
+            capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0:
+            print(f"[✓] Code updated successfully.")
+        else:
+            print(f"[!] Warning: Git pull failed:")
+            print(result.stderr)
+
+    # Find docker-compose file
+    compose_file = None
+    for candidate in [
+        Path.cwd() / "docker-compose.yml",
+        Path.cwd() / "docker-compose.yaml",
+        Path.cwd() / "infra" / "docker-compose.infra.yml",
+        Path("/opt/happy-galileo/infra/docker-compose.infra.yml"),
+    ]:
+        if candidate.exists():
+            compose_file = candidate
+            break
+
+    if not compose_file:
+        print(f"[✗] No docker-compose file found.")
+        print(f"    Please run this command from a directory with docker-compose.yml")
+        sys.exit(1)
+
+    print(f"• Compose file: {compose_file}")
+
+    # Build command
+    build_cmd = ["docker", "compose", "-f", str(compose_file)]
+    if args.no_cache:
+        build_cmd.extend(["build", "--no-cache"])
+    else:
+        build_cmd.append("build")
+
+    if service != "all":
+        build_cmd.append(service)
+
+    # Build
+    print(f"\n[*] Building containers...")
+    result = subprocess.run(build_cmd, check=False)
+    if result.returncode != 0:
+        print(f"[✗] Build failed!")
+        sys.exit(1)
+
+    # Restart
+    restart_cmd = ["docker", "compose", "-f", str(compose_file), "up", "-d"]
+    if service != "all":
+        restart_cmd.append(service)
+
+    print(f"\n[*] Starting containers...")
+    result = subprocess.run(restart_cmd, check=False)
+    if result.returncode != 0:
+        print(f"[✗] Start failed!")
+        sys.exit(1)
+
+    print(f"\n{'═' * 70}")
+    print(f"✅ DEPLOYMENT COMPLETE")
+    print(f"{'═' * 70}")
+    print(f"• Service: {service}")
+    print(f"• Status:  Running")
+    print(f"\n[*] Check logs:")
+    if service == "all":
+        print(f"    docker compose -f {compose_file} logs -f")
+    else:
+        print(f"    docker compose -f {compose_file} logs -f {service}")
     print()
 
 
@@ -923,6 +1007,12 @@ def main():
     p_merge.add_argument("--deploy", action="store_true", help="Automatically redeploy after merge")
     p_merge.add_argument("--no-delete-branch", action="store_true", help="Keep the fix branch after merge")
 
+    # deploy
+    p_deploy = subparsers.add_parser("deploy", help="Redeploy a service (rebuild and restart containers)")
+    p_deploy.add_argument("service", nargs="?", help="Service name (or 'all' for all services)")
+    p_deploy.add_argument("--pull", action="store_true", help="Pull latest code from git before deploying")
+    p_deploy.add_argument("--no-cache", action="store_true", help="Build without Docker cache")
+
     # discover
     p_discover = subparsers.add_parser("discover", help="Auto-discover running Docker containers and index them into devctl")
     p_discover.add_argument("--force", "-f", action="store_true", help="Force re-discovery & flush old cached state")
@@ -957,6 +1047,7 @@ def main():
         "incident": cmd_incident,
         "dispatch": cmd_dispatch,
         "merge": cmd_merge,
+        "deploy": cmd_deploy,
         "doctor": cmd_doctor,
     }
 
