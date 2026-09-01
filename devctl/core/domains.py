@@ -255,24 +255,46 @@ class DomainRegistry:
                     continue
                 with open(conf_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
-                server_names = re.findall(r'server_name\s+([^;]+);', content)
-                # Parse proxy_pass with host and optional port
-                proxy_passes = re.findall(r'proxy_pass\s+https?://([^;/\s]+)', content)
-                for sn in server_names:
-                    for d in sn.split():
-                        if self._is_valid_public_domain(d):
-                            for up in proxy_passes:
-                                up = up.strip()
-                                domain_info = {"domain": d.strip(), "source": f"host-nginx:{Path(conf_path).name}"}
-                                # Store by full upstream (e.g., "grafana:3000", "127.0.0.1:8080")
-                                domains[up] = domain_info
-                                # Also store by hostname/IP only (e.g., "grafana", "127.0.0.1")
-                                up_host = up.split(':')[0]
-                                domains[up_host] = domain_info
-                                # Also store by port only if present (e.g., ":3000")
-                                if ':' in up:
-                                    up_port = up.split(':')[1]
-                                    domains[f":{up_port}"] = domain_info
+
+                # Parse each server block separately to correctly map server_name to proxy_pass
+                server_blocks = re.findall(r'server\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}', content, re.DOTALL)
+                for block in server_blocks:
+                    server_names = re.findall(r'server_name\s+([^;]+);', block)
+                    proxy_passes = re.findall(r'proxy_pass\s+https?://([^;/\s]+)', block)
+
+                    # Map each server_name to its proxy_pass within the same block
+                    for sn in server_names:
+                        for d in sn.split():
+                            if self._is_valid_public_domain(d):
+                                for up in proxy_passes:
+                                    up = up.strip()
+                                    domain_info = {"domain": d.strip(), "source": f"host-nginx:{Path(conf_path).name}"}
+                                    # Store by full upstream (e.g., "grafana:3000", "127.0.0.1:8080")
+                                    domains[up] = domain_info
+                                    # Also store by hostname/IP only (e.g., "grafana", "127.0.0.1")
+                                    up_host = up.split(':')[0]
+                                    domains[up_host] = domain_info
+                                    # Also store by port only if present (e.g., ":3000")
+                                    if ':' in up:
+                                        up_port = up.split(':')[1]
+                                        domains[f":{up_port}"] = domain_info
+
+                # Fallback: if no server blocks found, try flat parsing (for simple configs)
+                if not server_blocks:
+                    server_names = re.findall(r'server_name\s+([^;]+);', content)
+                    proxy_passes = re.findall(r'proxy_pass\s+https?://([^;/\s]+)', content)
+                    for sn in server_names:
+                        for d in sn.split():
+                            if self._is_valid_public_domain(d):
+                                for up in proxy_passes:
+                                    up = up.strip()
+                                    domain_info = {"domain": d.strip(), "source": f"host-nginx:{Path(conf_path).name}"}
+                                    domains[up] = domain_info
+                                    up_host = up.split(':')[0]
+                                    domains[up_host] = domain_info
+                                    if ':' in up:
+                                        up_port = up.split(':')[1]
+                                        domains[f":{up_port}"] = domain_info
             except Exception:
                 continue
 
