@@ -16,6 +16,7 @@ from devctl.core.config import Config
 from devctl.core.domains import DomainRegistry
 from devctl.core.incident_bus import IncidentBus
 from ai_ops.docker_socket import DockerSocket
+from ai_ops.metrics import MetricsCollector
 
 
 class FleetTelemetryStreamer:
@@ -35,6 +36,7 @@ class FleetTelemetryStreamer:
         self.docker = DockerSocket()
         self.registry = DomainRegistry()
         self.bus = IncidentBus()
+        self.metrics_collector = MetricsCollector()
         self.running = False
         self._thread: Optional[threading.Thread] = None
         # Results of hub-issued commands, reported back on the next heartbeat
@@ -47,15 +49,8 @@ class FleetTelemetryStreamer:
         open_incidents = self.bus.list_incidents(only_open=True)
         resolved_incidents = [i for i in self.bus.list_incidents(only_open=False) if i.get("state") == "RESOLVED"]
 
-        mem_info = {}
-        try:
-            with open("/proc/meminfo", "r") as f:
-                for line in f:
-                    parts = line.split(":")
-                    if parts[0] in ["MemTotal", "MemAvailable", "MemFree"]:
-                        mem_info[parts[0]] = int(parts[1].strip().split()[0]) // 1024
-        except Exception:
-            pass
+        # Collect comprehensive metrics (CPU, memory, disk, network)
+        all_metrics = self.metrics_collector.collect_all_metrics()
 
         # Build container lookup map by name
         container_map = {}
@@ -109,7 +104,7 @@ class FleetTelemetryStreamer:
             "resolved_incidents_count": len(resolved_incidents),
             "resolved_incidents": resolved_incidents[:20],
             "all_incidents": (open_incidents + resolved_incidents)[:30],
-            "memory_mb": mem_info,
+            "metrics": all_metrics,  # NEW: comprehensive metrics
             "trends": trends,
         }
         if self._command_results:
