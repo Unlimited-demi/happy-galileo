@@ -1,5 +1,5 @@
 # ==============================================================================
-# Multi-Stage Dockerfile for ServerGuard Dashboard
+# Multi-Stage Dockerfile for ARA (Autonomous Remediation Agent) Dashboard
 # Stage 1: Build React 18 + Vite + Tailwind + Radix UI Frontend
 # Stage 2: Serve via Python 3.11 Backend (oversight only — no agent execution)
 # ==============================================================================

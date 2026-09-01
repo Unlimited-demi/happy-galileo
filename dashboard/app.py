@@ -367,7 +367,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if has_sess.returncode != 0:
                     target_cwd = "/app" if os.path.isdir("/app") else "."
                     subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", target_cwd, "bash"], check=False)
-                    welcome = f'echo "=== [SERVERGUARD WORKER CONSOLE: {session_name}] ==="; echo "Physical Workspace: $(pwd)"; echo "Agent Status: Ready (Type commands or run: opencode)"; echo ""'
+                    welcome = f'echo "=== [ARA WORKER CONSOLE: {session_name}] ==="; echo "Physical Workspace: $(pwd)"; echo "Agent Status: Ready (Type commands or run: opencode)"; echo ""'
                     subprocess.run(["tmux", "send-keys", "-t", session_name, welcome, "C-m"], check=False)
 
                 last_output = None

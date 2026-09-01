@@ -7,9 +7,9 @@ export function Navbar({ baseDomain, onRefresh }) {
     <header className="flex items-center justify-between py-4 border-b border-border/60 mb-8">
       <div>
         <div className="flex items-center gap-2">
-          <h1 className="text-xl font-bold text-slate-100 tracking-tight">ServerGuard</h1>
+          <h1 className="text-xl font-bold text-slate-100 tracking-tight">ARA</h1>
           <span className="text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full">
-            Cloud-Ops
+            Autonomous Remediation Agent
           </span>
         </div>
         <p className="text-xs text-muted-foreground">
