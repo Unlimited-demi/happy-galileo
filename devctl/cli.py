@@ -922,6 +922,21 @@ def cmd_deploy(args):
     print()
 
 
+def cmd_fleet(args):
+    """Fleet management commands (list, prune)."""
+    from devctl.commands.fleet import cmd_fleet_list, cmd_fleet_prune
+
+    subcmd = args.fleet_cmd or "list"
+
+    if subcmd == "list":
+        cmd_fleet_list(args)
+    elif subcmd == "prune":
+        cmd_fleet_prune(args)
+    else:
+        print(f"[✗] Unknown fleet command: {subcmd}")
+        sys.exit(1)
+
+
 def cmd_doctor(args):
     """Check health of server prerequisites, Docker, Caddy, and DNS."""
     print("\n🔍 devctl Doctor - Environment & Health Diagnostic")
@@ -1013,6 +1028,12 @@ def main():
     p_deploy.add_argument("--pull", action="store_true", help="Pull latest code from git before deploying")
     p_deploy.add_argument("--no-cache", action="store_true", help="Build without Docker cache")
 
+    # fleet
+    p_fleet = subparsers.add_parser("fleet", help="Fleet management commands")
+    p_fleet.add_argument("fleet_cmd", nargs="?", choices=["list", "prune"], default="list")
+    p_fleet.add_argument("--max-age", type=int, help="Max age in minutes for pruning (default: 60)")
+    p_fleet.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
     # discover
     p_discover = subparsers.add_parser("discover", help="Auto-discover running Docker containers and index them into devctl")
     p_discover.add_argument("--force", "-f", action="store_true", help="Force re-discovery & flush old cached state")
@@ -1048,6 +1069,7 @@ def main():
         "dispatch": cmd_dispatch,
         "merge": cmd_merge,
         "deploy": cmd_deploy,
+        "fleet": cmd_fleet,
         "doctor": cmd_doctor,
     }
 
