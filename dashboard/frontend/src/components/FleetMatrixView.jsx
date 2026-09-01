@@ -1,5 +1,5 @@
 import React from 'react';
-import { Server, Cpu, Globe, AlertTriangle, ExternalLink, Copy, Lock, Database } from 'lucide-react';
+import { Cpu, Globe, AlertTriangle, ExternalLink, Copy, Lock, HardDrive, MemoryStick } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -53,6 +53,58 @@ export function FleetMatrixView({ nodes, onCopy }) {
               </div>
             </CardHeader>
 
+            {/* Node Metrics Bar */}
+            {(() => {
+              const sm = node.metrics?.server || {};
+              const la = sm.load_average || {};
+              const cores = sm.cpu_cores || 0;
+              const mem = sm.memory || {};
+              const memPct = mem.usage_percent || (mem.total_bytes ? ((mem.used_bytes / mem.total_bytes) * 100) : 0);
+              const memUsedGB = ((mem.used_bytes || 0) / 1073741824).toFixed(1);
+              const memTotalGB = ((mem.total_bytes || 0) / 1073741824).toFixed(1);
+              const loadPct = cores > 0 ? ((la['5min'] || 0) / cores) * 100 : 0;
+              const loadColor = loadPct > 90 ? 'text-rose-400' : loadPct > 70 ? 'text-amber-400' : 'text-slate-200';
+              const hasMetrics = la['5min'] !== undefined || mem.total_bytes > 0;
+              if (!hasMetrics) return null;
+              return (
+                <div className="flex items-center gap-6 px-6 py-2.5 bg-muted/15 border-b border-border/40 text-xs font-mono">
+                  <div className="flex items-center gap-2">
+                    <Cpu className="w-3.5 h-3.5 text-sky-400" />
+                    <span className="text-muted-foreground">CPU</span>
+                    <span className={`font-semibold ${loadColor}`}>{loadPct.toFixed(0)}%</span>
+                    <span className="text-muted-foreground text-[10px]">
+                      ({(la['1min'] || 0).toFixed(2)} / {(la['5min'] || 0).toFixed(2)} / {(la['15min'] || 0).toFixed(2)} load
+                      {cores > 0 ? ` on ${cores} cores` : ''})
+                    </span>
+                    {cores > 0 && (
+                      <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden ml-1">
+                        <div
+                          className={`h-full rounded-full transition-all ${loadPct > 90 ? 'bg-rose-500' : loadPct > 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                          style={{ width: `${Math.min(loadPct, 100)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  {mem.total_bytes > 0 && (
+                    <div className="flex items-center gap-2">
+                      <HardDrive className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="text-muted-foreground">Memory</span>
+                      <span className={`font-semibold ${memPct > 80 ? 'text-rose-400' : memPct > 60 ? 'text-amber-400' : 'text-slate-200'}`}>
+                        {memPct.toFixed(0)}%
+                      </span>
+                      <span className="text-muted-foreground text-[10px]">({memUsedGB}G / {memTotalGB}G)</span>
+                      <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden ml-1">
+                        <div
+                          className={`h-full rounded-full transition-all ${memPct > 80 ? 'bg-rose-500' : memPct > 60 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                          style={{ width: `${Math.min(memPct, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             <CardContent className="p-0">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
@@ -76,11 +128,12 @@ export function FleetMatrixView({ nodes, onCopy }) {
                     ) : (
                       services.map((svc) => {
                         const isWeb = svc.container_type === 'web' || !!svc.url;
-                        const isRunning = svc.status === 'RUNNING';
+                        const statusText = svc.container_status || svc.status || 'UNKNOWN';
+                        const isRunning = statusText.toLowerCase().startsWith('up');
                         const codebase = svc.codebase || {};
                         return (
-                          <tr key={svc.name} className="hover:bg-muted/30 transition-colors">
-                            <td className="py-3 px-6 font-semibold text-slate-200">{svc.name}</td>
+                          <tr key={svc.service_name || svc.name} className="hover:bg-muted/30 transition-colors">
+                            <td className="py-3 px-6 font-semibold text-slate-200">{svc.service_name || svc.container_name || svc.name}</td>
                             <td className="py-3 px-6 font-sans">
                               <Badge variant="outline" className="text-[11px] uppercase font-mono">
                                 {svc.container_type || 'service'}
@@ -95,7 +148,7 @@ export function FleetMatrixView({ nodes, onCopy }) {
                                   }`}
                                 />
                                 <span className={isRunning ? 'text-emerald-400 font-medium' : 'text-rose-400 font-medium'}>
-                                  {svc.status || 'UNKNOWN'}
+                                  {statusText}
                                 </span>
                               </div>
                             </td>

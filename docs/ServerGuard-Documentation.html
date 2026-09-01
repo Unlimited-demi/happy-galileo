@@ -1,0 +1,1645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ServerGuard - Autonomous AI-Ops Platform Documentation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --surface-2: #1a1a1a;
+    --border: #2a2a2a;
+    --text: #e5e5e5;
+    --text-muted: #888;
+    --accent: #3b82f6;
+    --accent-light: #60a5fa;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --code-bg: #0d0d0d;
+  }
+
+  @page {
+    size: A4;
+    margin: 2cm;
+  }
+
+  @media print {
+    body { background: white !important; color: #1a1a1a !important; }
+    .page-break { page-break-before: always; }
+    .no-print { display: none !important; }
+    :root {
+      --bg: white;
+      --surface: #f5f5f5;
+      --surface-2: #e5e5e5;
+      --border: #ddd;
+      --text: #1a1a1a;
+      --text-muted: #666;
+      --code-bg: #f5f5f5;
+    }
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    font-size: 11pt;
+  }
+
+  .container {
+    max-width: 210mm;
+    margin: 0 auto;
+    padding: 2cm;
+  }
+
+  /* Cover Page */
+  .cover {
+    min-height: 257mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 3cm 2cm;
+  }
+
+  .cover h1 {
+    font-size: 48pt;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.5rem;
+    color: var(--text);
+  }
+
+  .cover .subtitle {
+    font-size: 18pt;
+    font-weight: 400;
+    color: var(--text-muted);
+    margin-bottom: 3rem;
+  }
+
+  .cover .tagline {
+    font-size: 13pt;
+    color: var(--text-muted);
+    max-width: 500px;
+    line-height: 1.7;
+    margin-bottom: 4rem;
+  }
+
+  .cover-meta {
+    font-size: 10pt;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    padding-top: 2rem;
+  }
+
+  .cover-meta p { margin-bottom: 0.3rem; }
+  .cover-meta strong { color: var(--text); font-weight: 500; }
+
+  /* Table of Contents */
+  .toc {
+    padding: 2cm;
+  }
+
+  .toc h2 {
+    font-size: 20pt;
+    font-weight: 600;
+    margin-bottom: 2rem;
+    color: var(--text);
+  }
+
+  .toc-list {
+    list-style: none;
+    counter-reset: toc;
+  }
+
+  .toc-list li {
+    counter-increment: toc;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+  }
+
+  .toc-list li::before {
+    content: counter(toc, decimal-leading-zero);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9pt;
+    color: var(--text-muted);
+    font-weight: 500;
+    min-width: 2rem;
+  }
+
+  .toc-list a {
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 11pt;
+  }
+
+  .toc-list .toc-page {
+    margin-left: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9pt;
+    color: var(--text-muted);
+  }
+
+  /* Section Headers */
+  h2 {
+    font-size: 22pt;
+    font-weight: 700;
+    margin: 2.5rem 0 1.5rem 0;
+    padding-bottom: 0.75rem;
+    border-bottom: 2px solid var(--border);
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+
+  h3 {
+    font-size: 14pt;
+    font-weight: 600;
+    margin: 2rem 0 1rem 0;
+    color: var(--text);
+  }
+
+  h4 {
+    font-size: 11pt;
+    font-weight: 600;
+    margin: 1.5rem 0 0.75rem 0;
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 9pt;
+  }
+
+  p {
+    margin-bottom: 1rem;
+    color: var(--text);
+    line-height: 1.7;
+  }
+
+  /* Code Blocks */
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0 1.5rem 0;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9pt;
+    line-height: 1.6;
+  }
+
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9pt;
+    background: var(--code-bg);
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+
+  pre code {
+    background: none;
+    padding: 0;
+    border: none;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0 1.5rem 0;
+    font-size: 9.5pt;
+  }
+
+  th {
+    background: var(--surface);
+    text-align: left;
+    padding: 0.6rem 0.8rem;
+    font-weight: 600;
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    border-bottom: 2px solid var(--border);
+  }
+
+  td {
+    padding: 0.5rem 0.8rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  tr:nth-child(even) td { background: var(--surface-2); }
+
+  /* Lists */
+  ul, ol {
+    margin: 0.5rem 0 1.5rem 1.5rem;
+  }
+
+  li {
+    margin-bottom: 0.4rem;
+    line-height: 1.6;
+  }
+
+  /* Callouts */
+  .callout {
+    border-left: 3px solid var(--accent);
+    padding: 1rem 1.25rem;
+    margin: 1.5rem 0;
+    background: var(--surface);
+    border-radius: 0 6px 6px 0;
+  }
+
+  .callout.warning { border-left-color: var(--warning); }
+  .callout.danger { border-left-color: var(--danger); }
+  .callout.success { border-left-color: var(--success); }
+
+  .callout-title {
+    font-weight: 600;
+    font-size: 9pt;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.4rem;
+    color: var(--accent);
+  }
+
+  .callout.warning .callout-title { color: var(--warning); }
+  .callout.danger .callout-title { color: var(--danger); }
+  .callout.success .callout-title { color: var(--success); }
+
+  /* Diagrams */
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.5rem;
+    margin: 1.5rem 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9pt;
+    line-height: 1.5;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  /* Feature Grid */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+
+  .feature-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.25rem;
+  }
+
+  .feature-card h4 {
+    margin-top: 0;
+    color: var(--accent-light);
+  }
+
+  .feature-card p {
+    margin-bottom: 0;
+    font-size: 9.5pt;
+    color: var(--text-muted);
+  }
+
+  /* Badges */
+  .badge {
+    display: inline-block;
+    font-size: 8pt;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .badge-blue { background: rgba(59,130,246,0.15); color: var(--accent-light); }
+  .badge-green { background: rgba(34,197,94,0.15); color: var(--success); }
+  .badge-yellow { background: rgba(245,158,11,0.15); color: var(--warning); }
+  .badge-red { background: rgba(239,68,68,0.15); color: var(--danger); }
+
+  /* Page Footer */
+  .page-footer {
+    margin-top: 4rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 8pt;
+    color: var(--text-muted);
+    text-align: center;
+  }
+
+  /* Workflow Steps */
+  .workflow-step {
+    display: flex;
+    gap: 1rem;
+    margin: 1rem 0;
+    padding: 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .step-number {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18pt;
+    font-weight: 700;
+    color: var(--accent);
+    min-width: 2.5rem;
+    line-height: 1;
+  }
+
+  .step-content h4 {
+    margin-top: 0;
+    margin-bottom: 0.3rem;
+    font-size: 11pt;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text);
+  }
+
+  .step-content p {
+    margin-bottom: 0;
+    font-size: 9.5pt;
+    color: var(--text-muted);
+  }
+
+  /* Command Reference */
+  .cmd-ref {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+  }
+
+  .cmd-ref .cmd-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 10pt;
+    color: var(--accent-light);
+    margin-bottom: 0.3rem;
+  }
+
+  .cmd-ref .cmd-desc {
+    font-size: 9.5pt;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+  }
+
+  .cmd-ref .cmd-usage {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8.5pt;
+    color: var(--text);
+    background: var(--code-bg);
+    padding: 0.4rem 0.6rem;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- COVER PAGE -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="cover">
+  <h1>ServerGuard</h1>
+  <div class="subtitle">Autonomous AI-Ops Platform</div>
+  <div class="tagline">
+    Fleet management, autonomous incident remediation, and intelligent monitoring
+    for multi-server Docker infrastructure. Detect, diagnose, and resolve production
+    incidents without human intervention.
+  </div>
+  <div class="cover-meta">
+    <p><strong>Version:</strong> 1.0</p>
+    <p><strong>Documentation Date:</strong> September 2026</p>
+    <p><strong>Platform:</strong> Linux / Docker / Multi-Node Fleet</p>
+    <p><strong>Repository:</strong> github.com/Unlimited-demi/happy-galileo</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- TABLE OF CONTENTS -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="toc page-break">
+  <h2>Contents</h2>
+  <ol class="toc-list">
+    <li><a href="#overview">Platform Overview</a><span class="toc-page">3</span></li>
+    <li><a href="#architecture">System Architecture</a><span class="toc-page">4</span></li>
+    <li><a href="#features">Core Features</a><span class="toc-page">5</span></li>
+    <li><a href="#installation">Installation &amp; Setup</a><span class="toc-page">7</span></li>
+    <li><a href="#fleet">Fleet Management</a><span class="toc-page">9</span></li>
+    <li><a href="#monitoring">Monitoring &amp; Detection</a><span class="toc-page">10</span></li>
+    <li><a href="#incidents">Incident Resolution Workflow</a><span class="toc-page">12</span></li>
+    <li><a href="#commands">Command Reference</a><span class="toc-page">14</span></li>
+    <li><a href="#remediation">Tiered Remediation Engine</a><span class="toc-page">16</span></li>
+    <li><a href="#dashboard">Dashboard &amp; Telemetry</a><span class="toc-page">17</span></li>
+    <li><a href="#troubleshooting">Troubleshooting</a><span class="toc-page">18</span></li>
+    <li><a href="#api">API Reference</a><span class="toc-page">19</span></li>
+  </ol>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 1: OVERVIEW -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="container page-break">
+
+<h2 id="overview">1. Platform Overview</h2>
+
+<p>
+  ServerGuard is an autonomous AI-Ops platform designed for multi-server Docker infrastructure.
+  It provides fleet-wide monitoring, intelligent anomaly detection, and autonomous incident
+  remediation — closing the loop from error detection to code fix to production deployment
+  without human intervention.
+</p>
+
+<h3>What It Does</h3>
+
+<div class="feature-grid">
+  <div class="feature-card">
+    <h4>Fleet Monitoring</h4>
+    <p>Monitors all Docker containers across multiple servers. Collects CPU, memory, disk, and network metrics. Streams telemetry to a central dashboard.</p>
+  </div>
+  <div class="feature-card">
+    <h4>Anomaly Detection</h4>
+    <p>Scans container logs with 17+ multi-language error patterns. Detects Python, Node.js, Go, Java, PHP/Laravel, Ruby stack traces, HTTP 5xx errors, OOM kills, and network failures.</p>
+  </div>
+  <div class="feature-card">
+    <h4>Autonomous Remediation</h4>
+    <p>Dispatches OpenCode AI agent to fix detected errors. The agent checks out a branch, implements the fix, commits, and prepares for human review.</p>
+  </div>
+  <div class="feature-card">
+    <h4>Incident Lifecycle</h4>
+    <p>Complete workflow: detect → classify → fix → verify → merge → deploy. Every incident has a comprehensive dossier with proof of resolution.</p>
+  </div>
+</div>
+
+<h3>Design Principles</h3>
+
+<ul>
+  <li><strong>Outbound-Only Telemetry:</strong> Sub-nodes push heartbeats to the hub. No inbound ports required. Commands piggyback on heartbeat responses.</li>
+  <li><strong>Zero Public Ports:</strong> All containers communicate over an internal Docker network (<code>dev-net</code>). Caddy handles TLS termination.</li>
+  <li><strong>Safety First:</strong> Config backups before writes, <code>nginx -t</code> validation before reload, rollback on failure, mail server detection to avoid breaking Mailcow.</li>
+  <li><strong>Idempotent Operations:</strong> Every script checks if work is already done before executing. Safe to run multiple times.</li>
+  <li><strong>Language Agnostic:</strong> Grammar-based error detection works across any programming language without hardcoding vendor names.</li>
+</ul>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 2: ARCHITECTURE -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="container page-break">
+
+<h2 id="architecture">2. System Architecture</h2>
+
+<h3>Hub-and-Spoke Model</h3>
+
+<div class="diagram">
+┌─────────────────────────────────────────────────────────────────────┐
+│                        CENTRAL HUB (vm-01)                          │
+│                                                                     │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────────────┐    │
+│  │   Dashboard   │   │  AI-Ops      │   │  Telemetry Ingest    │    │
+│  │  (React UI)   │   │  Daemon      │   │  API Endpoint        │    │
+│  │  Port 8888    │   │  Port 0      │   │  /api/telemetry/     │    │
+│  └──────────────┘   └──────────────┘   └──────────────────────┘    │
+│         │                  │                      ▲                  │
+│         └──────────────────┴──────────────────────┘                  │
+│                          Caddy (TLS)                                │
+│                     status.dev-server.datakrib.com                   │
+└─────────────────────────────────────────────────────────────────────┘
+                    ▲                    ▲                    ▲
+                    │  Heartbeat (15s)   │                    │
+                    │                    │                    │
+┌───────────────────┴───┐  ┌─────────────┴───────┐  ┌────────┴────────┐
+│      NODE: vm-02      │  │      NODE: vm-03    │  │    NODE: vm-04  │
+│  Mailcow + AniVault   │  │   Laravel App       │  │   AI/ML Stack   │
+│  27 containers        │  │   15 containers     │  │  19 containers  │
+│  AI-Ops Daemon        │  │   AI-Ops Daemon     │  │  AI-Ops Daemon  │
+│  Caddy (port 8085)    │  │   Caddy (port 8080) │  │  Caddy (port 8080)│
+└───────────────────────┘  └─────────────────────┘  └─────────────────┘
+</div>
+
+<h3>Component Breakdown</h3>
+
+<table>
+  <thead>
+    <tr><th>Component</th><th>Location</th><th>Purpose</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>ai_ops/daemon.py</code></td>
+      <td>Docker container</td>
+      <td>Monitoring loop: health checks, log scanning, incident creation, remediation dispatch</td>
+    </tr>
+    <tr>
+      <td><code>ai_ops/classifier.py</code></td>
+      <td>Python module</td>
+      <td>Grammar-based anomaly detection with 17+ multi-language error patterns</td>
+    </tr>
+    <tr>
+      <td><code>ai_ops/remediation.py</code></td>
+      <td>Python module</td>
+      <td>Tiered remediation engine (L0–L3) with auto-restart and network resync</td>
+    </tr>
+    <tr>
+      <td><code>ai_ops/health_checker.py</code></td>
+      <td>Python module</td>
+      <td>Container health inspection with direct HTTP probing on Docker network</td>
+    </tr>
+    <tr>
+      <td><code>ai_ops/metrics.py</code></td>
+      <td>Python module</td>
+      <td>Server and container metrics collection (CPU, memory, disk, network)</td>
+    </tr>
+    <tr>
+      <td><code>ai_ops/telemetry.py</code></td>
+      <td>Python module</td>
+      <td>Fleet telemetry streamer — pushes heartbeats to central hub every 15 seconds</td>
+    </tr>
+    <tr>
+      <td><code>ai_ops/docker_socket.py</code></td>
+      <td>Python module</td>
+      <td>Docker Engine API client with connection pooling and raw binary log parsing</td>
+    </tr>
+    <tr>
+      <td><code>devctl/cli.py</code></td>
+      <td>CLI tool</td>
+      <td>Unified CLI for service management, incident handling, fleet operations</td>
+    </tr>
+    <tr>
+      <td><code>dashboard/</code></td>
+      <td>React + Flask</td>
+      <td>Fleet dashboard with real-time node status, incidents, and service directory</td>
+    </tr>
+    <tr>
+      <td><code>infra/security/</code></td>
+      <td>Bash scripts</td>
+      <td>Proxy conflict resolver, UFW firewall hardening, Caddy TLS configuration</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Data Flow</h3>
+
+<ol>
+  <li><strong>Collection:</strong> AI-Ops daemon on each node inspects containers via Docker socket, scans logs, collects metrics</li>
+  <li><strong>Detection:</strong> Classifier analyzes logs for errors using multi-language grammar patterns</li>
+  <li><strong>Incident:</strong> When error detected, incident created on Incident Bus with full context</li>
+  <li><strong>Remediation:</strong> L1/L2 auto-remediation attempts (restart, network resync). If insufficient, dispatch to OpenCode</li>
+  <li><strong>Fix:</strong> OpenCode checks out branch, implements fix, commits, pushes</li>
+  <li><strong>Telemetry:</strong> Node streams heartbeat with services, incidents, and metrics to hub every 15s</li>
+  <li><strong>Dashboard:</strong> Hub displays fleet-wide status, incidents, and node health in real-time</li>
+</ol>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 3: FEATURES -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="container page-break">
+
+<h2 id="features">3. Core Features</h2>
+
+<h3>3.1 Multi-Language Error Detection</h3>
+
+<p>The classifier uses grammar-based syntactic analysis to detect errors across any programming language:</p>
+
+<table>
+  <thead>
+    <tr><th>Language</th><th>Patterns Detected</th><th>Examples</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-blue">Python</span></td>
+      <td>Traceback, File/line frames, exception classes</td>
+      <td><code>Traceback (most recent call last):</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-green">Node.js</span></td>
+      <td>V8 runtime errors, unhandled rejections, module errors</td>
+      <td><code>TypeError: Cannot read properties of undefined</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-blue">Go</span></td>
+      <td>Goroutine panics, fatal errors</td>
+      <td><code>goroutine 1 [running]: panic: runtime error</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-yellow">Java/JVM</span></td>
+      <td>Thread exceptions, caused-by chains, qualified exceptions</td>
+      <td><code>Exception in thread "main" java.lang.NullPointerException</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-red">PHP/Laravel</span></td>
+      <td>Fatal errors, parse errors, SQLSTATE, application errors</td>
+      <td><code>[2024-01-15] local.ERROR: SQLSTATE[HY000]</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-green">Ruby/Rails</span></td>
+      <td>Error classes, 500 completions</td>
+      <td><code>Completed 500 Internal Server Error in 234ms</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Additionally detects:</p>
+<ul>
+  <li><strong>HTTP 5xx/429:</strong> Upstream server outages and rate limits</li>
+  <li><strong>Network failures:</strong> ECONNREFUSED, ETIMEDOUT, ECONNRESET, ENOTFOUND</li>
+  <li><strong>Process crashes:</strong> OOMKilled, segmentation faults, fatal errors</li>
+  <li><strong>Config errors:</strong> Nginx/Caddy/Apache syntax errors, database auth failures</li>
+</ul>
+
+<h3>3.2 Incident Throttling &amp; Contextual Analysis</h3>
+
+<p>Prevents incident spam while ensuring critical patterns get attention:</p>
+
+<table>
+  <thead>
+    <tr><th>Context Type</th><th>Trigger</th><th>Behavior</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-blue">Transient</span></td>
+      <td>Single occurrence</td>
+      <td>Create incident, normal severity</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-yellow">Persistent</span></td>
+      <td>3+ same error type</td>
+      <td>Upgrade severity (warning→error, error→critical)</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-red">Escalating</span></td>
+      <td>5+ incidents in 5 min</td>
+      <td>Force critical severity, bypass throttle</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>Throttle rule:</strong> Maximum 1 incident per service per 5 minutes for the same error type.</p>
+
+<h3>3.3 Metrics Collection</h3>
+
+<h4>Server Metrics</h4>
+<ul>
+  <li>CPU load average (1min, 5min, 15min) from <code>/proc/loadavg</code></li>
+  <li>Memory usage (total, used, available, percentage) from <code>/proc/meminfo</code></li>
+  <li>Disk usage per mount point (total, used, available, percentage)</li>
+  <li>Network connections (TCP count via <code>ss</code>)</li>
+  <li>System uptime from <code>/proc/uptime</code></li>
+</ul>
+
+<h4>Container Metrics</h4>
+<ul>
+  <li>CPU percentage via <code>docker stats</code></li>
+  <li>Memory used / limit / percentage</li>
+  <li>Network I/O (received / transmitted)</li>
+  <li>Block I/O (read / written)</li>
+  <li>Process count (PIDs)</li>
+</ul>
+
+<p>Metrics are cached for 30 seconds and included in telemetry heartbeats to the central hub.</p>
+
+<h3>3.4 Reverse Proxy Detection</h3>
+
+<p>Smart detection of existing virtual hosts across all major web servers:</p>
+
+<table>
+  <thead>
+    <tr><th>Proxy</th><th>Locations Scanned</th><th>Directives Parsed</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Nginx</strong></td>
+      <td><code>sites-enabled/*</code>, <code>sites-available/*</code>, <code>conf.d/*.conf</code>, <code>nginx.conf</code></td>
+      <td><code>server_name</code>, <code>proxy_pass</code></td>
+    </tr>
+    <tr>
+      <td><strong>Apache</strong></td>
+      <td><code>sites-enabled/*.conf</code>, <code>sites-available/*.conf</code>, <code>conf.d/*.conf</code></td>
+      <td><code>ServerName</code>, <code>ServerAlias</code>, <code>ProxyPass</code></td>
+    </tr>
+    <tr>
+      <td><strong>Caddy</strong></td>
+      <td><code>conf.d/*</code>, <code>Caddyfile</code>, <code>*.caddy</code></td>
+      <td>Domain blocks, <code>reverse_proxy</code></td>
+    </tr>
+    <tr>
+      <td><strong>Traefik</strong></td>
+      <td>Docker labels</td>
+      <td><code>traefik.http.routers.*.rule</code></td>
+    </tr>
+    <tr>
+      <td><strong>Env Vars</strong></td>
+      <td>Container environment</td>
+      <td><code>VIRTUAL_HOST</code>, <code>APP_URL</code>, <code>*_DOMAIN</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Each nginx <code>server {}</code> block is parsed separately to correctly map <code>server_name</code> to its corresponding <code>proxy_pass</code> upstream — no cartesian product confusion.</p>
+
+<h3>3.5 Safety Features</h3>
+
+<ul>
+  <li><strong>Config backups:</strong> Every nginx/Caddy config is backed up before modification</li>
+  <li><strong>Validation:</strong> <code>nginx -t</code> before reload, rollback on failure</li>
+  <li><strong>Mail server detection:</strong> Auto-skips UFW if Mailcow/Postfix/Dovecot detected</li>
+  <li><strong>Docker port awareness:</strong> UFW auto-allows Docker published ports</li>
+  <li><strong>Idempotency:</strong> All scripts check if work is already done</li>
+  <li><strong>Vendor domain filtering:</strong> Excludes <code>download.redis.io</code>, <code>github.com</code>, etc. from false-positive domain detection</li>
+</ul>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 4: INSTALLATION -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="container page-break">
+
+<h2 id="installation">4. Installation &amp; Setup</h2>
+
+<h3>4.1 Central Hub Setup (Primary Server)</h3>
+
+<p>The central hub runs the fleet dashboard and telemetry ingest endpoint. It receives heartbeats from all sub-nodes.</p>
+
+<pre><code># Clone the repository
+git clone https://github.com/Unlimited-demi/happy-galileo.git /opt/happy-galileo
+cd /opt/happy-galileo
+
+# Configure environment
+cp infra/.env.example infra/.env
+# Edit infra/.env:
+#   NODE_NAME=Primary Workstation
+#   BASE_DOMAIN=dev-server.datakrib.com
+#   CADDY_HTTP_PORT=80
+#   CADDY_HTTPS_PORT=443
+#   CENTRAL_HUB_URL=          (leave empty — this IS the hub)
+#   FLEET_KEY=default-fleet-key
+
+# Start the hub
+cd infra
+docker compose -f docker-compose.infra.yml --env-file .env up -d --build
+
+# Discover local containers
+devctl discover --force</code></pre>
+
+<div class="callout">
+  <div class="callout-title">Note</div>
+  <p>The hub's dashboard is accessible at <code>https://status.dev-server.datakrib.com</code> via Caddy's on-demand TLS.</p>
+</div>
+
+<h3>4.2 Sub-Node Enrollment</h3>
+
+<p>Sub-nodes run the AI-Ops daemon and stream telemetry to the hub. They can coexist with existing services (nginx, Mailcow, other Docker containers).</p>
+
+<pre><code># On the sub-node server, run the enrollment script:
+curl -sSL https://raw.githubusercontent.com/Unlimited-demi/happy-galileo/master/scripts/setup-node.sh | \
+  sudo bash -s -- \
+    --node-name "vm2" \
+    --domain "vm2.dev-server.datakrib.com" \
+    --hub-url "https://status.dev-server.datakrib.com/api/telemetry/ingest" \
+    --github-token "ghp_your_token_here"</code></pre>
+
+<h4>What the enrollment script does:</h4>
+
+<ol>
+  <li><strong>Prerequisites:</strong> Installs git, curl, ufw, fail2ban, python3, jq</li>
+  <li><strong>Docker:</strong> Installs Docker and Docker Compose if not present</li>
+  <li><strong>Codebase:</strong> Clones the repository to <code>/opt/happy-galileo</code></li>
+  <li><strong>Node.js:</strong> Installs Node.js 20, Playwright, OpenCode CLI</li>
+  <li><strong>Docker network:</strong> Creates <code>dev-net</code> internal network</li>
+  <li><strong>devctl CLI:</strong> Installs Python venv and CLI wrapper at <code>/usr/local/bin/devctl</code></li>
+  <li><strong>Proxy resolution:</strong> Detects existing nginx/Caddy/Apache, configures ServerGuard Caddy on internal port (8080+)</li>
+  <li><strong>Firewall:</strong> Runs UFW hardening (skips if mail server detected)</li>
+  <li><strong>Infrastructure:</strong> Builds and starts Caddy + AI-Ops daemon + Dashboard containers</li>
+  <li><strong>Discovery:</strong> Auto-discovers existing Docker containers and registers them for monitoring</li>
+</ol>
+
+<h3>4.3 Environment Variables</h3>
+
+<table>
+  <thead>
+    <tr><th>Variable</th><th>Hub</th><th>Sub-Node</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>NODE_NAME</code></td>
+      <td>Primary Workstation</td>
+      <td>vm2, vm3, vm4</td>
+      <td>Display name shown in fleet dashboard</td>
+    </tr>
+    <tr>
+      <td><code>BASE_DOMAIN</code></td>
+      <td>dev-server.datakrib.com</td>
+      <td>vm2.dev-server.datakrib.com</td>
+      <td>Domain scope for service URLs</td>
+    </tr>
+    <tr>
+      <td><code>CADDY_HTTP_PORT</code></td>
+      <td>80</td>
+      <td>8080+ (auto-detected)</td>
+      <td>HTTP port for Caddy</td>
+    </tr>
+    <tr>
+      <td><code>CADDY_HTTPS_PORT</code></td>
+      <td>443</td>
+      <td>8443</td>
+      <td>HTTPS port for Caddy</td>
+    </tr>
+    <tr>
+      <td><code>CENTRAL_HUB_URL</code></td>
+      <td><em>(empty)</em></td>
+      <td>https://status.../api/telemetry/ingest</td>
+      <td>Hub telemetry endpoint (empty = standalone)</td>
+    </tr>
+    <tr>
+      <td><code>FLEET_KEY</code></td>
+      <td>default-fleet-key</td>
+      <td>default-fleet-key</td>
+      <td>Shared secret for fleet authentication</td>
+    </tr>
+    <tr>
+      <td><code>GITHUB_TOKEN</code></td>
+      <td>ghp_...</td>
+      <td>ghp_...</td>
+      <td>GitHub PAT for OpenCode code access</td>
+    </tr>
+  </tbody>
+</table>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 5: FLEET MANAGEMENT -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="container page-break">
+
+<h2 id="fleet">5. Fleet Management</h2>
+
+<h3>5.1 Node Name Normalization</h3>
+
+<p>To prevent duplicate nodes (e.g., <code>vm4</code> vs <code>vm-04</code>), all node names are automatically normalized:</p>
+
+<ul>
+  <li><code>vm-02</code> → <code>vm2</code></li>
+  <li><code>vm-03</code> → <code>vm3</code></li>
+  <li><code>vm-04</code> → <code>vm4</code></li>
+  <li>Other names pass through unchanged</li>
+</ul>
+
+<h3>5.2 Fleet Commands</h3>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl fleet list</div>
+  <div class="cmd-desc">Display all nodes in the fleet with their status, last heartbeat time, container count, and service count.</div>
+  <div class="cmd-usage">devctl fleet list</div>
+</div>
+
+<p>Output example:</p>
+<pre><code>══════════════════════════════════════════════════════════════════════
+📡 FLEET NODES
+══════════════════════════════════════════════════════════════════════
+NODE                 STATUS       LAST SEEN       CONTAINERS   SERVICES
+──────────────────────────────────────────────────────────────────────
+vm2                  🟢 ONLINE    12s ago         27           27
+vm3                  🟢 ONLINE    8s ago          15           15
+vm4                  🟢 ONLINE    3s ago          19           19
+primary              🟢 ONLINE    1s ago          6            6</code></pre>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl fleet prune</div>
+  <div class="cmd-desc">Remove stale nodes that haven't sent heartbeats within the specified time window.</div>
+  <div class="cmd-usage">devctl fleet prune [--max-age MINUTES] [--yes]</div>
+</div>
+
+<table>
+  <thead>
+    <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>--max-age</code></td><td>60</td><td>Maximum age in minutes before a node is considered stale</td></tr>
+    <tr><td><code>--yes</code></td><td>false</td><td>Skip confirmation prompt</td></tr>
+  </tbody>
+</table>
+
+<h3>5.3 Node States</h3>
+
+<table>
+  <thead>
+    <tr><th>Status</th><th>Condition</th><th>Meaning</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>🟢 <strong>ONLINE</strong></td><td>Last seen &lt; 60s</td><td>Node is actively streaming telemetry</td></tr>
+    <tr><td>🟡 <strong>STALE</strong></td><td>Last seen 60s–5min</td><td>Node may be experiencing issues</td></tr>
+    <tr><td>🔴 <strong>OFFLINE</strong></td><td>Last seen &gt; 5min</td><td>Node has stopped reporting</td></tr>
+  </tbody>
+</table>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 6: MONITORING -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="container page-break">
+
+<h2 id="monitoring">6. Monitoring &amp; Detection</h2>
+
+<h3>6.1 Health Check Signals</h3>
+
+<p>The AI-Ops daemon evaluates 6 signals to determine container health:</p>
+
+<table>
+  <thead>
+    <tr><th>#</th><th>Signal</th><th>Source</th><th>Indication</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td>Running state</td>
+      <td>Docker inspect</td>
+      <td>Container is running vs stopped/exited</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>OOM kills</td>
+      <td>Docker inspect State.OOMKilled</td>
+      <td>Container was killed due to memory exhaustion</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>Restart count</td>
+      <td>Docker inspect RestartCount</td>
+      <td>Container is crash-looping</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>Docker HEALTHCHECK</td>
+      <td>Docker inspect State.Health.Status</td>
+      <td>Application-level health check result</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>HTTP probe</td>
+      <td>Direct socket to container IP:port</td>
+      <td>HTTP 5xx responses indicate application failure</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td>Log scanning</td>
+      <td>Docker logs API + classifier</td>
+      <td>Error patterns, stack traces, exceptions</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>6.2 HTTP Probing</h3>
+
+<p>Even when Docker reports a container as "running", the application inside may be returning 502/503 errors. The health checker resolves the container's IP on the Docker network and sends a direct HTTP request:</p>
+
+<pre><code>Container: aiops-grafana
+  Docker IP: 172.18.0.5
+  Port: 3000
+  Probe: GET http://172.18.0.5:3000/ → HTTP 502 Bad Gateway
+  Result: UNHEALTHY (HTTP 502 from aiops-grafana:3000)</code></pre>
+
+<p>Containers in the skip list (<code>ai-ops-daemon</code>, <code>caddy</code>) are not probed to avoid feedback loops.</p>
+
+<h3>6.3 Docker Log Parsing</h3>
+
+<p>Docker's multiplexed log streams contain 8-byte binary headers per frame:</p>
+
+<pre><code>[stream_type(1), 0, 0, 0, size(4 big-endian)] + frame_data</code></pre>
+
+<p>The log parser reads raw bytes, parses frame headers, extracts frame data, and decodes UTF-8 — all before pattern matching. This prevents corruption from binary headers that would otherwise appear as replacement characters (<code>\\xef\\xbf\\xbd</code>).</p>
+
+<h3>6.4 Monitoring Cycle</h3>
+
+<div class="diagram">
+Every 15 seconds:
+  1. List all registered services
+  2. For each service:
+     a. Inspect container (running, OOM, restarts, healthcheck)
+     b. Probe HTTP (direct socket to container IP:port)
+     c. Fetch logs (Docker API, last 100 lines)
+     d. Classify logs (17+ error patterns)
+     e. Determine health status
+     f. If unhealthy:
+        - L1: Auto-restart (max 3 attempts)
+        - L2: Network resync + proxy reload
+        - L3: Dispatch to OpenCode
+     g. Create incident if error detected
+  3. Collect server & container metrics
+  4. Stream telemetry to hub (if sub-node)
+</div>
+
+<h3>6.5 Custom Error Patterns</h3>
+
+<p>Operators can extend detection without code changes by adding regex patterns to:</p>
+
+<pre><code>~/.devctl/error_patterns.txt    # Lines matching these are flagged as errors
+~/.devctl/noise_patterns.txt    # Lines matching these are ignored</code></pre>
+
+<p>Files are re-read every 60 seconds. One regex per line, <code>#</code> for comments.</p>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 7: INCIDENT RESOLUTION -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="container page-break">
+
+<h2 id="incidents">7. Incident Resolution Workflow</h2>
+
+<p>The complete incident lifecycle from detection to production deployment:</p>
+
+<div class="workflow-step">
+  <div class="step-number">01</div>
+  <div class="step-content">
+    <h4>Detect</h4>
+    <p>AI-Ops daemon scans container logs and detects an error pattern. Creates an incident on the Incident Bus with full context: error snippet, container name, service, severity, and contextual classification (transient/persistent/escalating).</p>
+  </div>
+</div>
+
+<div class="workflow-step">
+  <div class="step-number">02</div>
+  <div class="step-content">
+    <h4>Classify &amp; Throttle</h4>
+    <p>Incident throttle checks if this is a duplicate (same service, same error, within 5 minutes). If throttled, the incident is suppressed. If persistent or escalating, severity is upgraded.</p>
+  </div>
+</div>
+
+<div class="workflow-step">
+  <div class="step-number">03</div>
+  <div class="step-content">
+    <h4>Auto-Remediate (L1/L2)</h4>
+    <p>If the container is stopped or returning HTTP 5xx, L1 auto-restarts it (max 3 attempts). If the container lost network connectivity, L2 resyncs the Docker network and reloads the proxy.</p>
+  </div>
+</div>
+
+<div class="workflow-step">
+  <div class="step-number">04</div>
+  <div class="step-content">
+    <h4>Dispatch to OpenCode (L3)</h4>
+    <p>If auto-remediation is insufficient, the incident is dispatched to the OpenCode AI agent. A comprehensive dossier is generated with error details, logs, workspace path, and instructions.</p>
+  </div>
+</div>
+
+<div class="workflow-step">
+  <div class="step-number">05</div>
+  <div class="step-content">
+    <h4>Fix</h4>
+    <p>OpenCode checks out a fix branch (<code>fix/INC-20240901-123456-service</code>), analyzes the code, implements the fix, runs tests, commits, and pushes to the remote.</p>
+  </div>
+</div>
+
+<div class="workflow-step">
+  <div class="step-number">06</div>
+  <div class="step-content">
+    <h4>Verify</h4>
+    <p>The fix is deployed locally. DevOps reviews the incident dossier, checks the code changes, and verifies the fix resolves the issue.</p>
+  </div>
+</div>
+
+<div class="workflow-step">
+  <div class="step-number">07</div>
+  <div class="step-content">
+    <h4>Merge</h4>
+    <p>DevOps runs <code>devctl merge INC-xxx</code>. The fix branch is merged to master with <code>--no-ff</code>, pushed to remote, and the branch is deleted. The dossier is updated with merge commit and timestamp.</p>
+  </div>
+</div>
+
+<div class="workflow-step">
+  <div class="step-number">08</div>
+  <div class="step-content">
+    <h4>Deploy</h4>
+    <p>DevOps runs <code>devctl deploy &lt;service&gt;</code> (or uses <code>--deploy</code> flag with merge). The service is rebuilt and restarted with the merged code. The incident is marked RESOLVED.</p>
+  </div>
+</div>
+
+<h3>Incident Dossier Structure</h3>
+
+<p>Each incident generates a comprehensive markdown file at <code>~/.devctl/incidents/INC-xxx.md</code>:</p>
+
+<pre><code># Incident Dossier: INC-20240901-123456
+
+## Summary
+- Service: chaos-api
+- Container: chaos-api
+- Severity: CRITICAL
+- Context: escalating
+- Error Category: Node.js Runtime Error
+- Detected: 2024-09-01 12:34:56 UTC
+- Status: ✅ RESOLVED & MERGED
+
+## Error Details
+### Error Snippet
+TypeError: Cannot read properties of undefined (reading 'id')
+
+### Full Logs (Last 50 Lines)
+[application logs here]
+
+## Resolution
+### Fix Branch
+- Branch: fix/INC-20240901-123456-chaos-api
+- Commit: a1b2c3d4e5f6
+- Message: Fix null pointer in user handler
+- Files Changed: 2
+  - src/handlers/user.js
+  - tests/user.test.js
+
+### Code Changes (Diff Summary)
+[diff output]
+
+### Verification Results
+- Status: ✅ PASSED
+- Deployment: Running
+- Test Results: [test output]
+
+## Proof of Resolution
+### Merge Information
+- Merged By: admin
+- Merge Commit: f6e5d4c3b2a1
+- Merged At: 2024-09-01 13:45:00 UTC
+- Production Deployed: ✅ Yes</code></pre>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 8: COMMAND REFERENCE -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="container page-break">
+
+<h2 id="commands">8. Command Reference</h2>
+
+<h3>Service Management</h3>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl expose &lt;service&gt; [port]</div>
+  <div class="cmd-desc">Expose a container service through Caddy with dynamic HTTPS. Creates a wildcard TLS certificate via Let's Encrypt.</div>
+  <div class="cmd-usage">devctl expose grafana 3000
+devctl expose api --domain api.example.com 8000</div>
+</div>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl hide &lt;service&gt;</div>
+  <div class="cmd-desc">Remove the public HTTPS route for a service. The container remains running and monitored internally.</div>
+  <div class="cmd-usage">devctl hide grafana</div>
+</div>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl list</div>
+  <div class="cmd-desc">List all registered services with their public URLs, container status, and health.</div>
+  <div class="cmd-usage">devctl list</div>
+</div>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl logs &lt;service&gt; [--tail N]</div>
+  <div class="cmd-desc">View container logs for a service. Parses Docker's multiplexed log streams correctly.</div>
+  <div class="cmd-usage">devctl logs chaos-api --tail 50</div>
+</div>
+
+<h3>Discovery &amp; Indexing</h3>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl discover [--force]</div>
+  <div class="cmd-desc">Auto-discover running Docker containers. Detects existing nginx/Caddy/Apache virtual hosts, workspace paths, and classifies containers by role.</div>
+  <div class="cmd-usage">devctl discover --force</div>
+</div>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl reindex</div>
+  <div class="cmd-desc">Flush cached state and re-index all containers. Equivalent to <code>devctl discover --force</code>.</div>
+  <div class="cmd-usage">devctl reindex</div>
+</div>
+
+<h3>Incident Management</h3>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl incident [list|inspect|claim|resolve|purge]</div>
+  <div class="cmd-desc">Manage the incident bus. List open incidents, inspect details, claim for resolution, or purge all.</div>
+  <div class="cmd-usage">devctl incident list
+devctl incident inspect INC-20240901-123456
+devctl incident purge</div>
+</div>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl dispatch [incident_id]</div>
+  <div class="cmd-desc">Dispatch an incident to OpenCode for autonomous remediation. Launches in tmux session if available.</div>
+  <div class="cmd-usage">devctl dispatch INC-20240901-123456
+devctl dispatch --dry-run</div>
+</div>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl merge &lt;incident_id&gt; [--deploy]</div>
+  <div class="cmd-desc">Merge a verified fix branch back to master. Shows commits, asks for confirmation, pushes, and optionally deploys.</div>
+  <div class="cmd-usage">devctl merge INC-20240901-123456
+devctl merge INC-20240901-123456 --deploy</div>
+</div>
+
+<h3>Deployment</h3>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl deploy [service] [--pull] [--no-cache]</div>
+  <div class="cmd-desc">Rebuild and restart containers. Optionally pull latest code first.</div>
+  <div class="cmd-usage">devctl deploy chaos-api
+devctl deploy all --pull
+devctl deploy --no-cache api</div>
+</div>
+
+<h3>Fleet Management</h3>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl fleet [list|prune]</div>
+  <div class="cmd-desc">List all fleet nodes or prune stale ones.</div>
+  <div class="cmd-usage">devctl fleet list
+devctl fleet prune --max-age 30 --yes</div>
+</div>
+
+<h3>Telemetry &amp; Diagnostics</h3>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl heartbeat [--hub URL] [--name NODE]</div>
+  <div class="cmd-desc">Send and test telemetry heartbeat to the central hub.</div>
+  <div class="cmd-usage">devctl heartbeat --hub https://status.dev-server.datakrib.com/api/telemetry/ingest</div>
+</div>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl test &lt;target&gt;</div>
+  <div class="cmd-desc">Run Playwright visual and diagnostic tests against a service URL.</div>
+  <div class="cmd-usage">devctl test chaos-api
+devctl test https://status.dev-server.datakrib.com</div>
+</div>
+
+<div class="cmd-ref">
+  <div class="cmd-name">devctl doctor</div>
+  <div class="cmd-desc">Check system health: Docker access, devctl state, Caddy connectivity, OpenCode availability.</div>
+  <div class="cmd-usage">devctl doctor</div>
+</div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 9: REMEDIATION -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="container page-break">
+
+<h2 id="remediation">9. Tiered Remediation Engine</h2>
+
+<p>The remediation engine operates in 4 escalating tiers:</p>
+
+<h3>L0 — Observe</h3>
+<table>
+  <tbody>
+    <tr><td><strong>Trigger</strong></td><td>Log anomaly detected, container healthy</td></tr>
+    <tr><td><strong>Action</strong></td><td>Create incident, record metrics, no automatic action</td></tr>
+    <tr><td><strong>Use Case</strong></td><td>Non-critical warnings, informational errors</td></tr>
+  </tbody>
+</table>
+
+<h3>L1 — Auto-Restart</h3>
+<table>
+  <tbody>
+    <tr><td><strong>Trigger</strong></td><td>Container stopped OR HTTP 5xx response</td></tr>
+    <tr><td><strong>Action</strong></td><td>Restart container (max 3 attempts per incident window)</td></tr>
+    <tr><td><strong>Use Case</strong></td><td>OOM kills, crash loops, 502/503 errors</td></tr>
+    <tr><td><strong>Guard</strong></td><td>After 3 failed restarts, escalate to L2</td></tr>
+  </tbody>
+</table>
+
+<h3>L2 — Network Resync</h3>
+<table>
+  <tbody>
+    <tr><td><strong>Trigger</strong></td><td>Container lost Docker network connectivity</td></tr>
+    <tr><td><strong>Action</strong></td><td>Disconnect and reconnect to <code>dev-net</code>, reload proxy (Caddy/nginx/Apache)</td></tr>
+    <tr><td><strong>Use Case</strong></td><td>Container unreachable on Docker network despite running</td></tr>
+    <tr><td><strong>Guard</strong></td><td>If resync fails, escalate to L3</td></tr>
+  </tbody>
+</table>
+
+<h3>L3 — OpenCode Escalation</h3>
+<table>
+  <tbody>
+    <tr><td><strong>Trigger</strong></td><td>L1/L2 insufficient, code-level fix required</td></tr>
+    <tr><td><strong>Action</strong></td><td>Generate incident dossier, dispatch to OpenCode AI agent</td></tr>
+    <tr><td><strong>Use Case</strong></td><td>Application bugs, null pointer exceptions, logic errors</td></tr>
+    <tr><td><strong>Guard</strong></td><td>OpenCode works autonomously in tmux, creates fix branch</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warning">
+  <div class="callout-title">Safety</div>
+  <p>Auto-remediation can be disabled by setting <code>AUTO_REMEDIATION_ENABLED=false</code> in the environment. When disabled, incidents are created but no automatic restart or network resync is attempted.</p>
+</div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 10: DASHBOARD -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="container page-break">
+
+<h2 id="dashboard">10. Dashboard &amp; Telemetry</h2>
+
+<h3>10.1 Fleet Dashboard</h3>
+
+<p>The dashboard is a React application served by the hub at <code>https://status.BASE_DOMAIN</code>. It displays:</p>
+
+<ul>
+  <li><strong>KPI Metrics:</strong> Total nodes, containers, services, open incidents, server load</li>
+  <li><strong>Fleet Matrix:</strong> All nodes with status (ONLINE/STALE/OFFLINE), container count, service count</li>
+  <li><strong>Service Directory:</strong> Per-node service listing with container name, archetype, port, health, public URL</li>
+  <li><strong>Incident Console:</strong> Open and resolved incidents with severity, context badges, dispatch/merge actions</li>
+  <li><strong>Health Digest:</strong> Summary of fleet health trends and degradation patterns</li>
+</ul>
+
+<h3>10.2 Telemetry Payload</h3>
+
+<p>Each node streams a heartbeat every 15 seconds containing:</p>
+
+<pre><code>{
+  "node_name": "vm4",
+  "base_domain": "vm4.dev-server.datakrib.com",
+  "timestamp": 1725192000.0,
+  "status": "ONLINE",
+  "containers_count": 19,
+  "services_count": 19,
+  "services": [
+    {
+      "service_name": "aiops-grafana",
+      "container_name": "aiops-grafana",
+      "port": 3000,
+      "url": "https://aideveops.suburban.ng",
+      "container_type": "web",
+      "image": "grafana/grafana:10.2.2",
+      "version": "10.2.2",
+      "container_status": "Up 3 days"
+    }
+  ],
+  "open_incidents_count": 2,
+  "open_incidents": [...],
+  "metrics": {
+    "server": {
+      "load_average": {"1min": 0.45, "5min": 0.62, "15min": 0.58},
+      "memory": {"total_bytes": 16777216000, "used_bytes": 8388608000, "usage_percent": 50.0},
+      "disks": [...],
+      "network": {"tcp_connections": 142},
+      "uptime_seconds": 864000
+    },
+    "containers": [
+      {
+        "name": "aiops-grafana",
+        "cpu_percent": 2.3,
+        "memory_used_bytes": 268435456,
+        "memory_limit_bytes": 1073741824,
+        "memory_percent": 25.0,
+        "network_io": "1.2GB / 800MB",
+        "block_io": "50MB / 12MB",
+        "pids": 12
+      }
+    ]
+  },
+  "trends": {}
+}</code></pre>
+
+<h3>10.3 Command Channel</h3>
+
+<p>The hub can send commands back to nodes via heartbeat responses. Only whitelisted commands are accepted:</p>
+
+<table>
+  <thead>
+    <tr><th>Command</th><th>Action</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>restart_container</code></td><td>Restart a specific container</td></tr>
+    <tr><td><code>resync_network</code></td><td>Disconnect and reconnect container to dev-net, reload proxy</td></tr>
+    <tr><td><code>purge_incidents</code></td><td>Clear all incident files on the node</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <div class="callout-title">Security</div>
+  <p>Arbitrary shell commands are NOT accepted. Only the three whitelisted commands above can be executed remotely. This prevents unauthorized command execution even if the hub is compromised.</p>
+</div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 11: TROUBLESHOOTING -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="container page-break">
+
+<h2 id="troubleshooting">11. Troubleshooting</h2>
+
+<h3>Common Issues</h3>
+
+<h4>Node appears twice in dashboard (e.g., vm4 and vm-04)</h4>
+<p><strong>Cause:</strong> Inconsistent node naming across enrollment and heartbeat.</p>
+<p><strong>Fix:</strong> Update all nodes to latest code which normalizes names. Then prune duplicates:</p>
+<pre><code>cd /opt/happy-galileo && git reset --hard origin/master
+devctl fleet prune --yes</code></pre>
+
+<h4>Services show [INTERNAL - NO PUBLIC URL] despite having nginx virtual hosts</h4>
+<p><strong>Cause:</strong> Domain detection not finding the nginx configs.</p>
+<p><strong>Fix:</strong> Re-run discovery with force:</p>
+<pre><code>devctl discover --force</code></pre>
+<p>If still not detected, check that nginx configs are in standard locations (<code>/etc/nginx/sites-enabled/</code>, <code>/etc/nginx/conf.d/</code>, <code>/etc/nginx/sites-available/</code>).</p>
+
+<h4>Redis/database containers showing vendor URLs (download.redis.io)</h4>
+<p><strong>Cause:</strong> Environment variables like <code>REDIS_DOWNLOAD_URL</code> being picked up as service domains.</p>
+<p><strong>Fix:</strong> Updated code filters known vendor domains. Update and re-discover:</p>
+<pre><code>cd /opt/happy-galileo && git reset --hard origin/master
+devctl discover --force</code></pre>
+
+<h4>UFW blocked mail ports on Mailcow server</h4>
+<p><strong>Cause:</strong> Older version of UFW script didn't detect mail servers.</p>
+<p><strong>Fix:</strong> Updated code auto-skips UFW when Mailcow/Postfix/Dovecot detected. If UFW already broke mail:</p>
+<pre><code>ufw allow 25/tcp    # SMTP
+ufw allow 587/tcp   # Submission
+ufw allow 993/tcp   # IMAPS
+ufw allow 143/tcp   # IMAP
+ufw allow 110/tcp   # POP3
+ufw allow 995/tcp   # POP3S</code></pre>
+
+<h4>OpenCode doesn't merge fix branch after resolution</h4>
+<p><strong>Cause:</strong> By design — merge requires human confirmation.</p>
+<p><strong>Fix:</strong> After verifying the fix, run:</p>
+<pre><code>devctl merge INC-20240901-123456 --deploy</code></pre>
+
+<h4>Dashboard shows stale nodes that no longer exist</h4>
+<p><strong>Cause:</strong> Old node state persisted on disk.</p>
+<p><strong>Fix:</strong> Prune stale nodes:</p>
+<pre><code>devctl fleet prune --max-age 5 --yes</code></pre>
+
+<h3>Diagnostic Commands</h3>
+
+<pre><code># Check system health
+devctl doctor
+
+# View AI-Ops daemon logs
+docker logs ai-ops-daemon --tail 50
+
+# Check node telemetry
+devctl heartbeat
+
+# View container health
+devctl list
+
+# Inspect specific incident
+devctl incident inspect INC-xxx
+
+# View container logs
+devctl logs chaos-api --tail 100
+
+# Check fleet status
+devctl fleet list</code></pre>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 12: API REFERENCE -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="container page-break">
+
+<h2 id="api">12. API Reference</h2>
+
+<h3>Dashboard API Endpoints</h3>
+
+<table>
+  <thead>
+    <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-green">GET</span></td>
+      <td><code>/api/status</code></td>
+      <td>Current node status: services, containers, incidents</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-green">GET</span></td>
+      <td><code>/api/fleet/nodes</code></td>
+      <td>All fleet nodes with telemetry data</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-green">GET</span></td>
+      <td><code>/api/incidents?all=true</code></td>
+      <td>List incidents (open only by default, <code>?all=true</code> includes resolved)</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-blue">POST</span></td>
+      <td><code>/api/incidents/{id}/dispatch</code></td>
+      <td>Dispatch incident to OpenCode</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-blue">POST</span></td>
+      <td><code>/api/incidents/purge</code></td>
+      <td>Purge all incident files</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-blue">POST</span></td>
+      <td><code>/api/telemetry/ingest</code></td>
+      <td>Receive heartbeat from sub-nodes (hub only)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Telemetry Ingest Payload</h3>
+
+<p>Sub-nodes POST to <code>/api/telemetry/ingest</code> with header <code>X-Fleet-Key: &lt;key&gt;</code>:</p>
+
+<pre><code>POST /api/telemetry/ingest
+Content-Type: application/json
+X-Fleet-Key: default-fleet-key
+
+{
+  "node_name": "vm4",
+  "base_domain": "vm4.dev-server.datakrib.com",
+  "timestamp": 1725192000.0,
+  "status": "ONLINE",
+  "containers_count": 19,
+  "services_count": 19,
+  "services": [...],
+  "open_incidents_count": 2,
+  "open_incidents": [...],
+  "metrics": {
+    "server": { ... },
+    "containers": [ ... ]
+  }
+}</code></pre>
+
+<p><strong>Response:</strong></p>
+<pre><code>{
+  "status": "accepted",
+  "node": "vm4",
+  "commands": []   // Optional: hub-issued commands to execute
+}</code></pre>
+
+<h3>File Structure</h3>
+
+<pre><code>/opt/happy-galileo/
+├── ai_ops/
+│   ├── daemon.py              # Main monitoring loop
+│   ├── classifier.py          # Multi-language error detection
+│   ├── remediation.py         # L0-L3 tiered remediation
+│   ├── health_checker.py      # Container health inspection
+│   ├── metrics.py             # Server & container metrics
+│   ├── telemetry.py           # Fleet telemetry streamer
+│   ├── docker_socket.py       # Docker Engine API client
+│   ├── incident_throttle.py   # Incident rate limiting
+│   └── codebase_resolver.py   # Git workspace detection
+├── devctl/
+│   ├── cli.py                 # CLI entry point
+│   ├── core/
+│   │   ├── config.py          # Configuration
+│   │   ├── caddy.py           # Caddy API manager
+│   │   ├── docker_mgr.py      # Docker management
+│   │   ├── domains.py         # Domain registry & detection
+│   │   ├── incident_bus.py    # Incident state management
+│   │   ├── fleet_state.py     # Fleet node tracking
+│   │   └── incident_dossier.py # Dossier generation
+│   └── commands/
+│       └── fleet.py           # Fleet management commands
+├── dashboard/
+│   ├── app.py                 # Flask API server
+│   ├── frontend/              # React application
+│   └── static/                # Legacy static dashboard
+├── infra/
+│   ├── docker-compose.infra.yml
+│   ├── .env.example
+│   └── security/
+│       ├── proxy_resolver.sh  # Proxy conflict resolution
+│       └── ufw_setup.sh       # Firewall hardening
+├── scripts/
+│   └── setup-node.sh          # Sub-node enrollment script
+├── services/
+│   └── chaos-api/             # Test application
+│       ├── stress-test.sh     # Fault injection test
+│       └── test-l1-l2.sh     # L1/L2 escalation test
+└── requirements.txt</code></pre>
+
+<div class="page-footer">
+  <p>ServerGuard Documentation v1.0 — September 2026</p>
+  <p>github.com/Unlimited-demi/happy-galileo</p>
+</div>
+
+</div>
+
+</body>
+</html>

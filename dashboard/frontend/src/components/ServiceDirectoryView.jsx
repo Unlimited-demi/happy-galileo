@@ -69,10 +69,11 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy }) {
                 ) : (
                   filteredServices.map((svc, i) => {
                     const isWeb = svc.container_type === 'web' || !!svc.url;
-                    const isRunning = svc.status === 'RUNNING';
+                    const statusText = svc.container_status || svc.status || 'UNKNOWN';
+                    const isRunning = statusText.toLowerCase().startsWith('up');
                     return (
-                      <tr key={`${svc.name}-${i}`} className="hover:bg-muted/30 transition-colors">
-                        <td className="py-3 px-6 font-semibold text-slate-200">{svc.name}</td>
+                      <tr key={`${svc.service_name || svc.name}-${i}`} className="hover:bg-muted/30 transition-colors">
+                        <td className="py-3 px-6 font-semibold text-slate-200">{svc.service_name || svc.container_name || svc.name}</td>
                         <td className="py-3 px-6 font-sans text-muted-foreground">{svc.node_name}</td>
                         <td className="py-3 px-6 font-sans">
                           <Badge variant="outline" className="text-[11px] uppercase font-mono">
@@ -88,7 +89,7 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy }) {
                               }`}
                             />
                             <span className={isRunning ? 'text-emerald-400 font-medium' : 'text-rose-400 font-medium'}>
-                              {svc.status || 'UNKNOWN'}
+                              {statusText}
                             </span>
                           </div>
                         </td>

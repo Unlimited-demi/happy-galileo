@@ -1,25 +1,20 @@
 import React from 'react';
-import { ShieldCheck, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 export function Navbar({ baseDomain, onRefresh }) {
   return (
     <header className="flex items-center justify-between py-4 border-b border-border/60 mb-8">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-sky-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-inner">
-          <ShieldCheck className="w-6 h-6" />
+      <div>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-bold text-slate-100 tracking-tight">ServerGuard</h1>
+          <span className="text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+            Cloud-Ops
+          </span>
         </div>
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-slate-100 tracking-tight">ServerGuard</h1>
-            <span className="text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full">
-              Cloud-Ops
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Fleet Management & Autonomous AI-Ops | *.{baseDomain || 'dev-server.datakrib.com'}
-          </p>
-        </div>
+        <p className="text-xs text-muted-foreground">
+          Fleet Management & Autonomous AI-Ops | *.{baseDomain || 'dev-server.datakrib.com'}
+        </p>
       </div>
 
       <div className="flex items-center gap-3">

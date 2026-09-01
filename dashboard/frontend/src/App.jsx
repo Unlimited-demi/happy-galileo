@@ -60,6 +60,39 @@ export function App() {
     return status.open_incidents_count || 0;
   }, [nodes, status]);
 
+  // Aggregate metrics from all nodes (use hub node's metrics as primary display)
+  const aggregatedMetrics = useMemo(() => {
+    if (nodes.length > 0) {
+      // Sum load averages and cores across all nodes
+      let total1min = 0, total5min = 0, total15min = 0, totalCores = 0;
+      let totalMemUsed = 0, totalMemTotal = 0;
+      nodes.forEach(n => {
+        const sm = n.metrics?.server || {};
+        const la = sm.load_average || {};
+        total1min += la['1min'] || 0;
+        total5min += la['5min'] || 0;
+        total15min += la['15min'] || 0;
+        totalCores += sm.cpu_cores || 0;
+        const mem = sm.memory || {};
+        totalMemUsed += mem.used_bytes || 0;
+        totalMemTotal += mem.total_bytes || 0;
+      });
+      return {
+        server: {
+          cpu_cores: totalCores,
+          load_average: { '1min': total1min, '5min': total5min, '15min': total15min },
+          memory: {
+            used_bytes: totalMemUsed,
+            total_bytes: totalMemTotal,
+            usage_percent: totalMemTotal > 0 ? ((totalMemUsed / totalMemTotal) * 100) : 0,
+          },
+        },
+      };
+    }
+    // Fallback to hub's own metrics
+    return status.metrics || {};
+  }, [nodes, status]);
+
   const handleDispatch = async (incId) => {
     try {
       showToast('🚀 Dispatching OpenCode worker...');
@@ -96,6 +129,7 @@ export function App() {
         totalContainers={totalContainers}
         totalServices={totalServices}
         openIncidentsCount={openIncidentsCount}
+        metrics={aggregatedMetrics}
       />
 
       {/* Main Tab View */}

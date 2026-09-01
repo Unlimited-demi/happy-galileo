@@ -42,12 +42,22 @@ export function KpiMetrics({ totalNodes, totalContainers, totalServices, openInc
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Load</span>
             <Box className="w-4 h-4 text-muted-foreground" />
           </div>
-          <div className="text-2xl font-bold tabular-nums">
-            {loadAvg['5min']?.toFixed(2) || '—'}
-          </div>
-          <div className="text-[10px] text-muted-foreground mt-1 font-mono">
-            {loadAvg['1min']?.toFixed(2) || '0'} / {loadAvg['15min']?.toFixed(2) || '0'}
-          </div>
+          {(() => {
+            const cores = serverMetrics.cpu_cores || 0;
+            const load5 = loadAvg['5min'] || 0;
+            const pct = cores > 0 ? ((load5 / cores) * 100) : null;
+            return (
+              <>
+                <div className="text-2xl font-bold tabular-nums">
+                  {pct !== null ? `${pct.toFixed(0)}%` : '—'}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1 font-mono">
+                  {loadAvg['1min']?.toFixed(2) || '0'} / {load5.toFixed(2)} / {loadAvg['15min']?.toFixed(2) || '0'}
+                  {cores > 0 ? ` (${cores} cores)` : ''}
+                </div>
+              </>
+            );
+          })()}
         </CardContent>
       </Card>
 

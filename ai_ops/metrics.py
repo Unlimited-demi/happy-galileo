@@ -3,6 +3,7 @@ Container & Server Metrics Collection for AI-Ops Monitoring.
 Collects CPU, memory, disk, and network metrics from Docker containers and the host system.
 """
 
+import os
 import subprocess
 import time
 from typing import Dict, Any, List, Optional
@@ -38,6 +39,12 @@ class MetricsCollector:
     def collect_server_metrics(self) -> Dict[str, Any]:
         """Collect host server metrics (CPU, memory, disk, load)."""
         metrics = {}
+
+        # CPU cores
+        try:
+            metrics["cpu_cores"] = os.cpu_count() or 1
+        except Exception:
+            metrics["cpu_cores"] = 1
 
         # CPU Load Average (1min, 5min, 15min)
         try:
