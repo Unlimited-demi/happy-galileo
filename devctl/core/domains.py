@@ -672,6 +672,13 @@ class DomainRegistry:
         # ── Step 3: Detect existing real domains from reverse proxies (Mailcow, Caddy, Nginx, env vars) ──
         existing_domains = self.detect_existing_domains()
 
+        # Debug: print all detected domains
+        if existing_domains:
+            print(f"\n[DEBUG] Detected {len(existing_domains)} domain mappings:")
+            for key, info in sorted(existing_domains.items()):
+                print(f"  {key:30} → {info['domain']:40} (source: {info['source']})")
+            print()
+
         # ── Step 4: Register all remaining containers for monitoring ──
         from ai_ops.codebase_resolver import CodebaseResolver
         resolver = CodebaseResolver()
@@ -750,6 +757,8 @@ class DomainRegistry:
             if real_domain_info:
                 real_domain = real_domain_info.get("domain")
                 real_domain_source = real_domain_info.get("source")
+                # Debug: print where the domain was detected from
+                print(f"  [DEBUG] {c_name}: {real_domain} (from {real_domain_source})")
 
             # Classify container type
             if real_domain and ("nginx" in c_name or "frontend" in c_name or "web" in c_name or "sogo" in c_name):
