@@ -1,6 +1,6 @@
-# ServerGuard Deployment Guide
+# ARA Deployment Guide
 
-> **Production deployment commands for Hub + Node setup.**
+> **Autonomous Remediation Agent — Production deployment commands for Hub + Node setup.**
 > The Hub runs the fleet dashboard and telemetry ingest. Nodes run the AI-Ops monitoring daemon and stream telemetry back to the Hub.
 
 ---
