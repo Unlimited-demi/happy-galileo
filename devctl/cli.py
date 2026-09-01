@@ -648,6 +648,196 @@ def cmd_dispatch(args):
     print("═" * 70 + "\n")
 
 
+def cmd_merge(args):
+    """Merge a verified fix branch back to master and optionally redeploy."""
+    import subprocess
+    from pathlib import Path
+
+    incident_id = args.incident_id
+    bus = IncidentBus()
+    inc = bus.get_incident(incident_id)
+
+    if not inc:
+        print(f"[✗] Incident '{incident_id}' not found.")
+        sys.exit(1)
+
+    service_name = inc.get("service_name", "unknown")
+    fix_branch = inc.get("fix_branch")
+
+    if not fix_branch:
+        print(f"[✗] Incident '{incident_id}' has no fix branch recorded.")
+        print(f"    Run 'devctl dispatch {incident_id}' first to create a fix.")
+        sys.exit(1)
+
+    print(f"\n{'═' * 70}")
+    print(f"🔀 MERGE FIX BRANCH: {fix_branch}")
+    print(f"{'═' * 70}")
+    print(f"• Incident:  {incident_id}")
+    print(f"• Service:   {service_name}")
+    print(f"• Branch:    {fix_branch}")
+    print(f"• Status:    {inc.get('state', 'UNKNOWN')}")
+    print()
+
+    # Get workspace directory
+    evidence = inc.get("evidence", {}) or {}
+    registry = DomainRegistry()
+    svc_entry = registry.get_service(service_name)
+    workspace = evidence.get("workspace_dir") or (svc_entry.get("workspace_dir") if svc_entry else None)
+
+    if not workspace:
+        # Try to find workspace from container labels
+        c_info = DockerManager().inspect_container(service_name)
+        if c_info:
+            labels = c_info.get("Config", {}).get("Labels", {}) or {}
+            workspace = labels.get("com.docker.compose.project.working_dir")
+
+    if not workspace or not os.path.isdir(workspace):
+        print(f"[✗] Cannot find workspace directory for '{service_name}'.")
+        print(f"    Please run this command from the service's git repository.")
+        sys.exit(1)
+
+    workspace_path = Path(workspace)
+    print(f"• Workspace: {workspace_path}")
+    print()
+
+    # Check current branch
+    result = subprocess.run(
+        ["git", "-C", str(workspace_path), "branch", "--show-current"],
+        capture_output=True, text=True, check=False
+    )
+    current_branch = result.stdout.strip()
+
+    if current_branch != "master" and current_branch != "main":
+        print(f"[!] WARNING: You are currently on branch '{current_branch}', not master/main.")
+        print(f"    Please switch to master/main first: git checkout master")
+        sys.exit(1)
+
+    # Fetch latest from remote
+    print(f"[*] Fetching latest from remote...")
+    subprocess.run(["git", "-C", str(workspace_path), "fetch", "origin"], check=False)
+
+    # Check if fix branch exists
+    result = subprocess.run(
+        ["git", "-C", str(workspace_path), "branch", "--list", fix_branch],
+        capture_output=True, text=True, check=False
+    )
+    if not result.stdout.strip():
+        # Try remote branch
+        result = subprocess.run(
+            ["git", "-C", str(workspace_path), "branch", "--list", "-r", f"origin/{fix_branch}"],
+            capture_output=True, text=True, check=False
+        )
+        if not result.stdout.strip():
+            print(f"[✗] Fix branch '{fix_branch}' not found locally or on remote.")
+            sys.exit(1)
+        # Checkout remote branch
+        print(f"[*] Checking out remote branch '{fix_branch}'...")
+        subprocess.run(
+            ["git", "-C", str(workspace_path), "checkout", fix_branch],
+            check=False
+        )
+
+    # Show commits that will be merged
+    print(f"\n[*] Commits to merge:")
+    subprocess.run(
+        ["git", "-C", str(workspace_path), "log", "--oneline", f"master..{fix_branch}"],
+        check=False
+    )
+
+    # Confirm merge
+    print(f"\n[?] Ready to merge '{fix_branch}' into master?")
+    confirm = input("    Type 'yes' to proceed: ").strip().lower()
+    if confirm != "yes":
+        print(f"[✗] Merge cancelled.")
+        sys.exit(0)
+
+    # Checkout master
+    print(f"\n[*] Checking out master...")
+    subprocess.run(["git", "-C", str(workspace_path), "checkout", "master"], check=False)
+
+    # Merge fix branch
+    print(f"[*] Merging '{fix_branch}' into master...")
+    result = subprocess.run(
+        ["git", "-C", str(workspace_path), "merge", "--no-ff", fix_branch, "-m", f"Merge fix for {incident_id}: {service_name}"],
+        capture_output=True, text=True, check=False
+    )
+
+    if result.returncode != 0:
+        print(f"[✗] Merge failed!")
+        print(result.stderr)
+        print(f"\n    Resolve conflicts manually, then run:")
+        print(f"    git add . && git commit && git push")
+        sys.exit(1)
+
+    # Get merge commit hash
+    result = subprocess.run(
+        ["git", "-C", str(workspace_path), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=False
+    )
+    merge_commit = result.stdout.strip()[:12]
+
+    print(f"[✓] Merge successful! Commit: {merge_commit}")
+
+    # Push to remote
+    print(f"[*] Pushing to remote...")
+    result = subprocess.run(
+        ["git", "-C", str(workspace_path), "push", "origin", "master"],
+        capture_output=True, text=True, check=False
+    )
+
+    if result.returncode != 0:
+        print(f"[!] Warning: Push failed. You may need to push manually:")
+        print(f"    git push origin master")
+        print(result.stderr)
+    else:
+        print(f"[✓] Pushed to remote successfully.")
+
+    # Delete fix branch if requested
+    if not args.no_delete_branch:
+        print(f"[*] Deleting fix branch '{fix_branch}'...")
+        subprocess.run(
+            ["git", "-C", str(workspace_path), "branch", "-d", fix_branch],
+            check=False
+        )
+        subprocess.run(
+            ["git", "-C", str(workspace_path), "push", "origin", "--delete", fix_branch],
+            check=False, capture_output=True
+        )
+
+    # Update incident status
+    inc["state"] = "MERGED"
+    inc["merge_commit"] = merge_commit
+    inc["merged_at"] = time.time()
+    inc["merged_by"] = os.environ.get("USER", "unknown")
+    bus.save_incident(inc)
+
+    # Update dossier
+    from devctl.core.incident_dossier import IncidentDossier
+    dossier = IncidentDossier(Config.DEVCTL_STATE_DIR / "incidents")
+    dossier.mark_resolved(
+        incident_id=incident_id,
+        merged_by=inc["merged_by"],
+        merge_commit=merge_commit,
+        production_deployed=args.deploy
+    )
+
+    print(f"\n{'═' * 70}")
+    print(f"✅ MERGE COMPLETE")
+    print(f"{'═' * 70}")
+    print(f"• Merge Commit: {merge_commit}")
+    print(f"• Incident:     {incident_id} → MERGED")
+    print(f"• Dossier:      Updated with resolution proof")
+
+    if args.deploy:
+        print(f"\n[*] Redeploying service...")
+        print(f"    Run: devctl restart {service_name}")
+    else:
+        print(f"\n[*] To redeploy the merged code:")
+        print(f"    devctl restart {service_name}")
+
+    print()
+
+
 def cmd_doctor(args):
     """Check health of server prerequisites, Docker, Caddy, and DNS."""
     print("\n🔍 devctl Doctor - Environment & Health Diagnostic")
@@ -727,6 +917,12 @@ def main():
     p_dispatch.add_argument("--no-tmux", action="store_true", help="Run OpenCode directly in the current interactive terminal instead of tmux")
     p_dispatch.add_argument("--dry-run", action="store_true", help="Print prompt and checkout branch without invoking opencode CLI")
 
+    # merge
+    p_merge = subparsers.add_parser("merge", help="Merge a verified fix branch back to master and deploy")
+    p_merge.add_argument("incident_id", help="Incident ID (e.g., INC-20240901-123456)")
+    p_merge.add_argument("--deploy", action="store_true", help="Automatically redeploy after merge")
+    p_merge.add_argument("--no-delete-branch", action="store_true", help="Keep the fix branch after merge")
+
     # discover
     p_discover = subparsers.add_parser("discover", help="Auto-discover running Docker containers and index them into devctl")
     p_discover.add_argument("--force", "-f", action="store_true", help="Force re-discovery & flush old cached state")
@@ -760,6 +956,7 @@ def main():
         "test": cmd_test,
         "incident": cmd_incident,
         "dispatch": cmd_dispatch,
+        "merge": cmd_merge,
         "doctor": cmd_doctor,
     }
 
