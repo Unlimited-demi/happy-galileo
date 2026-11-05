@@ -260,6 +260,7 @@ class AIContainerInference:
 
         # Primary identity is determined by container image, name, and entrypoint
         primary_identity = f"{name_lower} {image_lower} {cmd_lower} {entry_lower}"
+        combined_text = f"{primary_identity} {logs_lower}"
 
         dependencies = []
         # Check env keys and compose labels for dependency hints

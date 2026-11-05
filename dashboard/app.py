@@ -32,20 +32,26 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     """Multi-threaded HTTP Request handler serving static UI and REST API."""
 
     def _check_auth(self, auth_type='dashboard'):
-        """Check authentication. Returns True if authorized."""
+        """Check authentication. Returns True if authorized. Fails closed."""
         try:
             auth_mgr = AuthManager()
             if auth_type == 'telemetry':
                 key = self.headers.get('X-Fleet-Key', '')
+                fleet_key_env = os.environ.get('FLEET_KEY', '')
+                if fleet_key_env and key and secrets.compare_digest(fleet_key_env, key):
+                    return True
                 return auth_mgr.validate_telemetry_key(key)
             else:
                 auth_header = self.headers.get('Authorization', '')
                 if auth_header.startswith('Bearer '):
-                    key = auth_header[7:]
+                    key = auth_header[7:].strip()
+                    dashboard_key_env = os.environ.get('DASHBOARD_KEY', '')
+                    if dashboard_key_env and key and secrets.compare_digest(dashboard_key_env, key):
+                        return True
                     return auth_mgr.validate_dashboard_key(key)
-                return not auth_mgr._load_auth().get('initialized', False)  # Allow if not yet set up
+                return False
         except Exception:
-            return True
+            return False
 
     def __init__(self, *args, directory=None, **kwargs):
         if directory is None:
@@ -415,48 +421,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             parsed = urlparse(self.path)
             path = parsed.path
 
-            if path.startswith("/api/terminals/") and path.endswith("/input"):
-                session_name = path[len("/api/terminals/"): -len("/input")].strip("/")
-                content_length = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
-                payload = json.loads(body) if body else {}
-                inp = payload.get("input", "")
+            # Strictly require authentication on ALL API POST routes
+            if path == "/api/telemetry/ingest":
+                if not self._check_auth(auth_type='telemetry'):
+                    self._send_json({"error": "Unauthorized telemetry key"}, status=401)
+                    return
+            elif path.startswith("/api/"):
+                if not self._check_auth(auth_type='dashboard'):
+                    self._send_json({"error": "Unauthorized dashboard access"}, status=401)
+                    return
 
-                has_sess = subprocess.run(["tmux", "has-session", "-t", session_name], capture_output=True)
-                if has_sess.returncode == 0:
-                    if inp == "\r" or inp == "\n":
-                        subprocess.run(["tmux", "send-keys", "-t", session_name, "Enter"], check=False)
-                    elif inp == "\x03":
-                        subprocess.run(["tmux", "send-keys", "-t", session_name, "C-c"], check=False)
-                    elif inp == "\x7f" or inp == "\b":
-                        subprocess.run(["tmux", "send-keys", "-t", session_name, "BSpace"], check=False)
-                    elif inp == "\x1b[A": # Up arrow
-                        subprocess.run(["tmux", "send-keys", "-t", session_name, "Up"], check=False)
-                    elif inp == "\x1b[B": # Down arrow
-                        subprocess.run(["tmux", "send-keys", "-t", session_name, "Down"], check=False)
-                    else:
-                        subprocess.run(["tmux", "send-keys", "-l", "-t", session_name, inp], check=False)
-                    self._send_json({"status": "sent"})
-                else:
-                    self._send_json({"status": "error", "error": f"Session '{session_name}' not found"}, status=404)
-                return
-
-            elif path.startswith("/api/terminals/") and path.endswith("/resize"):
-                session_name = path[len("/api/terminals/"): -len("/resize")].strip("/")
-                content_length = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
-                payload = json.loads(body) if body else {}
-                cols = int(payload.get("cols", 80))
-                rows = int(payload.get("rows", 24))
-                subprocess.run(["tmux", "resize-window", "-t", session_name, "-x", str(cols), "-y", str(rows)], check=False)
-                self._send_json({"status": "resized", "cols": cols, "rows": rows})
+            # Explicitly reject remote shell input endpoints (Zero RCE Surface)
+            if path.startswith("/api/terminals/") and (path.endswith("/input") or path.endswith("/resize")):
+                self._send_json({
+                    "error": "Terminal keystroke input and remote execution are permanently disabled for security.",
+                    "status": "disabled"
+                }, status=403)
                 return
 
             if path == "/api/telemetry/ingest":
-                if not self._check_auth(auth_type='telemetry'):
-                    self._send_json({"error": "Unauthorized"}, status=401)
-                    return
-
                 content_length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
                 payload = json.loads(body) if body else {}
