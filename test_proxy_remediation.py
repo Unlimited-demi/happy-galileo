@@ -32,8 +32,16 @@ class StubDocker:
     def restart_container(self, name):
         return True
 
+import pytest
+
+@pytest.mark.parametrize("proxy_name,expected_cmd", [
+    ("caddy", ["caddy", "reload", "--config", "/etc/caddy/Caddyfile"]),
+    ("nginx", ["nginx", "-s", "reload"]),
+    ("apache", ["apachectl", "graceful"]),
+    ("httpd", ["apachectl", "graceful"]),
+    ("unknown", None),
+])
 def test_proxy(proxy_name, expected_cmd):
-    print(f"\nTesting proxy: {proxy_name}")
     engine = RemediationEngine()
     engine.docker = StubDocker(proxy_name=proxy_name)
 
@@ -45,28 +53,13 @@ def test_proxy(proxy_name, expected_cmd):
     }
 
     result = engine.handle_health_result(dict(health))
-    check(f"L2 triggered for {proxy_name}", result.get("level") == 2, str(result))
-    check(f"container re-attached for {proxy_name}", engine.docker.reconnected == [("web", "dev-net")])
+    assert result.get("level") == 2
+    assert engine.docker.reconnected == [("web", "dev-net")]
 
     if expected_cmd is None:
-        # Unknown proxy — no reload should be attempted (correct behavior)
-        check(f"no reload for unknown proxy {proxy_name}", len(engine.docker.execs) == 0,
-              f"Unexpected execs: {engine.docker.execs}")
+        assert len(engine.docker.execs) == 0
     elif engine.docker.execs:
         actual_cmd = engine.docker.execs[0][1]
-        check(f"correct reload command for {proxy_name}", actual_cmd == expected_cmd, f"Got: {actual_cmd}")
+        assert actual_cmd == expected_cmd
     else:
-        check(f"reload command executed for {proxy_name}", False, "No exec call made")
-
-# Test cases
-test_proxy("caddy", ["caddy", "reload", "--config", "/etc/caddy/Caddyfile"])
-test_proxy("nginx", ["nginx", "-s", "reload"])
-test_proxy("apache", ["apachectl", "graceful"])
-test_proxy("httpd", ["apachectl", "graceful"])
-test_proxy("unknown", None) # Should not fail, just not reload proxy
-
-print()
-if failures:
-    print(f"{len(failures)} FAILURES: {failures}")
-    sys.exit(1)
-print("ALL PROXY TESTS PASSED")
+        assert False, "No exec call made"

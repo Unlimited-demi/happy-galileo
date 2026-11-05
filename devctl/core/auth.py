@@ -46,19 +46,28 @@ class AuthManager:
         return {'dashboard_key': dashboard_key, 'telemetry_key': telemetry_key}
     
     def validate_dashboard_key(self, key: str) -> bool:
-        """Validate a dashboard API key."""
+        """Validate a dashboard API key. Fails closed."""
+        if not key:
+            return False
         data = self._load_auth()
         if not data.get('initialized'):
-            return True  # No auth configured yet, allow access
+            # Fail closed: must be initialized
+            return False
         expected = data.get('dashboard_key_hash', '')
+        if not expected:
+            return False
         provided = hashlib.sha256(key.encode()).hexdigest()
         return secrets.compare_digest(expected, provided)
     
     def validate_telemetry_key(self, key: str) -> bool:
-        """Validate a telemetry ingestion API key."""
+        """Validate a telemetry ingestion API key. Fails closed."""
+        if not key:
+            return False
         data = self._load_auth()
         if not data.get('initialized'):
-            return True  # No auth configured yet, allow access
+            return False
         expected = data.get('telemetry_key_hash', '')
+        if not expected:
+            return False
         provided = hashlib.sha256(key.encode()).hexdigest()
         return secrets.compare_digest(expected, provided)

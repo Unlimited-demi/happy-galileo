@@ -27,7 +27,11 @@ done
 echo "========================================================"
 echo "🚀 Bootstrapping AI Remote Development Workstation"
 echo "   Domain Scope: *.${BASE_DOMAIN}"
-echo "   GitHub Auth:  ${GITHUB_TOKEN:+Token (Zero-Touch)}${GITHUB_TOKEN:-SSH Key}"
+if [ -n "${GITHUB_TOKEN}" ]; then
+  echo "   GitHub Auth:  Token (Configured)"
+else
+  echo "   GitHub Auth:  SSH Deploy Key"
+fi
 echo "========================================================"
 
 # Check root privileges

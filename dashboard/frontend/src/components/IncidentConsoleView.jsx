@@ -23,7 +23,7 @@ export function IncidentConsoleView({ incidents, onSelect, onDispatch, onPurge }
   }
 
   const openCount = incidents.filter(
-    (i) => !['RESOLVED', 'VERIFIED', 'CLOSED'].includes(i.state)
+    (i) => !['RESOLVED', 'VERIFIED', 'RESOLVED_UNVERIFIED', 'MERGED', 'CLOSED'].includes(i.state)
   ).length;
 
   return (
@@ -42,21 +42,48 @@ export function IncidentConsoleView({ incidents, onSelect, onDispatch, onPurge }
       {/* Incident Cards Grid */}
       <div className="space-y-4">
         {incidents.map((inc) => {
-          const isResolved = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(inc.state);
+          const isVerified = ['VERIFIED', 'MERGED'].includes(inc.state);
+          const isUnverified = inc.state === 'RESOLVED_UNVERIFIED';
+          const isResolved = isVerified || isUnverified || ['RESOLVED', 'CLOSED'].includes(inc.state);
           const isClaimed = inc.state === 'CLAIMED';
+          const isFailed = inc.state === 'FAILED';
           const stack = inc.evidence?.stack_trace || inc.evidence?.logs || 'No stack trace captured.';
-          const pct = isResolved ? 100 : isClaimed ? 60 : 20;
+          const pct = isVerified ? 100 : isUnverified ? 85 : isClaimed ? 60 : isFailed ? 10 : 20;
+
+          const badgeVariant = isVerified
+            ? 'success'
+            : isUnverified
+            ? 'warning'
+            : isClaimed
+            ? 'warning'
+            : isFailed
+            ? 'destructive'
+            : 'destructive';
+
+          const badgeLabel = isVerified
+            ? inc.state === 'MERGED'
+              ? 'MERGED & VERIFIED'
+              : 'VERIFIED'
+            : isUnverified
+            ? 'RESOLVED (UNVERIFIED)'
+            : isClaimed
+            ? `CLAIMED (${inc.claimed_by || 'OpenCode'})`
+            : inc.state || 'DETECTED';
+
+          const borderClass = isVerified
+            ? 'border-l-emerald-500 border-border/60 bg-card/40 opacity-80'
+            : isUnverified
+            ? 'border-l-amber-500 border-border/60 bg-card/80'
+            : isClaimed
+            ? 'border-l-sky-500 border-border/60 bg-card/80'
+            : isFailed
+            ? 'border-l-rose-600 border-border/60 bg-card/80'
+            : 'border-l-rose-500 border-border/60 bg-card/80';
 
           return (
             <Card
               key={inc.id}
-              className={`border-l-4 transition-all duration-300 ${
-                isResolved
-                  ? 'border-l-emerald-500 border-border/60 bg-card/40 opacity-70'
-                  : isClaimed
-                  ? 'border-l-amber-500 border-border/60 bg-card/80'
-                  : 'border-l-rose-500 border-border/60 bg-card/80'
-              }`}
+              className={`border-l-4 transition-all duration-300 ${borderClass}`}
             >
               <CardContent className="p-5 space-y-4">
                 <div className="flex items-center justify-between">
@@ -64,8 +91,8 @@ export function IncidentConsoleView({ incidents, onSelect, onDispatch, onPurge }
                     <Badge variant="outline" className="font-mono bg-zinc-950 border-border/50 text-slate-400">
                       {inc.id}
                     </Badge>
-                    <Badge variant={isResolved ? 'success' : isClaimed ? 'warning' : 'destructive'} className="text-[10px]">
-                      {isClaimed ? `CLAIMED (${inc.claimed_by || 'OpenCode'})` : inc.state || 'DETECTED'}
+                    <Badge variant={badgeVariant} className="text-[10px]">
+                      {badgeLabel}
                     </Badge>
                     <span className="text-muted-foreground font-sans opacity-70">
                       • {inc.source_node || 'Primary Node'}
@@ -100,10 +127,12 @@ export function IncidentConsoleView({ incidents, onSelect, onDispatch, onPurge }
                   <Progress
                     value={pct}
                     className={`h-1 ${
-                      isResolved
+                      isVerified
                         ? '[&>div]:bg-emerald-400'
-                        : isClaimed
+                        : isUnverified
                         ? '[&>div]:bg-amber-400'
+                        : isClaimed
+                        ? '[&>div]:bg-sky-400'
                         : '[&>div]:bg-rose-400'
                     }`}
                   />

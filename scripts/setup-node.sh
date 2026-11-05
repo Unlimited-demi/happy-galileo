@@ -55,7 +55,11 @@ echo "📡 Setting up FLEET NODE AGENT: ${NODE_NAME}"
 echo "   Domain Scope:     *.${BASE_DOMAIN}"
 echo "   Central Hub:      ${CENTRAL_HUB_URL:-None (Standalone)}"
 echo "   Role:             NODE AGENT (Monitor + Stream Telemetry)"
-echo "   GitHub Auth:      ${GITHUB_TOKEN:+Token (Zero-Touch)}${GITHUB_TOKEN:-SSH Key}"
+if [ -n "${GITHUB_TOKEN}" ]; then
+  echo "   GitHub Auth:      Token (Configured)"
+else
+  echo "   GitHub Auth:      SSH Deploy Key"
+fi
 echo "========================================================"
 
 if [ "$EUID" -ne 0 ]; then

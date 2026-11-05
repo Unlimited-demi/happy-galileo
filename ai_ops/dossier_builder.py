@@ -177,12 +177,6 @@ class DossierBuilder:
         if exit_code == 1:
             return "Application exited with error. Check logs for initialization failures."
 
-        if "econnrefused" in stack or "connection refused" in stack:
-            return "Cannot connect to upstream dependency. Verify the dependency container is running and on the same network."
-
-        if "cannot read properties" in stack or "typeerror" in stack or "undefined" in stack or "referenceerror" in stack:
-            return "Application runtime error. Check the source code for null/undefined access patterns. Run unit tests to identify the failing code path."
-
         if "prismaclientinitializationerror" in stack or "database server at" in stack:
             svc = evidence.get('service_name', 'the service')
             return (
@@ -192,6 +186,12 @@ class DossierBuilder:
                 "3. Ensure PostgreSQL credentials (user, password, db name) match across services. "
                 "4. If on Alpine Linux, ensure openssl is installed in Dockerfile (apk add --no-cache openssl)."
             )
+
+        if "econnrefused" in stack or "connection refused" in stack:
+            return "Cannot connect to upstream dependency. Verify the dependency container is running and on the same network."
+
+        if "cannot read properties" in stack or "typeerror" in stack or "undefined" in stack or "referenceerror" in stack:
+            return "Application runtime JavaScript/TypeScript bug or null pointer error. Check the source code for null/undefined access patterns. Run unit tests to identify the failing code path."
 
         if "openssl" in stack and ("missing" in stack or "unable to require" in stack):
             return (

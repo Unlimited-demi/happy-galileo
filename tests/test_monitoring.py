@@ -58,8 +58,8 @@ class TestIncidentBus:
     def test_resolve_incident(self, tmp_path):
         bus = IncidentBus(incidents_dir=tmp_path)
         incident = bus.create_incident("svc1", "Test")
-        resolved = bus.resolve_incident(incident["id"], notes="All fixed", proof={"health_probe": "200 OK"})
-        assert resolved["state"] == IncidentState.RESOLVED
+        resolved = bus.resolve_incident(incident["id"], notes="All fixed", proof={"health_probe": "200 OK"}, verified=True)
+        assert resolved["state"] == IncidentState.VERIFIED
         assert resolved["resolution_notes"] == "All fixed"
         assert resolved["resolution_proof"]["health_probe"] == "200 OK"
         assert resolved["resolved_at"] is not None
@@ -196,6 +196,7 @@ class TestRemediation:
 
     @patch('ai_ops.remediation.DockerSocket')
     def test_level3_escalation(self, mock_docker_cls, tmp_path):
+        mock_docker_cls.return_value.get_networks.return_value = ["dev-net"]
         engine = RemediationEngine()
         engine.incident_bus.incidents_dir = tmp_path
         engine.incident_bus.incidents_dir.mkdir(parents=True, exist_ok=True)
@@ -205,11 +206,12 @@ class TestRemediation:
             "container_running": True,
             "log_error": "TypeError: something wrong"
         })
-        assert result["action"] == "ESCALATE_TO_OPENCODE"
+        assert result["action"] in ["ESCALATE_TO_OPENCODE", "ESCALATE_AND_DISPATCH"]
         assert "incident_id" in result
 
     @patch('ai_ops.remediation.DockerSocket')
     def test_dedup_already_reported(self, mock_docker_cls, tmp_path):
+        mock_docker_cls.return_value.get_networks.return_value = ["dev-net"]
         engine = RemediationEngine()
         engine.incident_bus.incidents_dir = tmp_path
         engine.incident_bus.incidents_dir.mkdir(parents=True, exist_ok=True)

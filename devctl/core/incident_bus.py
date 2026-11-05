@@ -18,7 +18,10 @@ class IncidentState:
     CLAIMED = "CLAIMED"
     FIXED = "FIXED"
     RESOLVED = "RESOLVED"
+    RESOLVED_UNVERIFIED = "RESOLVED_UNVERIFIED"
     VERIFIED = "VERIFIED"
+    MERGED = "MERGED"
+    FAILED = "FAILED"
     CLOSED = "CLOSED"
 
 
@@ -87,23 +90,25 @@ class IncidentBus:
         resolved_at = incident.get("resolved_at", "")
 
         resolution_section = ""
-        if incident["state"] in [IncidentState.RESOLVED, IncidentState.VERIFIED, IncidentState.CLOSED]:
+        if incident["state"] in [IncidentState.RESOLVED, IncidentState.RESOLVED_UNVERIFIED, IncidentState.VERIFIED, IncidentState.MERGED, IncidentState.FAILED, IncidentState.CLOSED]:
+            is_verified = incident["state"] in (IncidentState.VERIFIED, IncidentState.MERGED)
+            status_label = "VERIFIED & RESOLVED" if incident["state"] == IncidentState.VERIFIED else incident["state"]
             resolution_section = f"""
 ---
 
-## ✅ Resolution & Verification Proof
-- **Status:** `RESOLVED & VERIFIED`
-- **Resolved By:** `{incident.get('claimed_by', 'OpenCode')}`
-- **Resolved At:** `{resolved_at}`
+## {'✅' if is_verified else '⚠️'} Resolution & Verification Proof
+- **Status:** `{status_label}`
+- **Resolved By:** `{incident.get('claimed_by', 'N/A')}`
+- **Resolved At:** `{resolved_at or 'N/A'}`
 - **Deployment URL:** `{proof.get('live_url', failing_url)}`
-- **Health Probe:** `{proof.get('health_probe', 'HTTP 200 OK')}`
-- **Container State:** `{proof.get('container_state', 'RUNNING')}`
+- **Health Probe:** `{proof.get('health_probe', 'N/A')}`
+- **Container State:** `{proof.get('container_state', 'N/A')}`
 - **Git Branch:** `{proof.get('git_branch', 'N/A')}`
 - **Git Commit:** `{proof.get('git_commit', 'N/A')}`
 - **Git Push Status:** `{proof.get('git_push_status', 'N/A')}`
 
 ### 📝 Remediation & Root Cause Insight:
-{resolution_notes or 'Application bug resolved and verified with automated test suite.'}
+{resolution_notes or 'No remediation notes recorded.'}
 
 ### 🛠️ Code Diff & Files Modified:
 ```text
@@ -206,17 +211,29 @@ devctl incident resolve {incident_id} --notes "Resolved {incident['service_name'
             {"state": IncidentState.CLAIMED, "claimed_by": agent_name},
         )
 
-    def resolve_incident(self, incident_id: str, notes: str = "", proof: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-        """Mark incident as resolved with verification proof."""
+    def resolve_incident(self, incident_id: str, notes: str = "", proof: Optional[Dict[str, Any]] = None, verified: bool = False) -> Optional[Dict[str, Any]]:
+        """Mark incident as resolved with honest verification proof."""
+        state = IncidentState.VERIFIED if verified else IncidentState.RESOLVED_UNVERIFIED
         return self.update_incident(
             incident_id,
             {
-                "state": IncidentState.RESOLVED,
+                "state": state,
                 "resolved_at": datetime.now(timezone.utc).isoformat(),
                 "resolution_notes": notes,
                 "resolution_proof": proof or {},
             },
         )
+
+    def save_incident(self, incident: Dict[str, Any]) -> Dict[str, Any]:
+        """Save an entire incident dictionary directly."""
+        incident_id = incident["id"]
+        incident["updated_at"] = datetime.now(timezone.utc).isoformat()
+        json_path = self.incidents_dir / f"{incident_id}.json"
+        with self._lock:
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(incident, f, indent=2)
+            self._write_markdown_dossier(incident)
+        return incident
 
     def list_incidents(self, only_open: bool = False) -> List[Dict[str, Any]]:
         """List all incidents."""
@@ -226,7 +243,13 @@ devctl incident resolve {incident_id} --notes "Resolved {incident['service_name'
                 try:
                     with open(file, "r", encoding="utf-8") as f:
                         inc = json.load(f)
-                        if only_open and inc.get("state") in [IncidentState.RESOLVED, IncidentState.CLOSED, IncidentState.VERIFIED]:
+                        if only_open and inc.get("state") in [
+                            IncidentState.RESOLVED,
+                            IncidentState.RESOLVED_UNVERIFIED,
+                            IncidentState.CLOSED,
+                            IncidentState.VERIFIED,
+                            IncidentState.MERGED,
+                        ]:
                             continue
                         incidents.append(inc)
                 except Exception:
