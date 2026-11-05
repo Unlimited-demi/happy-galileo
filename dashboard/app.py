@@ -755,11 +755,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             thread_context=payload,
                             engine=result.get("engine", "ara-brain")
                         )
-                        import logging
-                        logging.getLogger("ARA.ChatOps").info(f"Async reply posted to Concert: sent={post_res.get('sent')}")
+                        print(f"[ARA.ChatOps] Async reply posted to Concert: sent={post_res.get('sent')} status={post_res.get('status_code')}", flush=True)
                     except Exception as err:
-                        import logging
-                        logging.getLogger("ARA.ChatOps").error(f"Async ChatOps processing error: {err}")
+                        print(f"[ARA.ChatOps] Async ChatOps processing error: {err}", flush=True)
 
                 threading.Thread(target=_async_chatops_worker, daemon=True).start()
                 return
