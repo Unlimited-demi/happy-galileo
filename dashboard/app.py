@@ -38,12 +38,45 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     """Multi-threaded HTTP Request handler serving static UI and REST API with RBAC."""
 
     def _get_request_role(self) -> Optional[str]:
-        """Extract and return authenticated RBAC role. Fails closed (returns None)."""
+        """Extract and return authenticated RBAC role. Checks Bearer, X-API-Key, query params, and cookies."""
+        auth_mgr = AuthManager()
+        key = None
+
+        # 1. Authorization: Bearer <key>
         auth_header = self.headers.get('Authorization', '')
         if auth_header.startswith('Bearer '):
             key = auth_header[7:].strip()
-            auth_mgr = AuthManager()
+
+        # 2. X-API-Key: <key>
+        if not key and 'X-API-Key' in self.headers:
+            key = self.headers.get('X-API-Key', '').strip()
+
+        # 3. Query string parameter ?key=... or ?token=...
+        if not key and hasattr(self, 'path') and '?' in self.path:
+            try:
+                parsed = urlparse(self.path)
+                qs = parse_qs(parsed.query)
+                param_vals = qs.get('key') or qs.get('token') or []
+                if param_vals:
+                    key = param_vals[0].strip()
+            except Exception:
+                pass
+
+        # 4. Cookie: ara_key=<key>
+        if not key and 'Cookie' in self.headers:
+            try:
+                cookies = self.headers.get('Cookie', '').split(';')
+                for c in cookies:
+                    c = c.strip()
+                    if c.startswith('ara_key='):
+                        key = c[len('ara_key='):].strip()
+                        break
+            except Exception:
+                pass
+
+        if key:
             return auth_mgr.get_role_for_key(key)
+
         return None
 
     def _require_role(self, required_role: str) -> bool:
@@ -150,8 +183,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 path = self.path.split("?")[0]
 
             if path.startswith("/api/") and path != "/api/ask":
-                if not self._require_role(ROLE_VIEWER):
-                    return
+                # By default, read-only status and telemetry (/api/status, /api/fleet/nodes, /api/incidents)
+                # are viewable by anyone visiting the dashboard (unless REQUIRE_AUTH_FOR_STATUS is set to true).
+                # All mutating POST operations (dispatch, approvals, fleet commands, purge) STRICTLY require RBAC.
+                require_auth_for_status = os.environ.get("REQUIRE_AUTH_FOR_STATUS", "false").lower() in ("true", "1", "yes")
+                if require_auth_for_status:
+                    if not self._require_role(ROLE_VIEWER):
+                        return
 
             # Caddy On-Demand TLS Permission Verification
             if path == "/api/ask":
@@ -237,6 +275,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "open_incidents_count": len(incidents),
                 }, client_ip=client_ip)
 
+                role = self._get_request_role()
+                require_auth_for_status = os.environ.get("REQUIRE_AUTH_FOR_STATUS", "false").lower() in ("true", "1", "yes")
                 self._send_json({
                     "node_name": local_node_name,
                     "base_domain": Config.BASE_DOMAIN,
@@ -244,6 +284,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "services": merged_services,
                     "open_incidents_count": len(incidents),
                     "total_containers": len(containers),
+                    "current_role": role or ("viewer" if not require_auth_for_status else "anonymous"),
+                    "auth_required": require_auth_for_status,
                 })
                 return
 
@@ -361,6 +403,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "results": history,
                     "allowed_actions": sorted(ALLOWED_NODE_ACTIONS),
                 })
+                return
+
+            elif path == "/api/auth/verify":
+                role = self._get_request_role()
+                if role:
+                    self._send_json({"authenticated": True, "role": role})
+                else:
+                    self._send_json({"authenticated": False, "role": None, "error": "Invalid or missing API key"}, status=401)
                 return
 
             elif path == "/api/fleet/nodes":
@@ -696,6 +746,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
 def run_dashboard(port: int = Config.DASHBOARD_PORT, host: str = Config.DASHBOARD_HOST):
     """Start the multi-threaded dashboard HTTP server."""
+    # Ensure AuthManager keys are initialized so default keys and auth.json exist
+    try:
+        auth_mgr = AuthManager()
+        keys = auth_mgr.setup_keys()
+        if not keys.get('already_initialized'):
+            print(f"[!] Initialized ARA authentication keys.")
+            print(f"    Admin API Key: {keys.get('dashboard_key')}")
+            print(f"    Telemetry API Key: {keys.get('telemetry_key')}")
+    except Exception as e:
+        print(f"[!] Warning: AuthManager setup exception: {e}")
+
     dist_dir = Path(__file__).resolve().parent / "dist"
     static_dir = Path(__file__).resolve().parent / "static"
     serve_dir = str(dist_dir) if dist_dir.exists() and (dist_dir / "index.html").exists() else str(static_dir)

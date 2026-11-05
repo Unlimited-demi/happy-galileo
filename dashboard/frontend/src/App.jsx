@@ -7,6 +7,7 @@ import { ServiceDirectoryView } from '@/components/ServiceDirectoryView';
 import { IncidentConsoleView } from '@/components/IncidentConsoleView';
 import { IncidentModal } from '@/components/IncidentModal';
 import { HealthDigestView } from '@/components/HealthDigestView';
+import { AuthModal } from '@/components/AuthModal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 export function App() {
@@ -17,20 +18,35 @@ export function App() {
   const [activeTab, setActiveTab] = useState('fleet');
   const [serviceFilter, setServiceFilter] = useState('all');
   const [toast, setToast] = useState(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [currentRole, setCurrentRole] = useState(null);
 
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3500);
   };
 
+  const getAuthHeaders = () => {
+    const key = localStorage.getItem('ara_api_key') || '';
+    return key ? { Authorization: `Bearer ${key}` } : {};
+  };
+
   const fetchData = async () => {
     try {
+      const headers = getAuthHeaders();
       const [sRes, fRes, iRes] = await Promise.all([
-        fetch('/api/status').then((r) => r.json()),
-        fetch('/api/fleet/nodes').then((r) => r.json()),
-        fetch('/api/incidents?all=true').then((r) => r.json()),
+        fetch('/api/status', { headers }).then((r) => r.json()),
+        fetch('/api/fleet/nodes', { headers }).then((r) => r.json()),
+        fetch('/api/incidents?all=true', { headers }).then((r) => r.json()),
       ]);
-      if (sRes && !sRes.error) setStatus(sRes);
+      if (sRes) {
+        if (!sRes.error) {
+          setStatus(sRes);
+          if (sRes.current_role) setCurrentRole(sRes.current_role);
+        } else if (sRes.error && sRes.error.toLowerCase().includes('auth')) {
+          setCurrentRole('unauthorized');
+        }
+      }
       if (fRes && fRes.nodes) setFleet(fRes);
       if (iRes && iRes.incidents) setIncidents(iRes.incidents);
     } catch (err) {
@@ -39,6 +55,16 @@ export function App() {
   };
 
   useEffect(() => {
+    // Check if key or token is in URL query parameters
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlKey = urlParams.get('key') || urlParams.get('token');
+      if (urlKey) {
+        localStorage.setItem('ara_api_key', urlKey);
+        showToast('🔑 API Key detected from URL');
+      }
+    } catch (e) {}
+
     fetchData();
     const interval = setInterval(fetchData, 4000);
     return () => clearInterval(interval);
@@ -96,11 +122,17 @@ export function App() {
   const handleDispatch = async (incId) => {
     try {
       showToast('🚀 Dispatching OpenCode worker...');
-      const res = await fetch(`/api/incidents/${incId}/dispatch`, { method: 'POST' }).then((r) => r.json());
+      const res = await fetch(`/api/incidents/${incId}/dispatch`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+      }).then((r) => r.json());
       if (res.success) {
         showToast(`⚡ OpenCode dispatched for ${res.fix_branch || incId}!`);
         fetchData();
       } else {
+        if (res.error && res.error.toLowerCase().includes('permission')) {
+          setAuthModalOpen(true);
+        }
         showToast(`⚠️ Dispatch: ${res.message || res.error || 'Failed'}`);
       }
     } catch (e) {
@@ -111,9 +143,17 @@ export function App() {
   const handlePurge = async () => {
     try {
       showToast('🧹 Purging test incident dossiers...');
-      const res = await fetch('/api/incidents/purge', { method: 'POST' }).then((r) => r.json());
-      showToast(`✓ Cleared ${res.deleted_files || 0} incident dossier(s).`);
-      fetchData();
+      const res = await fetch('/api/incidents/purge', {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+      }).then((r) => r.json());
+      if (res.error && res.error.toLowerCase().includes('permission')) {
+        setAuthModalOpen(true);
+        showToast(`⚠️ Admin permission required to purge incidents.`);
+      } else {
+        showToast(`✓ Cleared ${res.deleted_files || 0} incident dossier(s).`);
+        fetchData();
+      }
     } catch (e) {
       showToast(`⚠️ Purge error: ${e.message}`);
     }
@@ -122,7 +162,12 @@ export function App() {
   return (
     <div className="min-h-screen bg-slate-950 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black selection:bg-sky-500/30">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <Navbar baseDomain={status.base_domain} onRefresh={fetchData} />
+      <Navbar
+        baseDomain={status.base_domain}
+        onRefresh={fetchData}
+        currentRole={currentRole}
+        onOpenAuth={() => setAuthModalOpen(true)}
+      />
 
       <KpiMetrics
         totalNodes={nodes.length > 0 ? nodes.length : 1}
@@ -201,6 +246,18 @@ export function App() {
         onClose={() => setSelectedIncident(null)}
         onCopy={showToast}
         onDispatch={handleDispatch}
+      />
+
+      {/* Auth & RBAC Key Modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        currentRole={currentRole}
+        onKeySaved={(role) => {
+          setCurrentRole(role);
+          fetchData();
+        }}
+        showToast={showToast}
       />
 
       {/* Toast Notification */}

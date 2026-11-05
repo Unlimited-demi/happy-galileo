@@ -11,6 +11,17 @@ import argparse
 import socket
 from typing import Optional
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from devctl.core.config import Config, BASE_DIR
 from devctl.core.caddy import CaddyManager
 from devctl.core.docker_mgr import DockerManager
@@ -240,6 +251,63 @@ def cmd_heartbeat(args):
         print(f"[✓] Heartbeat accepted (HTTP 200 OK)! Node '{node_name}' is now registered with Central Dashboard.")
     else:
         print(f"[✗] Failed to deliver heartbeat to Central Hub. Check network connection or hub URL.")
+
+
+def cmd_auth(args):
+    """Manage RBAC and API keys for ARA Dashboard and Telemetry."""
+    from devctl.core.auth import (
+        AuthManager,
+        ROLE_VIEWER,
+        ROLE_OPERATOR,
+        ROLE_APPROVER,
+        ROLE_ADMIN,
+        ROLE_HIERARCHY,
+    )
+    auth_mgr = AuthManager()
+    action = getattr(args, "auth_action", "status") or "status"
+
+    if action in ("setup", "init"):
+        res = auth_mgr.setup_keys()
+        if res.get("already_initialized"):
+            print("[*] Authentication keys are already initialized.")
+            print("    Run 'devctl auth create-key' to issue a new role key.")
+        else:
+            print("[✓] ARA API Keys successfully initialized!")
+            print(f"    Admin API Key:     {res['dashboard_key']}")
+            print(f"    Telemetry API Key: {res['telemetry_key']}")
+            print("⚠️  Save these keys securely. Plaintext keys are only displayed once.")
+    elif action == "create-key":
+        role = getattr(args, "role", ROLE_VIEWER)
+        name = getattr(args, "name", "") or f"{role.capitalize()} Key"
+        try:
+            raw_key = auth_mgr.create_role_key(role=role, name=name)
+            print(f"[✓] Created new API key with role '{role}':")
+            print(f"    Key:  {raw_key}")
+            print(f"    Name: {name}")
+            print("⚠️  Save this key securely. It cannot be recovered after this prompt.")
+        except Exception as e:
+            print(f"[✗] Failed to create role key: {e}")
+    else:  # status / keys
+        data = auth_mgr._load_auth()
+        print("\n🔑 ARA Authentication & RBAC Status:")
+        print("=" * 60)
+        print(f"  Initialized:      {data.get('initialized', False)}")
+        print(f"  State File:       {auth_mgr.auth_file}")
+        roles = data.get("roles", {})
+        print(f"  Registered Keys:  {len(roles)} role key(s)")
+        for khash, rinfo in roles.items():
+            print(f"    - {rinfo.get('name', 'Key')} [Role: {rinfo.get('role', 'unknown').upper()}]")
+        env_dash = os.environ.get("DASHBOARD_KEY")
+        env_fleet = os.environ.get("FLEET_KEY")
+        if env_dash:
+            print("  ENV DASHBOARD_KEY: Configured (ADMIN)")
+        if env_fleet:
+            print("  ENV FLEET_KEY:     Configured")
+        print("=" * 60)
+        if not data.get("initialized"):
+            print("💡 Run 'devctl auth setup' to generate initial API keys.\n")
+        else:
+            print("💡 Run 'devctl auth create-key --role [admin|operator|approver|viewer]' to issue new keys.\n")
 
 
 def cmd_logs(args):
@@ -1162,6 +1230,15 @@ def main():
     p_hb.add_argument("--hub", help="Central Hub URL override")
     p_hb.add_argument("--name", help="Node name override")
 
+    # auth
+    p_auth = subparsers.add_parser("auth", help="Manage RBAC and API keys for ARA Dashboard and Telemetry")
+    p_auth_sub = p_auth.add_subparsers(dest="auth_action", help="Auth action")
+    p_auth_sub.add_parser("status", help="View current authentication configuration and keys")
+    p_auth_sub.add_parser("setup", help="Initialize ARA authentication keys")
+    p_auth_create = p_auth_sub.add_parser("create-key", help="Create a new role-based API key")
+    p_auth_create.add_argument("--role", choices=["viewer", "operator", "approver", "admin"], default="viewer", help="RBAC Role to grant")
+    p_auth_create.add_argument("--name", help="Human-readable description or identity for the key")
+
     # doctor
     subparsers.add_parser("doctor", help="Check system health and prerequisites")
 
@@ -1187,6 +1264,7 @@ def main():
         "deploy": cmd_deploy,
         "fleet": cmd_fleet,
         "node": cmd_node,
+        "auth": cmd_auth,
         "doctor": cmd_doctor,
     }
 
