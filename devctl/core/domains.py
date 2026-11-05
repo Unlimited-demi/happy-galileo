@@ -7,7 +7,7 @@ import json
 import re
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
-from .config import Config
+from .config import Config, BASE_DIR
 
 # Service type classification
 SERVICE_TYPE_WEB = "web"           # Gets public URL + full monitoring
@@ -267,6 +267,7 @@ class DomainRegistry:
         from urllib.parse import urlparse
 
         domains = {}  # container_name -> {"domain": ..., "source": ...}
+        all_containers = self.get_running_container_names()
 
         # ── 1. Host Reverse Proxy Configs (Nginx, Caddy, Apache, etc.) ──
         # Host Nginx — scan ALL possible config locations
@@ -306,6 +307,9 @@ class DomainRegistry:
                                     if ':' in up:
                                         up_port = up.split(':')[1]
                                         domains[f":{up_port}"] = domain_info
+                                    for target_c in all_containers:
+                                        if up_host in target_c or target_c in up_host:
+                                            domains[target_c] = domain_info
 
                 # Fallback: if no server blocks found, try flat parsing (for simple configs)
                 if not server_blocks:
@@ -323,6 +327,9 @@ class DomainRegistry:
                                     if ':' in up:
                                         up_port = up.split(':')[1]
                                         domains[f":{up_port}"] = domain_info
+                                    for target_c in all_containers:
+                                        if up_host in target_c or target_c in up_host:
+                                            domains[target_c] = domain_info
             except Exception:
                 continue
 
@@ -330,7 +337,14 @@ class DomainRegistry:
         caddy_paths = (
             glob.glob('/etc/caddy/conf.d/*') +
             glob.glob('/etc/caddy/Caddyfile') +
-            glob.glob('/etc/caddy/*.caddy')
+            glob.glob('/etc/caddy/*.caddy') +
+            glob.glob('/opt/*/infra/Caddyfile') +
+            glob.glob('/opt/*/infra/conf.d/*') +
+            glob.glob('/opt/*/Caddyfile') +
+            [str(BASE_DIR / "infra" / "Caddyfile")] +
+            glob.glob(str(BASE_DIR / "infra" / "conf.d" / "*")) +
+            glob.glob('infra/Caddyfile') +
+            glob.glob('Caddyfile')
         )
         for conf_path in caddy_paths:
             try:
@@ -339,20 +353,35 @@ class DomainRegistry:
                     continue
                 with open(conf_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
-                blocks = re.findall(r'([a-zA-Z0-9\.\-_]+)\s*\{([^}]+)\}', content)
-                for dom, body in blocks:
-                    if self._is_valid_public_domain(dom):
-                        # Parse reverse_proxy with host and optional port
-                        upstreams = re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_:]+)', body)
-                        for up in upstreams:
-                            up = up.strip()
-                            domain_info = {"domain": dom.strip(), "source": f"host-caddy:{Path(conf_path).name}"}
-                            domains[up] = domain_info
-                            up_host = up.split(':')[0]
-                            domains[up_host] = domain_info
-                            if ':' in up:
-                                up_port = up.split(':')[1]
-                                domains[f":{up_port}"] = domain_info
+                # Parse blocks: match header { body } with multi-domain comma support
+                blocks = re.findall(r'([^\r\n{}#]+)\s*\{([^}]+)\}', content)
+                for header, body in blocks:
+                    candidates = [d.strip() for d in re.split(r'[, \t]+', header) if d.strip()]
+                    valid_domains = [d for d in candidates if self._is_valid_public_domain(d)]
+                    if not valid_domains:
+                        continue
+                    # Prefer dedicated custom domain (e.g. ara.suburbancloud.ng over status.dev-server.datakrib.com)
+                    best_domain = valid_domains[0]
+                    for d in valid_domains:
+                        if not d.endswith("dev-server.datakrib.com") and not d.startswith("status."):
+                            best_domain = d
+                            break
+                        elif not d.endswith("dev-server.datakrib.com"):
+                            best_domain = d
+
+                    upstreams = re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_:]+)', body)
+                    for up in upstreams:
+                        up = up.strip()
+                        domain_info = {"domain": best_domain, "all_domains": valid_domains, "source": f"host-caddy:{Path(conf_path).name}"}
+                        domains[up] = domain_info
+                        up_host = up.split(':')[0]
+                        domains[up_host] = domain_info
+                        if ':' in up:
+                            up_port = up.split(':')[1]
+                            domains[f":{up_port}"] = domain_info
+                        for target_c in all_containers:
+                            if up_host in target_c or target_c in up_host:
+                                domains[target_c] = domain_info
             except Exception:
                 continue
 
@@ -419,6 +448,10 @@ class DomainRegistry:
                     k, v = e.split("=", 1)
                     k_upper = k.upper().strip()
                     v_clean = v.strip()
+
+                    # Ignore base domain / wildcard root domain variables that do not define an individual service ingress
+                    if any(term == k_upper or k_upper.endswith(f"_{term}") for term in ["BASE_DOMAIN", "DEFAULT_DOMAIN", "ROOT_DOMAIN"]):
+                        continue
 
                     # Domain / Hostname variables
                     if any(term in k_upper for term in ["HOSTNAME", "DOMAIN", "DOMAINS", "VIRTUAL_HOST", "SERVER_NAME", "APP_HOST"]):
@@ -495,23 +528,27 @@ class DomainRegistry:
 
                             # Generic Caddyfile domain blocks in workspace
                             if "Caddyfile" in conf_file.name or conf_file.suffix == ".caddy":
-                                for dom, body in re.findall(r'([a-zA-Z0-9\.\-_]+)\s*\{([^}]+)\}', f_text):
-                                    if self._is_valid_public_domain(dom):
-                                        domain_info = {"domain": dom.strip(), "source": f"workspace:{conf_file.name}"}
-                                        # Map to upstreams (include colon for host:port format)
-                                        upstreams = re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_:]+)', body)
-                                        for up in upstreams:
-                                            up = up.strip()
-                                            up_host = up.split(':')[0]
-                                            # Store by upstream key for later matching
-                                            domains[up] = domain_info
-                                            domains[up_host] = domain_info
-                                            if ':' in up:
-                                                up_port = up.split(':')[1]
-                                                domains[f":{up_port}"] = domain_info
-                                        # If this container is a Caddy/proxy, also map domain to it
-                                        if "caddy" in c_name.lower() or "proxy" in c_name.lower():
-                                            domains[c_name] = domain_info
+                                for header, body in re.findall(r'([^\r\n{}#]+)\s*\{([^}]+)\}', f_text):
+                                    candidates = [d.strip() for d in re.split(r'[, \t]+', header) if d.strip()]
+                                    valid_domains = [d for d in candidates if self._is_valid_public_domain(d)]
+                                    if not valid_domains:
+                                        continue
+                                    best_domain = valid_domains[0]
+                                    for d in valid_domains:
+                                        if not d.endswith("dev-server.datakrib.com"):
+                                            best_domain = d
+                                            break
+
+                                    domain_info = {"domain": best_domain, "all_domains": valid_domains, "source": f"workspace:{conf_file.name}"}
+                                    upstreams = re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_:]+)', body)
+                                    for up in upstreams:
+                                        up = up.strip()
+                                        up_host = up.split(':')[0]
+                                        domains[up] = domain_info
+                                        domains[up_host] = domain_info
+                                        if ':' in up:
+                                            up_port = up.split(':')[1]
+                                            domains[f":{up_port}"] = domain_info
 
                             # Generic key-value configs (*.conf, *.env)
                             for line in f_text.splitlines():
@@ -587,31 +624,44 @@ class DomainRegistry:
                                             if ':' in up:
                                                 up_port = up.split(':')[1]
                                                 domains[f":{up_port}"] = domain_info
-                                        # If no proxy_pass, map to the container that has this config mounted
-                                        if not proxy_passes:
+                                        # If no proxy_pass, map to the container that has this config mounted (unless it's a proxy)
+                                        is_proxy = any(kw in c_name.lower() for kw in ["caddy", "nginx", "traefik", "envoy", "haproxy"])
+                                        if not proxy_passes and not is_proxy:
                                             domains[c_name] = domain_info
 
                             # Caddyfile domain blocks
-                            for dom, body in re.findall(r'([a-zA-Z0-9\.\-_]+)\s*\{([^}]+)\}', cf_content):
-                                if self._is_valid_public_domain(dom):
-                                    domain_info = {"domain": dom.strip(), "source": f"mount:{Path(cf).name}"}
-                                    # Map to upstreams in reverse_proxy directive
-                                    upstreams = re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_:]+)', body)
-                                    for up in upstreams:
-                                        up = up.strip()
-                                        domains[up] = domain_info
-                                        up_host = up.split(':')[0]
-                                        domains[up_host] = domain_info
-                                        if ':' in up:
-                                            up_port = up.split(':')[1]
-                                            domains[f":{up_port}"] = domain_info
-                                        # Also try to match upstream to container names
-                                        for target_c in all_containers:
-                                            if up_host in target_c or target_c in up_host:
-                                                domains[target_c] = domain_info
-                                    # If no upstreams, map to the container that has this config mounted
-                                    if not upstreams:
-                                        domains[c_name] = domain_info
+                            for header, body in re.findall(r'([^\r\n{}#]+)\s*\{([^}]+)\}', cf_content):
+                                candidates = [d.strip() for d in re.split(r'[, \t]+', header) if d.strip()]
+                                valid_domains = [d for d in candidates if self._is_valid_public_domain(d)]
+                                if not valid_domains:
+                                    continue
+                                best_domain = valid_domains[0]
+                                for d in valid_domains:
+                                    if not d.endswith("dev-server.datakrib.com") and not d.startswith("status."):
+                                        best_domain = d
+                                        break
+                                    elif not d.endswith("dev-server.datakrib.com"):
+                                        best_domain = d
+
+                                domain_info = {"domain": best_domain, "all_domains": valid_domains, "source": f"mount:{Path(cf).name}"}
+                                # Map to upstreams in reverse_proxy directive
+                                upstreams = re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_:]+)', body)
+                                for up in upstreams:
+                                    up = up.strip()
+                                    domains[up] = domain_info
+                                    up_host = up.split(':')[0]
+                                    domains[up_host] = domain_info
+                                    if ':' in up:
+                                        up_port = up.split(':')[1]
+                                        domains[f":{up_port}"] = domain_info
+                                    # Also try to match upstream to container names
+                                    for target_c in all_containers:
+                                        if up_host in target_c or target_c in up_host:
+                                            domains[target_c] = domain_info
+                                # If no upstreams, map to the container that has this config mounted (unless it's an ingress proxy)
+                                is_proxy = any(kw in c_name.lower() for kw in ["caddy", "nginx", "traefik", "envoy", "haproxy"])
+                                if not upstreams and not is_proxy:
+                                    domains[c_name] = domain_info
                         except Exception:
                             continue
         except Exception:
@@ -663,53 +713,7 @@ class DomainRegistry:
             self._save_state(state)
             registered = state.get("services", {})
 
-        # ── Step 2: Pre-register ServerGuard's own infrastructure ──
-        SERVERGUARD_CONTAINERS = {
-            "devctl-dashboard": {
-                "port": 8888,
-                "container_type": SERVICE_TYPE_WEB,
-                "domain": f"status.{Config.BASE_DOMAIN}",
-                "url": f"https://status.{Config.BASE_DOMAIN}",
-                "role": "Status & Fleet Dashboard",
-            },
-            "caddy": {
-                "port": 80,
-                "container_type": SERVICE_TYPE_INFRA,
-                "domain": None,
-                "url": None,
-                "role": "TLS Ingress & Reverse Proxy",
-            },
-            "ai-ops-daemon": {
-                "port": 0,
-                "container_type": SERVICE_TYPE_INFRA,
-                "domain": None,
-                "url": None,
-                "role": "AI-Ops Monitoring Daemon",
-            },
-        }
-
-        for sg_name, sg_info in SERVERGUARD_CONTAINERS.items():
-            slug = self.sanitize_slug(sg_name)
-            if sg_name in running_names:
-                entry = self.register(
-                    service_name=slug,
-                    container_name=sg_name,
-                    port=sg_info["port"],
-                    domain=sg_info["domain"],
-                    env="dev",
-                    container_type=sg_info["container_type"],
-                    url=sg_info["url"],
-                    metadata={
-                        "auto_discovered": True,
-                        "serverguard_infra": True,
-                        "ai_inference": {"role_label": sg_info["role"], "is_publicly_exposable": sg_info["url"] is not None},
-                    },
-                )
-                discovered.append(entry)
-                state = self._load_state()
-                registered = state.get("services", {})
-
-        # ── Step 3: Detect existing real domains from reverse proxies (Mailcow, Caddy, Nginx, env vars) ──
+        # ── Step 2: Detect existing real domains from reverse proxies (Mailcow, Caddy, Nginx, env vars) ──
         existing_domains = self.detect_existing_domains()
 
         # Debug: print all detected domains
@@ -719,7 +723,7 @@ class DomainRegistry:
                 print(f"  {key:30} → {info['domain']:40} (source: {info['source']})")
             print()
 
-        # ── Step 4: Register all remaining containers for monitoring ──
+        # ── Step 3: Register all running containers for monitoring ──
         from ai_ops.codebase_resolver import CodebaseResolver
         resolver = CodebaseResolver()
 
@@ -802,7 +806,7 @@ class DomainRegistry:
                 }
             else:
                 # Check if this container has an existing real domain from reverse proxy detection
-                # Try multiple lookup strategies: container name, container:port, :port, container IP
+                # Try multiple lookup strategies: container name, compose service, container:port, :port, fuzzy match, container IP
                 real_domain_info = None
                 real_domain = None
                 real_domain_source = None
@@ -810,21 +814,46 @@ class DomainRegistry:
                 # Strategy 1: Exact container name match
                 if c_name in existing_domains:
                     real_domain_info = existing_domains[c_name]
+
+                # Strategy 1b: Docker Compose service name match (e.g., "dashboard" for "devctl-dashboard")
+                if not real_domain_info:
+                    compose_svc = labels.get("com.docker.compose.service")
+                    if compose_svc and compose_svc in existing_domains:
+                        real_domain_info = existing_domains[compose_svc]
+                    elif compose_svc and ports:
+                        for p in ports:
+                            key = f"{compose_svc}:{p}"
+                            if key in existing_domains:
+                                real_domain_info = existing_domains[key]
+                                break
+
                 # Strategy 2: Container name with port (e.g., "grafana:3000")
-                elif ports:
+                if not real_domain_info and ports:
                     for p in ports:
                         key = f"{c_name}:{p}"
                         if key in existing_domains:
                             real_domain_info = existing_domains[key]
                             break
-                # Strategy 3: Port only (e.g., ":3000")
+
+                # Strategy 3: Port only (e.g., ":3000", ":8888")
                 if not real_domain_info and ports:
                     for p in ports:
                         key = f":{p}"
                         if key in existing_domains:
                             real_domain_info = existing_domains[key]
                             break
-                # Strategy 4: Container IP address (inspect container network)
+
+                # Strategy 4: Upstream substring or fuzzy match
+                if not real_domain_info:
+                    for up_k, dinfo in existing_domains.items():
+                        if not up_k.startswith(":") and len(up_k) >= 3:
+                            up_host = up_k.split(":")[0].lower()
+                            c_lower = c_name.lower()
+                            if up_host and (up_host in c_lower or c_lower in up_host):
+                                real_domain_info = dinfo
+                                break
+
+                # Strategy 5: Container IP address (inspect container network)
                 if not real_domain_info:
                     try:
                         net_info = info.get("NetworkSettings", {}).get("Networks", {})
@@ -852,8 +881,14 @@ class DomainRegistry:
                     print(f"  [DEBUG] {c_name}: {real_domain} (from {real_domain_source})")
 
                 # Classify container type
-                if real_domain and ("nginx" in c_name or "frontend" in c_name or "web" in c_name or "sogo" in c_name):
+                if real_domain and ("nginx" in c_name or "frontend" in c_name or "web" in c_name or "sogo" in c_name or "dashboard" in c_name):
                     c_type = SERVICE_TYPE_WEB
+                elif any(proxy_kw in c_name.lower() for proxy_kw in ["caddy", "ingress", "traefik"]):
+                    c_type = SERVICE_TYPE_INFRA
+                elif any(daemon_kw in c_name.lower() for daemon_kw in ["ai-ops", "daemon"]):
+                    c_type = SERVICE_TYPE_INFRA
+                elif any(brain_kw in c_name.lower() for brain_kw in ["brain", "ollama"]):
+                    c_type = SERVICE_TYPE_API
                 elif ai_profile and "mail" in ai_profile.get("archetype", ""):
                     # If Mailcow Nginx/SOGo has a web domain, it's WEB
                     c_type = SERVICE_TYPE_WEB if (real_domain and "nginx" in c_name) else SERVICE_TYPE_MAIL

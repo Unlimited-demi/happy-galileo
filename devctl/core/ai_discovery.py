@@ -356,14 +356,15 @@ class AIContainerInference:
                 "rationale": "Object storage blob API service.",
             }
 
-        # 6. Web Frontend (React, Vue, Next.js, Nginx static, Svelte)
-        if any(term in combined_text for term in ["frontend", "ui", "client", "next", "vite", "nuxt", "spa"]) or "next.js" in logs_lower or "ready in" in logs_lower:
-            web_ports = [p for p in exposed_ports if p in [80, 443, 3000, 5173, 8080, 8000]]
-            chosen_port = web_ports[0] if web_ports else (exposed_ports[0] if exposed_ports else 3000)
+        # 6. Web Frontend & Dashboards (React, Vue, Next.js, Nginx static, Svelte, Dashboards)
+        if any(term in combined_text for term in ["frontend", "ui", "client", "next", "vite", "nuxt", "spa", "dashboard"]) or "next.js" in logs_lower or "ready in" in logs_lower:
+            web_ports = [p for p in exposed_ports if p in [80, 443, 3000, 5173, 8080, 8000, 8888]]
+            chosen_port = web_ports[0] if web_ports else (exposed_ports[0] if exposed_ports else (8888 if "dashboard" in combined_text else 3000))
+            role = "Status & Fleet Dashboard" if "dashboard" in combined_text else "Web Frontend Application"
             return {
                 "container_name": container_name,
                 "archetype": ContainerArchetype.WEB_FRONTEND,
-                "role_label": "Web Frontend Application",
+                "role_label": role,
                 "is_publicly_exposable": True,
                 "recommended_port": chosen_port,
                 "dependencies": dependencies,
@@ -371,14 +372,15 @@ class AIContainerInference:
                 "rationale": f"User interface application serving web clients on port {chosen_port}.",
             }
 
-        # 7. Backend API / Microservice
-        if any(term in combined_text for term in ["api", "backend", "server", "service", "graphql", "rest", "gateway"]) or any(term in logs_lower for term in ["listening on", "started server", "uvicorn", "express", "fastify", "nest"]):
-            api_ports = [p for p in exposed_ports if p in [80, 443, 8000, 8080, 5000, 4000, 3000, 9000]]
-            chosen_port = api_ports[0] if api_ports else (exposed_ports[0] if exposed_ports else 8000)
+        # 7. Backend API / Microservice / AI Model Engine
+        if any(term in combined_text for term in ["api", "backend", "server", "service", "graphql", "rest", "gateway", "ollama", "brain", "llm"]) or any(term in logs_lower for term in ["listening on", "started server", "uvicorn", "express", "fastify", "nest"]):
+            api_ports = [p for p in exposed_ports if p in [80, 443, 8000, 8080, 5000, 4000, 3000, 9000, 11434]]
+            chosen_port = api_ports[0] if api_ports else (exposed_ports[0] if exposed_ports else (11434 if "ollama" in combined_text or "brain" in combined_text else 8000))
+            role = "AI Model Engine" if any(t in combined_text for t in ["ollama", "brain", "llm"]) else "Backend Application API"
             return {
                 "container_name": container_name,
                 "archetype": ContainerArchetype.API_SERVICE,
-                "role_label": "Backend Application API",
+                "role_label": role,
                 "is_publicly_exposable": True,
                 "recommended_port": chosen_port,
                 "dependencies": dependencies,
@@ -386,17 +388,18 @@ class AIContainerInference:
                 "rationale": f"Backend API service handling business logic and HTTP endpoints on port {chosen_port}.",
             }
 
-        # 8. Background Workers / Queues
-        if any(term in combined_text for term in ["worker", "celery", "sidekiq", "queue", "consumer", "job", "cron"]):
+        # 8. Background Workers / Queues / Daemons
+        if any(term in combined_text for term in ["worker", "celery", "sidekiq", "queue", "consumer", "job", "cron", "daemon", "ai-ops"]):
+            role = "AI-Ops Monitoring Daemon" if any(t in combined_text for t in ["ai-ops", "monitoring", "daemon"]) else "Async Background Worker"
             return {
                 "container_name": container_name,
                 "archetype": ContainerArchetype.BACKGROUND_WORKER,
-                "role_label": "Async Background Worker",
+                "role_label": role,
                 "is_publicly_exposable": False,
                 "recommended_port": None,
                 "dependencies": dependencies,
                 "confidence": 0.88,
-                "rationale": "Background asynchronous job consumer. No incoming HTTP traffic required.",
+                "rationale": "Background asynchronous job consumer or monitoring daemon. No incoming HTTP traffic required.",
             }
 
         # Default fallback

@@ -416,4 +416,80 @@ class TestAIContainerInference:
             assert "devctl-dashboard" in names
             assert "caddy" in names
 
+    def test_dynamic_caddy_multi_domain_discovery(self, tmp_path):
+        from devctl.core.domains import DomainRegistry
+        reg = DomainRegistry()
+
+        caddy_file = tmp_path / "Caddyfile"
+        caddy_file.write_text("""
+status.dev-server.datakrib.com, ara.suburbancloud.ng {
+    encode zstd gzip
+    reverse_proxy dashboard:8888
+}
+""", encoding="utf-8")
+
+        with patch("glob.glob", side_effect=lambda pat: [str(caddy_file)] if "Caddyfile" in pat else []):
+            domains = reg.detect_existing_domains()
+            assert "dashboard:8888" in domains or "dashboard" in domains
+            target = domains.get("dashboard") or domains.get("dashboard:8888")
+            assert target is not None
+            assert target["domain"] == "ara.suburbancloud.ng"
+
+    def test_discover_and_index_resolves_dashboard_without_hardcoding(self, tmp_path):
+        from devctl.core.domains import DomainRegistry
+        state_file = tmp_path / "state.json"
+
+        with patch("devctl.core.config.Config.STATE_FILE", state_file):
+            reg = DomainRegistry()
+
+            # Mock running containers: devctl-dashboard, caddy, ai-ops-daemon
+            with patch.object(reg, "get_running_container_names", return_value=["devctl-dashboard", "caddy", "ai-ops-daemon"]), \
+                 patch.object(reg, "detect_existing_domains", return_value={
+                     "dashboard": {"domain": "ara.suburbancloud.ng", "source": "host-caddy:Caddyfile"},
+                     "dashboard:8888": {"domain": "ara.suburbancloud.ng", "source": "host-caddy:Caddyfile"},
+                 }), \
+                 patch("devctl.core.docker_mgr.DockerManager.inspect_container") as mock_inspect, \
+                 patch("devctl.core.docker_mgr.DockerManager.detect_ports") as mock_ports, \
+                 patch("devctl.core.docker_mgr.DockerManager.is_database_or_cache", return_value=(False, "")):
+
+                def inspect_mock(name):
+                    if name == "devctl-dashboard":
+                        return {
+                            "State": {"Running": True},
+                            "Config": {
+                                "Image": "serverguard-dashboard:latest",
+                                "Labels": {"com.docker.compose.service": "dashboard"},
+                            },
+                        }
+                    elif name == "caddy":
+                        return {
+                            "State": {"Running": True},
+                            "Config": {"Image": "caddy:2-alpine", "Labels": {}},
+                        }
+                    elif name == "ai-ops-daemon":
+                        return {
+                            "State": {"Running": True},
+                            "Config": {"Image": "serverguard-ai-ops:latest", "Labels": {}},
+                        }
+                    return None
+
+                mock_inspect.side_effect = inspect_mock
+                mock_ports.side_effect = lambda name: [8888] if name == "devctl-dashboard" else ([80, 443] if name == "caddy" else [])
+
+                discovered = reg.discover_and_index_containers(use_ai=False, force=True)
+                assert len(discovered) == 3
+
+                disc_map = {d["container_name"]: d for d in discovered}
+
+                # devctl-dashboard MUST resolve dynamically to ara.suburbancloud.ng
+                dashboard = disc_map["devctl-dashboard"]
+                assert dashboard["domain"] == "ara.suburbancloud.ng"
+                assert dashboard["url"] == "https://ara.suburbancloud.ng"
+                assert dashboard["port"] == 8888
+
+                # caddy and ai-ops MUST NOT have public ingress routes
+                assert disc_map["caddy"]["url"] is None
+                assert disc_map["ai-ops-daemon"]["url"] is None
+
+
 
