@@ -491,5 +491,30 @@ status.suburbancloud.ng, ara.suburbancloud.ng {
                 assert disc_map["caddy"]["url"] is None
                 assert disc_map["ai-ops-daemon"]["url"] is None
 
+    def test_remediation_auto_resolves_incident_when_healthy(self, tmp_path):
+        bus = IncidentBus(incidents_dir=tmp_path)
+        # Create an open incident
+        inc = bus.create_incident("webapp", "Webapp connection failed")
+        assert inc["state"] == IncidentState.DETECTED
+
+        engine = RemediationEngine()
+        engine.incident_bus = bus
+        # Trigger Level 0 (Healthy)
+        res = engine.handle_health_result({
+            "service_name": "webapp",
+            "container_name": "webapp",
+            "healthy": True,
+            "container_running": True,
+        })
+        assert res["level"] == 0
+        assert res["status"] == "HEALTHY"
+
+        # Verify incident was auto-resolved
+        open_incs = bus.list_incidents(only_open=True)
+        assert len(open_incs) == 0
+        resolved_inc = bus.get_incident(inc["id"])
+        assert resolved_inc["state"] == IncidentState.VERIFIED
+        assert "recovered" in resolved_inc["resolution_notes"]
+
 
 

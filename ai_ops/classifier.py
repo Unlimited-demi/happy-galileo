@@ -107,8 +107,8 @@ class AnomalyClassifier:
         r'using config from file',
     ]
 
-    # Containers excluded from log-level inspection
-    SELF_MONITOR_CONTAINERS = {"ai-ops-daemon", "devctl-dashboard", "caddy"}
+    # Containers excluded from log-level inspection (infrastructure components)
+    SELF_MONITOR_CONTAINERS = {"ai-ops-daemon", "devctl-dashboard", "caddy", "ara-brain", "opencode-hostexec"}
 
     # 2. Universal Syntactic Error Grammars (Language-Agnostic)
     

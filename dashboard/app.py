@@ -29,9 +29,11 @@ from devctl.core.auth import (
     ROLE_ADMIN,
 )
 from ai_ops.job_signer import JobSigner
+from ai_ops.metrics import MetricsCollector
 
 STATIC_DIR = Path(__file__).parent / "static"
 FLEET_STORE = FleetStore()
+METRICS_COLLECTOR = MetricsCollector()
 ALLOWED_NODE_ACTIONS = {"restart_container", "resync_network", "purge_incidents"}
 
 
@@ -263,10 +265,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     }
                     merged_services.append(merged)
 
-                # Auto-register local node into FLEET_STORE
-                # Auto-register local node into FLEET_STORE
+                # Auto-register local node into FLEET_STORE with live host metrics
                 local_node_name = os.environ.get("NODE_NAME", "vm-01 (Primary)")
                 client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else "127.0.0.1"
+                node_metrics = METRICS_COLLECTOR.collect_all_metrics()
                 FLEET_STORE.upsert_node({
                     "node_name": local_node_name,
                     "base_domain": Config.BASE_DOMAIN,
@@ -274,6 +276,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "services_count": len(merged_services),
                     "services": merged_services,
                     "open_incidents_count": len(incidents),
+                    "metrics": node_metrics,
                 }, client_ip=client_ip)
 
                 role = self._get_request_role()
@@ -285,6 +288,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "services": merged_services,
                     "open_incidents_count": len(incidents),
                     "total_containers": len(containers),
+                    "metrics": node_metrics,
                     "current_role": role or ("viewer" if not require_auth_for_status else "anonymous"),
                     "auth_required": require_auth_for_status,
                 })
@@ -468,6 +472,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     merged_services.append(merged)
 
                 client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else "127.0.0.1"
+                node_metrics = METRICS_COLLECTOR.collect_all_metrics()
                 FLEET_STORE.upsert_node({
                     "node_name": local_node_name,
                     "base_domain": Config.BASE_DOMAIN,
@@ -475,6 +480,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "services_count": len(merged_services),
                     "services": merged_services,
                     "open_incidents_count": len(bus.list_incidents(only_open=True)),
+                    "metrics": node_metrics,
                 }, client_ip=client_ip)
 
                 nodes_list = FLEET_STORE.get_all_nodes()

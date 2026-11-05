@@ -8,6 +8,7 @@ import hashlib
 import socket
 import time
 import re
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 from devctl.core.config import Config
 from devctl.core.domains import DomainRegistry
@@ -23,6 +24,7 @@ class HealthChecker:
         self.registry = DomainRegistry()
         self._prev_restart_counts: Dict[str, int] = {}
         self._prev_log_hashes: Dict[str, str] = {}
+        self._consecutive_failures: Dict[str, int] = {}
 
     def probe_http(self, container_name: str, port: int, timeout: float = 3.0) -> Dict[str, Any]:
         """
@@ -148,18 +150,43 @@ class HealthChecker:
         http_error = None
         http_status_code = None
         if container_running and container_name.lower() not in self.SKIP_PROBE_CONTAINERS and port and port > 0:
+            from devctl.core.docker_mgr import DockerManager
+            is_db, db_name = DockerManager().is_database_or_cache(container_name)
+
             probe = self.probe_http(container_name, port)
             http_status_code = probe.get("status_code")
-            if http_status_code and http_status_code >= 500:
-                http_error = f"HTTP {http_status_code} from {container_name}:{port}"
-            elif probe.get("error") and probe["error"] not in ("no port", "no IP address"):
-                http_error = f"HTTP probe failed: {probe['error']}"
+            if is_db:
+                # Databases and cache services speak raw TCP, not HTTP
+                if probe.get("error") and probe["error"] not in ("no port", "no IP address", "invalid HTTP response"):
+                    http_error = f"TCP probe to {db_name} failed: {probe['error']}"
+            else:
+                if http_status_code and http_status_code >= 500:
+                    http_error = f"HTTP {http_status_code} from {container_name}:{port}"
+                elif probe.get("error") and probe["error"] not in ("no port", "no IP address"):
+                    http_error = f"HTTP probe failed: {probe['error']}"
+
+        # 3b. Startup grace period (30s) — containers binding to ports during startup are not failed
+        uptime_seconds = None
+        if container_info:
+            started_at_str = container_info.get("State", {}).get("StartedAt", "")
+            if started_at_str and not started_at_str.startswith("0001"):
+                try:
+                    clean_ts = started_at_str[:26] + "Z" if len(started_at_str) > 26 and started_at_str.endswith("Z") else started_at_str
+                    dt = datetime.fromisoformat(clean_ts.replace("Z", "+00:00"))
+                    uptime_seconds = (datetime.now(timezone.utc) - dt).total_seconds()
+                except Exception:
+                    pass
+
+        if uptime_seconds is not None and uptime_seconds < 30.0:
+            if http_error and "connection refused" in http_error.lower():
+                http_error = None
+                docker_health = "starting"
 
         # 4. Scan container logs for runtime errors
         log_error = self.scan_logs_for_errors(container_name, tail=30)
 
         # 5. Determine overall health
-        is_healthy = (
+        raw_healthy = (
             container_running
             and not oom_killed
             and new_restarts == 0
@@ -167,6 +194,25 @@ class HealthChecker:
             and http_error is None
             and log_error is None
         )
+
+        # Debounce transient network/probe glitches (require 2 consecutive checks unless crashed/OOM/log error)
+        is_immediate_fail = (
+            not container_running
+            or oom_killed
+            or new_restarts > 0
+            or docker_health == "unhealthy"
+            or log_error is not None
+        )
+        if not raw_healthy:
+            failures = self._consecutive_failures.get(service_name, 0) + 1
+            self._consecutive_failures[service_name] = failures
+            if is_immediate_fail or failures >= 2:
+                is_healthy = False
+            else:
+                is_healthy = True  # debounced on first transient probe glitch
+        else:
+            self._consecutive_failures[service_name] = 0
+            is_healthy = True
 
         # Build failure reasons list
         failure_reasons = []

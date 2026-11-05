@@ -103,17 +103,19 @@ export function App() {
         totalMemUsed += mem.used_bytes || 0;
         totalMemTotal += mem.total_bytes || 0;
       });
-      return {
-        server: {
-          cpu_cores: totalCores,
-          load_average: { '1min': total1min, '5min': total5min, '15min': total15min },
-          memory: {
-            used_bytes: totalMemUsed,
-            total_bytes: totalMemTotal,
-            usage_percent: totalMemTotal > 0 ? ((totalMemUsed / totalMemTotal) * 100) : 0,
+      if (totalCores > 0 || totalMemTotal > 0) {
+        return {
+          server: {
+            cpu_cores: totalCores,
+            load_average: { '1min': total1min, '5min': total5min, '15min': total15min },
+            memory: {
+              used_bytes: totalMemUsed,
+              total_bytes: totalMemTotal,
+              usage_percent: totalMemTotal > 0 ? ((totalMemUsed / totalMemTotal) * 100) : 0,
+            },
           },
-        },
-      };
+        };
+      }
     }
     // Fallback to hub's own metrics
     return status.metrics || {};

@@ -140,13 +140,33 @@ class RemediationEngine:
         oom_killed = health.get("oom_killed", False)
         docker_health = health.get("docker_health", "none")
 
-        # Level 0: Healthy — clear tracking
+        # Level 0: Healthy — clear tracking and auto-resolve any open incidents
         if is_healthy:
             self.restart_tracker[service_name] = 0
             self._open_incidents.discard(service_name)
             self._l2_fixed.discard(service_name)
             if hasattr(self, "throttle"):
                 self.throttle.reset_service(service_name)
+
+            # Automatically resolve open incident for this service once healthy
+            try:
+                open_incidents = self.incident_bus.list_incidents(only_open=True)
+                for inc in open_incidents:
+                    if inc.get("service_name") == service_name:
+                        self.incident_bus.resolve_incident(
+                            inc["id"],
+                            notes=f"Service '{service_name}' recovered and passed consecutive health checks.",
+                            verified=True,
+                            proof={
+                                "container_state": "running",
+                                "health_probe": "HEALTHY (HTTP/TCP probe passed)",
+                                "auto_resolved": True,
+                            }
+                        )
+                        print(f"[AI-Ops] ✅ Auto-resolved incident {inc['id']} for healthy service '{service_name}'.")
+            except Exception:
+                pass
+
             return {"level": 0, "action": "OBSERVE", "status": "HEALTHY"}
 
         reasons_str = "; ".join(failure_reasons) if failure_reasons else "Container unhealthy"

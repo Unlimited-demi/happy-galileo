@@ -27,7 +27,7 @@ export function FleetMatrixView({ nodes, onCopy }) {
                     </span>
                   </CardTitle>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Scope: *.{node.base_domain || 'dev-server.datakrib.com'}
+                    Scope: *.{node.base_domain || 'suburbancloud.ng'}
                   </p>
                 </div>
               </div>

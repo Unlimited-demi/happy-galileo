@@ -48,14 +48,24 @@ class MetricsCollector:
 
         # CPU Load Average (1min, 5min, 15min)
         try:
-            load_avg = Path("/proc/loadavg").read_text().split()
-            metrics["load_average"] = {
-                "1min": float(load_avg[0]),
-                "5min": float(load_avg[1]),
-                "15min": float(load_avg[2]),
-            }
+            if Path("/proc/loadavg").exists():
+                load_avg = Path("/proc/loadavg").read_text().split()
+                metrics["load_average"] = {
+                    "1min": float(load_avg[0]),
+                    "5min": float(load_avg[1]),
+                    "15min": float(load_avg[2]),
+                }
+            elif hasattr(os, "getloadavg"):
+                avg = os.getloadavg()
+                metrics["load_average"] = {
+                    "1min": round(float(avg[0]), 2),
+                    "5min": round(float(avg[1]), 2),
+                    "15min": round(float(avg[2]), 2),
+                }
+            else:
+                metrics["load_average"] = {"1min": 0.0, "5min": 0.0, "15min": 0.0}
         except Exception:
-            metrics["load_average"] = {"1min": 0, "5min": 0, "15min": 0}
+            metrics["load_average"] = {"1min": 0.0, "5min": 0.0, "15min": 0.0}
 
         # Memory Usage
         try:
