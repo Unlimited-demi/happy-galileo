@@ -152,7 +152,7 @@ class TestBrainEngine:
 
         # 2. get_service_routes
         with patch("devctl.core.domains.DomainRegistry.list_services", return_value=[
-            {"service_name": "billing-api", "url": "https://billing-api.dev-server.datakrib.com", "port": 8000, "env": "dev"}
+            {"service_name": "billing-api", "url": "https://billing-api.suburbancloud.ng", "port": 8000, "env": "dev"}
         ]):
             routes_res = brain._execute_tool("get_service_routes", {})
             assert len(routes_res) == 1

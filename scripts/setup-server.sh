@@ -2,13 +2,13 @@
 # ==============================================================================
 # Full Turnkey Bootstrap Script for AI Remote Workstation
 # Configures: Docker, Caddy, Fail2ban, UFW, Node/Playwright, OpenCode, devctl
-# Domain Scope: *.dev-server.datakrib.com
+# Domain Scope: *.suburbancloud.ng
 # ==============================================================================
 
 set -e
 
 # Parse optional arguments
-BASE_DOMAIN="${BASE_DOMAIN:-dev-server.datakrib.com}"
+BASE_DOMAIN="${BASE_DOMAIN:-suburbancloud.ng}"
 GIT_NAME="${GIT_NAME:-}"
 GIT_EMAIL="${GIT_EMAIL:-}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
@@ -73,7 +73,7 @@ fi
 if [ -n "${GIT_EMAIL}" ]; then
   git config --global user.email "${GIT_EMAIL}"
 elif [ -z "$(git config --global user.email 2>/dev/null)" ]; then
-  git config --global user.email "bot@datakrib.com"
+  git config --global user.email "bot@suburbancloud.ng"
 fi
 
 # Method A: GitHub Token (Zero-Touch)
@@ -95,7 +95,7 @@ else
 
   if [ ! -f "${SSH_DIR}/id_ed25519" ]; then
     echo "  Generating ED25519 SSH Key..."
-    ssh-keygen -t ed25519 -C "${GIT_EMAIL:-server@datakrib.com}" -f "${SSH_DIR}/id_ed25519" -N ""
+    ssh-keygen -t ed25519 -C "${GIT_EMAIL:-server@suburbancloud.ng}" -f "${SSH_DIR}/id_ed25519" -N ""
   fi
 
   # Pre-populate known_hosts for github.com
@@ -174,7 +174,7 @@ fi
 cat << 'EOF' > /usr/local/bin/devctl
 #!/usr/bin/env bash
 export PYTHONPATH="/opt/happy-galileo:${PYTHONPATH}"
-export BASE_DOMAIN="${BASE_DOMAIN:-dev-server.datakrib.com}"
+export BASE_DOMAIN="${BASE_DOMAIN:-suburbancloud.ng}"
 export CADDY_ADMIN_API="${CADDY_ADMIN_API:-http://127.0.0.1:2019}"
 export DEVCTL_DOCKER_NETWORK="${DEVCTL_DOCKER_NETWORK:-dev-net}"
 exec /opt/devctl-venv/bin/python3 /opt/happy-galileo/devctl/cli.py "$@"
@@ -195,7 +195,7 @@ cd "${PROJECT_DIR}/infra"
 # Auto-generate .env from template if missing
 if [ ! -f ".env" ] && [ -f "${PROJECT_DIR}/.env.example" ]; then
   echo "  [i] Creating infra/.env from .env.example..."
-  sed "s/dev-server.datakrib.com/${BASE_DOMAIN}/g" "${PROJECT_DIR}/.env.example" > .env
+  sed "s/suburbancloud.ng/${BASE_DOMAIN}/g" "${PROJECT_DIR}/.env.example" > .env
 fi
 
 if [ -n "${GITHUB_TOKEN}" ]; then

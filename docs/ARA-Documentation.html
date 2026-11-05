@@ -521,7 +521,7 @@
 │         │                  │                      ▲                  │
 │         └──────────────────┴──────────────────────┘                  │
 │                          Caddy (TLS)                                │
-│                     status.dev-server.datakrib.com                   │
+│                     status.suburbancloud.ng                   │
 └─────────────────────────────────────────────────────────────────────┘
                     ▲                    ▲                    ▲
                     │  Heartbeat (15s)   │                    │
@@ -788,7 +788,7 @@ cd /opt/happy-galileo
 cp infra/.env.example infra/.env
 # Edit infra/.env:
 #   NODE_NAME=Primary Workstation
-#   BASE_DOMAIN=dev-server.datakrib.com
+#   BASE_DOMAIN=suburbancloud.ng
 #   CADDY_HTTP_PORT=80
 #   CADDY_HTTPS_PORT=443
 #   CENTRAL_HUB_URL=          (leave empty — this IS the hub)
@@ -803,7 +803,7 @@ devctl discover --force</code></pre>
 
 <div class="callout">
   <div class="callout-title">Note</div>
-  <p>The hub's dashboard is accessible at <code>https://status.dev-server.datakrib.com</code> via Caddy's on-demand TLS.</p>
+  <p>The hub's dashboard is accessible at <code>https://status.suburbancloud.ng</code> via Caddy's on-demand TLS.</p>
 </div>
 
 <h3>4.2 Sub-Node Enrollment</h3>
@@ -814,8 +814,8 @@ devctl discover --force</code></pre>
 curl -sSL https://raw.githubusercontent.com/Unlimited-demi/happy-galileo/master/scripts/setup-node.sh | \
   sudo bash -s -- \
     --node-name "vm2" \
-    --domain "vm2.dev-server.datakrib.com" \
-    --hub-url "https://status.dev-server.datakrib.com/api/telemetry/ingest" \
+    --domain "vm2.suburbancloud.ng" \
+    --hub-url "https://status.suburbancloud.ng/api/telemetry/ingest" \
     --github-token "ghp_your_token_here"</code></pre>
 
 <h4>What the enrollment script does:</h4>
@@ -848,8 +848,8 @@ curl -sSL https://raw.githubusercontent.com/Unlimited-demi/happy-galileo/master/
     </tr>
     <tr>
       <td><code>BASE_DOMAIN</code></td>
-      <td>dev-server.datakrib.com</td>
-      <td>vm2.dev-server.datakrib.com</td>
+      <td>suburbancloud.ng</td>
+      <td>vm2.suburbancloud.ng</td>
       <td>Domain scope for service URLs</td>
     </tr>
     <tr>
@@ -1278,14 +1278,14 @@ devctl fleet prune --max-age 30 --yes</div>
 <div class="cmd-ref">
   <div class="cmd-name">devctl heartbeat [--hub URL] [--name NODE]</div>
   <div class="cmd-desc">Send and test telemetry heartbeat to the central hub.</div>
-  <div class="cmd-usage">devctl heartbeat --hub https://status.dev-server.datakrib.com/api/telemetry/ingest</div>
+  <div class="cmd-usage">devctl heartbeat --hub https://status.suburbancloud.ng/api/telemetry/ingest</div>
 </div>
 
 <div class="cmd-ref">
   <div class="cmd-name">devctl test &lt;target&gt;</div>
   <div class="cmd-desc">Run Playwright visual and diagnostic tests against a service URL.</div>
   <div class="cmd-usage">devctl test chaos-api
-devctl test https://status.dev-server.datakrib.com</div>
+devctl test https://status.suburbancloud.ng</div>
 </div>
 
 <div class="cmd-ref">
@@ -1376,7 +1376,7 @@ devctl test https://status.dev-server.datakrib.com</div>
 
 <pre><code>{
   "node_name": "vm4",
-  "base_domain": "vm4.dev-server.datakrib.com",
+  "base_domain": "vm4.suburbancloud.ng",
   "timestamp": 1725192000.0,
   "status": "ONLINE",
   "containers_count": 19,
@@ -1570,7 +1570,7 @@ X-Fleet-Key: default-fleet-key
 
 {
   "node_name": "vm4",
-  "base_domain": "vm4.dev-server.datakrib.com",
+  "base_domain": "vm4.suburbancloud.ng",
   "timestamp": 1725192000.0,
   "status": "ONLINE",
   "containers_count": 19,

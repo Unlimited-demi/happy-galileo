@@ -41,7 +41,7 @@ def test_incident_state_lifecycle(temp_incident_bus):
         proof={
             "container_state": "STOPPED",
             "health_probe": "Failed: Connection Refused",
-            "live_url": "https://frontend.dev-server.datakrib.com",
+            "live_url": "https://frontend.suburbancloud.ng",
         },
         verified=False
     )
@@ -62,7 +62,7 @@ def test_incident_state_lifecycle(temp_incident_bus):
         proof={
             "container_state": "RUNNING",
             "health_probe": "HTTP 200 OK (22ms)",
-            "live_url": "https://frontend.dev-server.datakrib.com",
+            "live_url": "https://frontend.suburbancloud.ng",
         },
         verified=True
     )

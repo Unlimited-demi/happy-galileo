@@ -3,7 +3,7 @@
 **To:** Chief Executive Officer  
 **From:** Engineering & Infrastructure Architecture  
 **Subject:** Modernizing Engineering Velocity with Autonomous Remote Workstations & AI-Ops  
-**Scope:** Company-Wide Infrastructure & Developer Operations (*.datakrib.com)  
+**Scope:** Company-Wide Infrastructure & Developer Operations (*.suburbancloud.ng)  
 **Date:** August 2026  
 
 ---
@@ -48,7 +48,7 @@ flowchart TD
         Devctl["devctl CLI and Dynamic Router"]
     end
 
-    UserPhone & UserLaptop & ExecDashboard -->|"HTTPS (*.dev-server.datakrib.com)"| Caddy
+    UserPhone & UserLaptop & ExecDashboard -->|"HTTPS (*.suburbancloud.ng)"| Caddy
     UserLaptop -->|"SSH (Encrypted Session)"| CodingAgent
 
     SecurityEdge -->|"Internal Routing"| InternalNetwork
@@ -105,13 +105,13 @@ The architecture scales from a single developer machine to an enterprise-wide mu
 
 ```mermaid
 flowchart LR
-    DNS["Namecheap Wildcard DNS (*.datakrib.com)"]
+    DNS["Namecheap Wildcard DNS (*.suburbancloud.ng)"]
 
     subgraph FleetNodes["Enterprise Server Fleet"]
-        Node1["Node 1: Dev Workstation<br/>*.dev-server.datakrib.com"]
-        NodeGPU["Node 2: Dedicated GPU / SAR Node<br/>*.gpu.datakrib.com"]
-        NodeStaging["Node 3: QA and Staging Cluster<br/>*.staging.datakrib.com"]
-        NodeDevX["Node 4: Sarah's Devbox<br/>*.sarah.dev.datakrib.com"]
+        Node1["Node 1: Dev Workstation<br/>*.suburbancloud.ng"]
+        NodeGPU["Node 2: Dedicated GPU / SAR Node<br/>*.gpu.suburbancloud.ng"]
+        NodeStaging["Node 3: QA and Staging Cluster<br/>*.staging.suburbancloud.ng"]
+        NodeDevX["Node 4: Sarah's Devbox<br/>*.sarah.dev.suburbancloud.ng"]
     end
 
     subgraph CentralHub["Centralized Operations"]
@@ -145,7 +145,7 @@ Engineers and AI agents execute:
 devctl expose my-service 3000
 ```
 Within **800 milliseconds**, a live, cryptographically secure HTTPS endpoint is provisioned:
-`https://my-service.dev-server.datakrib.com`
+`https://my-service.suburbancloud.ng`
 - **Zero DNS configuration required**—powered by automated wildcard routing.
 - Distinct namespaces for **Development**, **Staging**, and **Production**.
 
@@ -184,14 +184,14 @@ An autonomous operations agent monitors host and service health 24/7:
 ```mermaid
 flowchart TD
     subgraph Phase1["Phase 1: Pilot Deployment (Weeks 1-2) - COMPLETED"]
-        P1A["Deploy Primary Workstation on *.dev-server.datakrib.com"]
+        P1A["Deploy Primary Workstation on *.suburbancloud.ng"]
         P1B["Validate devctl Ingress & Dynamic Caddy TLS Routing"]
         P1C["Integrate Headless Playwright Diagnostic Crawler"]
         P1A --> P1B --> P1C
     end
 
     subgraph Phase2["Phase 2: Team Fleet Rollout (Weeks 3-4)"]
-        P2A["Provision GPU Compute Node (*.gpu.datakrib.com)"]
+        P2A["Provision GPU Compute Node (*.gpu.suburbancloud.ng)"]
         P2B["Provision Individual Devboxes for Core Engineers"]
         P2C["Connect Central Webhook for Slack / Discord Alerts"]
         P2A --> P2B --> P2C

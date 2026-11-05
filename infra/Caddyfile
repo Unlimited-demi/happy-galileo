@@ -4,7 +4,7 @@
 }
 
 # 1. Base Status Dashboard & ARA Central Hub
-status.dev-server.datakrib.com, ara.suburbancloud.ng {
+ara.suburbancloud.ng {
     encode zstd gzip
 
     log {

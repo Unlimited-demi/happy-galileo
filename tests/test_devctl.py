@@ -11,11 +11,11 @@ from devctl.core.incident_bus import IncidentBus, IncidentState
 
 
 def test_domain_formatting():
-    """Verify domain generator with wildcard *.dev-server.datakrib.com."""
-    assert Config.get_full_domain("vessel-api", "dev") == "vessel-api.dev-server.datakrib.com"
-    assert Config.get_full_domain("vessel-api", "staging") == "vessel-api-staging.dev-server.datakrib.com"
-    assert Config.get_full_domain("vessel-api", "prod") == "vessel-api-prod.dev-server.datakrib.com"
-    assert Config.get_full_domain("frontend") == "frontend.dev-server.datakrib.com"
+    """Verify domain generator with wildcard *.suburbancloud.ng."""
+    assert Config.get_full_domain("vessel-api", "dev") == "vessel-api.suburbancloud.ng"
+    assert Config.get_full_domain("vessel-api", "staging") == "vessel-api-staging.suburbancloud.ng"
+    assert Config.get_full_domain("vessel-api", "prod") == "vessel-api-prod.suburbancloud.ng"
+    assert Config.get_full_domain("frontend") == "frontend.suburbancloud.ng"
 
 
 def test_slug_sanitization():
@@ -35,12 +35,12 @@ def test_domain_registry_persistence(tmp_path):
         service_name="test-app",
         container_name="test-app-container",
         port=3000,
-        domain="test-app.dev-server.datakrib.com",
+        domain="test-app.suburbancloud.ng",
         env="dev",
     )
 
     assert entry["service_name"] == "test-app"
-    assert entry["url"] == "https://test-app.dev-server.datakrib.com"
+    assert entry["url"] == "https://test-app.suburbancloud.ng"
 
     # Reload from disk
     new_reg = DomainRegistry(state_file=state_file)
@@ -66,7 +66,7 @@ def test_incident_lifecycle(tmp_path):
         level=3,
         evidence={
             "status_code": 500,
-            "failing_url": "https://payment-api.dev-server.datakrib.com/checkout",
+            "failing_url": "https://payment-api.suburbancloud.ng/checkout",
             "stack_trace": "TypeError: Cannot read properties of undefined at Checkout.process()",
         },
     )

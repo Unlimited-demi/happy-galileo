@@ -25,8 +25,8 @@ for directory in [DEVCTL_STATE_DIR, INCIDENTS_DIR, SCREENSHOTS_DIR, LOGS_DIR]:
 class Config:
     """Central configuration for devctl and AI-Ops."""
 
-    # Base domain setup (e.g. dev-server.datakrib.com)
-    BASE_DOMAIN = os.environ.get("BASE_DOMAIN", "dev-server.datakrib.com").strip()
+    # Base domain setup (e.g. suburbancloud.ng)
+    BASE_DOMAIN = os.environ.get("BASE_DOMAIN", "suburbancloud.ng").strip()
 
     # Subdomain namespaces
     DEV_NAMESPACE = os.environ.get("DEV_NAMESPACE", "").strip()
@@ -70,9 +70,9 @@ class Config:
     def get_full_domain(cls, service_slug: str, env: str = "dev") -> str:
         """
         Generate full FQDN for a service and environment.
-        With wildcard *.dev-server.datakrib.com:
-        - service: myapp, env: dev -> myapp.dev-server.datakrib.com
-        - service: myapp, env: staging -> myapp-staging.dev-server.datakrib.com (or myapp.staging.dev-server.datakrib.com)
+        With wildcard *.suburbancloud.ng:
+        - service: myapp, env: dev -> myapp.suburbancloud.ng
+        - service: myapp, env: staging -> myapp-staging.suburbancloud.ng (or myapp.staging.suburbancloud.ng)
         """
         service_slug = service_slug.lower().strip()
         env = env.lower().strip()

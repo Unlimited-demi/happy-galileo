@@ -40,9 +40,9 @@ class NodeManager:
         """
         Normalize Hub URL into (ingest_endpoint, base_url).
         Accepts:
-          - https://status.dev-server.datakrib.com
-          - https://status.dev-server.datakrib.com/
-          - https://status.dev-server.datakrib.com/api/telemetry/ingest
+          - https://ara.suburbancloud.ng
+          - https://ara.suburbancloud.ng/
+          - https://ara.suburbancloud.ng/api/telemetry/ingest
         """
         raw = hub_url.strip().rstrip("/")
         if not raw.startswith("http://") and not raw.startswith("https://"):

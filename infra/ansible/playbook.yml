@@ -10,8 +10,8 @@
   vars:
     project_repo: "https://github.com/yourcompany/happy-galileo.git"
     install_dir: "/opt/happy-galileo"
-    base_domain_suffix: "datakrib.com"
-    admin_email: "devops@datakrib.com"
+    base_domain_suffix: "suburbancloud.ng"
+    admin_email: "devops@suburbancloud.ng"
 
   tasks:
     - name: Ensure prerequisite packages are installed

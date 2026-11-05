@@ -587,10 +587,102 @@ class BrainEngine:
         Process natural language queries from Concert engineers using native ReAct tool-calling with Qwen 2.5.
         Qwen inspects the tool schemas, issues tool calls, inspects the observations, and reasons over live telemetry.
         """
+        import re
         import logging
         logger = logging.getLogger("ARA.Brain")
 
-        # 1. Native ReAct Tool-Calling Execution with Qwen 2.5 via Ollama /api/chat
+        # Strip Concert mention wrappers e.g. "@ARA (Autonomous SRE) status" -> "status"
+        clean_q = re.sub(r'@ARA(?:\s*\([^)]*\))?', '', query, flags=re.IGNORECASE).strip()
+        q_lower = clean_q.lower()
+
+        # ── Fast Deterministic Dispatch for SRE Operational Commands (<50ms) ──
+        # Guarantees immediate response to Concert without CPU inference timeouts
+
+        # 1. Human Approval Action
+        app_match = re.search(r"approve\s+(app-[0-9a-f\-]+)", q_lower)
+        if app_match:
+            app_id = app_match.group(1).upper()
+            res = self._execute_tool("approve_remediation", {"approval_id": app_id})
+            if res.get("status") == "EXECUTED":
+                reply = f"✅ **Human Approval Granted**: {res.get('message', '')}\n• Action: `{res.get('action')}` on `{res.get('service')}`\n• Dashboard: https://ara.suburbancloud.ng"
+            else:
+                reply = f"⚠️ **Approval Execution Failed**: {res.get('message') or res.get('error')}"
+            return {"reply": reply, "answer": reply, "explanation": reply, "engine": "ara-fast-dispatch"}
+
+        # 2. Direct Status & Health Query
+        is_direct_status = (
+            not q_lower
+            or q_lower in ["status", "health", "overview", "summary", "state", "ping", "what are the status", "what is the status", "get status", "show status"]
+            or q_lower.startswith("status ")
+            or (any(w in q_lower for w in ["status", "health", "overview"]) and not any(w in q_lower for w in ["why", "cause", "causing", "explain", "how did"]))
+        )
+        if is_direct_status:
+            nodes = self._execute_tool("get_fleet_nodes", {}, fleet_store=fleet_store)
+            incidents = self._execute_tool("get_active_incidents", {})
+            routes = self._execute_tool("get_service_routes", {})
+
+            node_names = ", ".join(f"`{n['name']}` ({n.get('status', 'ONLINE')})" for n in nodes) if isinstance(nodes, list) else "1 Primary Controller"
+            inc_count = len(incidents) if isinstance(incidents, list) else 0
+
+            status_lines = [
+                f"🟢 **ARA Telemetry & Fleet Status** [{'HEALTHY' if inc_count == 0 else 'ALERT'}]",
+                f"• **Fleet Nodes**: {node_names}",
+            ]
+            if inc_count > 0:
+                status_lines.append(f"• 🚨 **Active Incidents** ({inc_count}):")
+                for inc in incidents:
+                    status_lines.append(f"  - `{inc['id']}` [{inc.get('severity', 'HIGH')}] on `{inc.get('service', 'unknown')}`: {inc.get('summary') or inc.get('title')}")
+            else:
+                status_lines.append("• **Active Incidents**: 0 [CLEAR]")
+
+            if isinstance(routes, list) and routes:
+                status_lines.append(f"• **Services Monitored**: {len(routes)} registered")
+
+            status_lines.append("• **ARA Central Dashboard**: https://ara.suburbancloud.ng")
+            answer = "\n".join(status_lines)
+            return {"reply": answer, "answer": answer, "explanation": answer, "engine": "ara-fast-dispatch"}
+
+        # 3. Direct Fleet Nodes Query
+        is_nodes_query = any(w in q_lower for w in ["node", "nodes", "fleet", "servers"]) and not any(w in q_lower for w in ["why", "cause", "explain"])
+        if is_nodes_query:
+            nodes = self._execute_tool("get_fleet_nodes", {}, fleet_store=fleet_store)
+            if isinstance(nodes, list):
+                node_lines = [f"🌐 **ARA Fleet Directory** ({len(nodes)} Node{'s' if len(nodes) > 1 else ''}):"]
+                for n in nodes:
+                    node_lines.append(f"• `{n['name']}` [{n.get('status', 'ONLINE')}]: {n.get('services', 0)} containers monitored")
+                node_lines.append("• **ARA Central Dashboard**: https://ara.suburbancloud.ng")
+                ans = "\n".join(node_lines)
+                return {"reply": ans, "answer": ans, "explanation": ans, "engine": "ara-fast-dispatch"}
+
+        # 4. Direct Incidents Query
+        is_incidents_query = any(w in q_lower for w in ["incident", "incidents", "alerts", "errors"]) and not any(w in q_lower for w in ["why", "cause", "explain"])
+        if is_incidents_query:
+            incidents = self._execute_tool("get_active_incidents", {})
+            if isinstance(incidents, list) and incidents:
+                inc_lines = [f"🚨 **Active Incidents** ({len(incidents)}):"]
+                for inc in incidents:
+                    inc_lines.append(f"• `{inc['id']}` [{inc.get('severity', 'HIGH')}] on `{inc.get('service', 'unknown')}`: {inc.get('summary') or inc.get('title')}")
+                inc_lines.append("• **ARA Central Dashboard**: https://ara.suburbancloud.ng")
+                ans = "\n".join(inc_lines)
+            else:
+                ans = "✅ **Zero Active Incidents**: All monitored fleet services are operating within normal parameters.\n• Dashboard: https://ara.suburbancloud.ng"
+            return {"reply": ans, "answer": ans, "explanation": ans, "engine": "ara-fast-dispatch"}
+
+        # 5. Direct Doctor Query
+        if any(w in q_lower for w in ["doctor", "health check", "prerequisites", "infra check"]):
+            doc = self._execute_tool("get_system_doctor", {})
+            if isinstance(doc, dict) and "overall_status" in doc:
+                doc_lines = [
+                    f"🏥 **System Doctor Audit** [{doc.get('overall_status', 'HEALTHY')}]:",
+                    f"• Docker Engine: `{doc.get('docker_engine', 'RUNNING')}` ({doc.get('running_containers', 0)} containers active)",
+                    f"• Caddy Ingress API: `{doc.get('caddy_admin_api', 'REACHABLE')}`",
+                    f"• Wildcard DNS: `{doc.get('wildcard_dns', 'RESOLVES')}` (*.{doc.get('base_domain')})",
+                    f"• Dashboard: https://ara.suburbancloud.ng"
+                ]
+                ans = "\n".join(doc_lines)
+                return {"reply": ans, "answer": ans, "explanation": ans, "engine": "ara-fast-dispatch"}
+
+        # ── Open-Ended Diagnostic Reasoning: Native ReAct Tool-Calling with Qwen 2.5 ──
         if self.is_available():
             try:
                 system_prompt = (
@@ -613,8 +705,8 @@ class BrainEngine:
 
                 executed_tools_record = []
 
-                # Autonomous ReAct Loop (Up to 3 turns of tool invocation -> observation -> reasoning)
-                for _ in range(3):
+                # Autonomous ReAct Loop (Up to 2 turns, 5.0s per turn timeout to prevent Concert socket drops)
+                for _ in range(2):
                     payload = {
                         "model": self.model,
                         "messages": messages,
@@ -623,7 +715,7 @@ class BrainEngine:
                         "keep_alive": -1,
                         "options": {
                             "temperature": 0.1,
-                            "num_predict": 160,
+                            "num_predict": 128,
                             "num_thread": 2,
                         }
                     }
@@ -634,7 +726,7 @@ class BrainEngine:
                         headers={"Content-Type": "application/json"},
                         method="POST",
                     )
-                    with urllib.request.urlopen(req, timeout=18.0) as resp:
+                    with urllib.request.urlopen(req, timeout=5.0) as resp:
                         if resp.status != 200:
                             break
                         res_json = json.loads(resp.read().decode("utf-8"))

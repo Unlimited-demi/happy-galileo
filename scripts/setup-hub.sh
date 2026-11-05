@@ -17,12 +17,12 @@
 # Usage:
 #   curl -sSL https://raw.githubusercontent.com/Unlimited-demi/happy-galileo/master/scripts/setup-hub.sh | sudo bash
 #   # or with custom domain:
-#   sudo bash scripts/setup-hub.sh --domain dev-server.datakrib.com
+#   sudo bash scripts/setup-hub.sh --domain suburbancloud.ng
 # ==============================================================================
 
 set -e
 
-BASE_DOMAIN="${BASE_DOMAIN:-dev-server.datakrib.com}"
+BASE_DOMAIN="${BASE_DOMAIN:-suburbancloud.ng}"
 NODE_NAME="${NODE_NAME:-}"
 
 while [[ "$#" -gt 0 ]]; do

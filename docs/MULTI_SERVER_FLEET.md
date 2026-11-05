@@ -28,9 +28,9 @@ Depending on your company's workflow, choose one of the three proven scaling pat
 ### Pattern 1: Per-Developer / Per-Team Autonomous Devboxes (Recommended)
 Every developer or team gets their own persistent VPS (e.g. Hetzner 4 vCPU / 8GB RAM, AWS, DigitalOcean, or bare metal).
 - **Domain Scheme**:
-  - `*.dev-server.datakrib.com` $\rightarrow$ General Dev
-  - `*.john.dev.datakrib.com` $\rightarrow$ John's Devbox
-  - `*.sarah.dev.datakrib.com` $\rightarrow$ Sarah's Devbox
+  - `*.suburbancloud.ng` $\rightarrow$ General Dev
+  - `*.john.dev.suburbancloud.ng` $\rightarrow$ John's Devbox
+  - `*.sarah.dev.suburbancloud.ng` $\rightarrow$ Sarah's Devbox
 - **Benefits**:
   - Complete isolation: Developer A crashing their Docker container or running heavy tests does not impact Developer B.
   - Zero port collisions: Both engineers can expose a service named `api` without conflict (`api.john.dev...` vs `api.sarah.dev...`).
@@ -39,9 +39,9 @@ Every developer or team gets their own persistent VPS (e.g. Hetzner 4 vCPU / 8GB
 
 ### Pattern 2: Workload-Segregated Fleet
 Split servers by compute capabilities:
-1. **General Web/API Nodes** (`*.dev-server.datakrib.com`): Lightweight Docker apps, Next.js, Node, Go, Python APIs.
-2. **GPU / AI Compute Workstations** (`*.gpu.datakrib.com`): High-VRAM GPU servers running local LLMs (vLLM, Ollama), SAR radar pipelines, or ML training.
-3. **Staging / QA Cluster** (`*.staging.datakrib.com`): Pre-release integration environments tested automatically by Playwright.
+1. **General Web/API Nodes** (`*.suburbancloud.ng`): Lightweight Docker apps, Next.js, Node, Go, Python APIs.
+2. **GPU / AI Compute Workstations** (`*.gpu.suburbancloud.ng`): High-VRAM GPU servers running local LLMs (vLLM, Ollama), SAR radar pipelines, or ML training.
+3. **Staging / QA Cluster** (`*.staging.suburbancloud.ng`): Pre-release integration environments tested automatically by Playwright.
 
 ---
 
@@ -49,7 +49,7 @@ Split servers by compute capabilities:
 For enterprise internal-only fleets where you do not want services reachable over public internet:
 1. Connect all servers to a private **Tailscale / WireGuard** mesh.
 2. Caddy binds to the Tailscale interface (`100.x.y.z`).
-3. Only company employees with active VPN/Tailscale access can reach `https://*.dev-server.datakrib.com`.
+3. Only company employees with active VPN/Tailscale access can reach `https://*.suburbancloud.ng`.
 
 ---
 
@@ -77,9 +77,9 @@ To provision **1 to 100 servers** in parallel across your company:
 Edit [`infra/ansible/inventory.ini.example`](file:///c:/Users/Admin/Documents/antigravity/happy-galileo/infra/ansible/inventory.ini.example):
 ```ini
 [dev_fleet]
-node1       ansible_host=198.51.100.10  base_domain=dev-server.datakrib.com
-gpu-box     ansible_host=198.51.100.20  base_domain=gpu.datakrib.com
-dev-sarah   ansible_host=198.51.100.30  base_domain=sarah.dev.datakrib.com
+node1       ansible_host=198.51.100.10  base_domain=suburbancloud.ng
+gpu-box     ansible_host=198.51.100.20  base_domain=gpu.suburbancloud.ng
+dev-sarah   ansible_host=198.51.100.30  base_domain=sarah.dev.suburbancloud.ng
 ```
 
 ### Step 2: Run the Fleet Playbook

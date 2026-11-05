@@ -8,15 +8,15 @@
 
 [dev_fleet]
 # Node 1 - Core Services
-vm-01 ansible_host=10.0.1.10 node_name=auth-vm base_domain=auth.dev.suburban.datakrib.com
+vm-01 ansible_host=10.0.1.10 node_name=auth-vm base_domain=auth.dev.suburbancloud.ng
 # Node 2 - Billing & Payments
-vm-02 ansible_host=10.0.1.11 node_name=billing-vm base_domain=billing.dev.suburban.datakrib.com
+vm-02 ansible_host=10.0.1.11 node_name=billing-vm base_domain=billing.dev.suburbancloud.ng
 # Node 3 - Machine Learning & Inference
-vm-03 ansible_host=10.0.1.12 node_name=ml-vm base_domain=ml.dev.suburban.datakrib.com
+vm-03 ansible_host=10.0.1.12 node_name=ml-vm base_domain=ml.dev.suburbancloud.ng
 # Node 4 - Notification & WebSockets
-vm-04 ansible_host=10.0.1.13 node_name=ws-vm base_domain=ws.dev.suburban.datakrib.com
+vm-04 ansible_host=10.0.1.13 node_name=ws-vm base_domain=ws.dev.suburbancloud.ng
 # Node 5 - Analytics & Reporting
-vm-05 ansible_host=10.0.1.14 node_name=analytics-vm base_domain=analytics.dev.suburban.datakrib.com
+vm-05 ansible_host=10.0.1.14 node_name=analytics-vm base_domain=analytics.dev.suburbancloud.ng
 # ... Add up to 20+ nodes here
 
 [dev_fleet:vars]
@@ -24,5 +24,5 @@ ansible_user=root
 ansible_ssh_private_key_file=~/.ssh/id_rsa
 ansible_python_interpreter=/usr/bin/python3
 project_repo=https://github.com/Unlimited-demi/happy-galileo.git
-central_hub_url=https://status.dev-server.datakrib.com/api/telemetry/ingest
+central_hub_url=https://ara.suburbancloud.ng/api/telemetry/ingest
 fleet_key=suburban-fleet-secret-key-2026

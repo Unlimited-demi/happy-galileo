@@ -18,14 +18,14 @@
 #   curl -sSL https://raw.githubusercontent.com/Unlimited-demi/happy-galileo/master/scripts/setup-node.sh | \
 #     sudo bash -s -- \
 #       --node-name "vm2" \
-#       --domain "vm2.dev-server.datakrib.com" \
-#       --hub-url "https://status.dev-server.datakrib.com/api/telemetry/ingest"
+#       --domain "vm2.suburbancloud.ng" \
+#       --hub-url "https://ara.suburbancloud.ng/api/telemetry/ingest"
 # ==============================================================================
 
 set -e
 
 NODE_NAME="${NODE_NAME:-$(hostname -s)}"
-BASE_DOMAIN="${BASE_DOMAIN:-dev-server.datakrib.com}"
+BASE_DOMAIN="${BASE_DOMAIN:-suburbancloud.ng}"
 CENTRAL_HUB_URL="${CENTRAL_HUB_URL:-}"
 FLEET_KEY="${FLEET_KEY:-default-fleet-key}"
 GIT_NAME="${GIT_NAME:-}"
@@ -99,7 +99,7 @@ fi
 if [ -n "${GIT_EMAIL}" ]; then
   git config --global user.email "${GIT_EMAIL}"
 elif [ -z "$(git config --global user.email 2>/dev/null)" ]; then
-  git config --global user.email "bot@datakrib.com"
+  git config --global user.email "bot@suburbancloud.ng"
 fi
 
 # Method A: GitHub Token (Zero-Touch, No SSH key copying needed!)
@@ -121,7 +121,7 @@ else
 
   if [ ! -f "${SSH_DIR}/id_ed25519" ]; then
     echo "  Generating ED25519 SSH Key..."
-    ssh-keygen -t ed25519 -C "${GIT_EMAIL:-node-${NODE_NAME}@datakrib.com}" -f "${SSH_DIR}/id_ed25519" -N ""
+    ssh-keygen -t ed25519 -C "${GIT_EMAIL:-node-${NODE_NAME}@suburbancloud.ng}" -f "${SSH_DIR}/id_ed25519" -N ""
   fi
 
   # Pre-populate known_hosts for github.com

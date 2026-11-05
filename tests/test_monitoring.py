@@ -358,7 +358,7 @@ class TestAIContainerInference:
         from devctl.core.domains import DomainRegistry
         assert DomainRegistry._is_valid_public_domain("mail.example.com") is True
         assert DomainRegistry._is_valid_public_domain("api.my-app.io") is True
-        assert DomainRegistry._is_valid_public_domain("dashboard.datakrib.com") is True
+        assert DomainRegistry._is_valid_public_domain("dashboard.suburbancloud.ng") is True
         # Invalid / internal
         assert DomainRegistry._is_valid_public_domain("localhost") is False
         assert DomainRegistry._is_valid_public_domain("backend.internal") is False
@@ -422,7 +422,7 @@ class TestAIContainerInference:
 
         caddy_file = tmp_path / "Caddyfile"
         caddy_file.write_text("""
-status.dev-server.datakrib.com, ara.suburbancloud.ng {
+status.suburbancloud.ng, ara.suburbancloud.ng {
     encode zstd gzip
     reverse_proxy dashboard:8888
 }

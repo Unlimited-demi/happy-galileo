@@ -29,7 +29,7 @@ mkdir -p "${BIN_DIR}"
 cat << EOF > "${BIN_DIR}/devctl"
 #!/usr/bin/env bash
 export PYTHONPATH="${PROJECT_DIR}:\${PYTHONPATH}"
-export BASE_DOMAIN="\${BASE_DOMAIN:-dev-server.datakrib.com}"
+export BASE_DOMAIN="\${BASE_DOMAIN:-suburbancloud.ng}"
 exec "${VENV_DIR}/bin/python3" "${PROJECT_DIR}/devctl/cli.py" "\$@"
 EOF
 

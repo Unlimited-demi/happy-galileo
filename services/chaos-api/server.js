@@ -43,9 +43,9 @@ const tasks = new Map();
 
 // Seed initial data
 const seedUsers = [
-  { id: uuidv4(), name: 'Alice Johnson', email: 'alice@datakrib.com', role: 'admin', createdAt: new Date().toISOString() },
-  { id: uuidv4(), name: 'Bob Martinez', email: 'bob@datakrib.com', role: 'developer', createdAt: new Date().toISOString() },
-  { id: uuidv4(), name: 'Carol Chen', email: 'carol@datakrib.com', role: 'devops', createdAt: new Date().toISOString() },
+  { id: uuidv4(), name: 'Alice Johnson', email: 'alice@suburbancloud.ng', role: 'admin', createdAt: new Date().toISOString() },
+  { id: uuidv4(), name: 'Bob Martinez', email: 'bob@suburbancloud.ng', role: 'developer', createdAt: new Date().toISOString() },
+  { id: uuidv4(), name: 'Carol Chen', email: 'carol@suburbancloud.ng', role: 'devops', createdAt: new Date().toISOString() },
 ];
 seedUsers.forEach(u => users.set(u.id, u));
 

@@ -16,7 +16,7 @@ def temp_fleet_store(tmp_path):
 def test_upsert_and_get_node(temp_fleet_store):
     payload = {
         "node_name": "worker-eu-01",
-        "base_domain": "datakrib.com",
+        "base_domain": "suburbancloud.ng",
         "containers_count": 5,
         "services_count": 3,
         "open_incidents_count": 1,
@@ -55,7 +55,7 @@ def test_node_ttl_states(temp_fleet_store):
                     open_incidents_count, last_seen, registered_at, payload_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("node-online", "1.1.1.1", "datakrib.com", 1, 1, 0, now - 10, now - 100, '{"node_name": "node-online"}')
+                ("node-online", "1.1.1.1", "suburbancloud.ng", 1, 1, 0, now - 10, now - 100, '{"node_name": "node-online"}')
             )
             conn.execute(
                 """
@@ -64,7 +64,7 @@ def test_node_ttl_states(temp_fleet_store):
                     open_incidents_count, last_seen, registered_at, payload_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("node-stale", "1.1.1.2", "datakrib.com", 1, 1, 0, now - 60, now - 200, '{"node_name": "node-stale"}')
+                ("node-stale", "1.1.1.2", "suburbancloud.ng", 1, 1, 0, now - 60, now - 200, '{"node_name": "node-stale"}')
             )
             conn.execute(
                 """
@@ -73,7 +73,7 @@ def test_node_ttl_states(temp_fleet_store):
                     open_incidents_count, last_seen, registered_at, payload_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("node-offline", "1.1.1.3", "datakrib.com", 1, 1, 0, now - 150, now - 500, '{"node_name": "node-offline"}')
+                ("node-offline", "1.1.1.3", "suburbancloud.ng", 1, 1, 0, now - 150, now - 500, '{"node_name": "node-offline"}')
             )
             conn.commit()
         finally:
@@ -142,7 +142,7 @@ def test_prune_offline_nodes(temp_fleet_store):
                     open_incidents_count, last_seen, registered_at, payload_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("active-node", "10.0.0.1", "datakrib.com", 1, 1, 0, now - 10, now, '{}')
+                ("active-node", "10.0.0.1", "suburbancloud.ng", 1, 1, 0, now - 10, now, '{}')
             )
             conn.execute(
                 """
@@ -151,7 +151,7 @@ def test_prune_offline_nodes(temp_fleet_store):
                     open_incidents_count, last_seen, registered_at, payload_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("dead-node", "10.0.0.2", "datakrib.com", 1, 1, 0, now - 4000, now - 5000, '{}')
+                ("dead-node", "10.0.0.2", "suburbancloud.ng", 1, 1, 0, now - 4000, now - 5000, '{}')
             )
             conn.commit()
         finally:

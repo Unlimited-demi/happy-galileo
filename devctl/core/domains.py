@@ -409,14 +409,12 @@ class DomainRegistry:
                     valid_domains = [d for d in candidates if self._is_valid_public_domain(d)]
                     if not valid_domains:
                         continue
-                    # Prefer dedicated custom domain (e.g. ara.suburbancloud.ng over status.dev-server.datakrib.com)
+                    # Prefer dedicated custom domain (e.g. ara.suburbancloud.ng over status.BASE_DOMAIN)
                     best_domain = valid_domains[0]
                     for d in valid_domains:
-                        if not d.endswith("dev-server.datakrib.com") and not d.startswith("status."):
+                        if not d.startswith("status."):
                             best_domain = d
                             break
-                        elif not d.endswith("dev-server.datakrib.com"):
-                            best_domain = d
 
                     upstreams = re.findall(r'reverse_proxy\s+([a-zA-Z0-9\.\-_:]+)', body)
                     for up in upstreams:
@@ -588,7 +586,7 @@ class DomainRegistry:
                                         continue
                                     best_domain = valid_domains[0]
                                     for d in valid_domains:
-                                        if not d.endswith("dev-server.datakrib.com"):
+                                        if not d.startswith("status."):
                                             best_domain = d
                                             break
 
@@ -695,11 +693,9 @@ class DomainRegistry:
                                     continue
                                 best_domain = valid_domains[0]
                                 for d in valid_domains:
-                                    if not d.endswith("dev-server.datakrib.com") and not d.startswith("status."):
+                                    if not d.startswith("status."):
                                         best_domain = d
                                         break
-                                    elif not d.endswith("dev-server.datakrib.com"):
-                                        best_domain = d
 
                                 domain_info = {"domain": best_domain, "all_domains": valid_domains, "source": f"mount:{Path(cf).name}"}
                                 # Map to upstreams in reverse_proxy directive

@@ -5,7 +5,7 @@
 # creates an Incident Dossier, and demonstrates OpenCode dispatch.
 # ═══════════════════════════════════════════════════════════════
 
-API_URL="${1:-https://chaos-api.dev-server.datakrib.com}"
+API_URL="${1:-https://chaos-api.suburbancloud.ng}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

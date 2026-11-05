@@ -237,7 +237,7 @@ def cmd_heartbeat(args):
     from ai_ops.telemetry import FleetTelemetryStreamer
     from devctl.commands.node import NodeManager
     saved = NodeManager.get_node_config()
-    hub_url = args.hub or saved.get("hub_url") or os.environ.get("CENTRAL_HUB_URL", "https://status.dev-server.datakrib.com/api/telemetry/ingest")
+    hub_url = args.hub or saved.get("hub_url") or os.environ.get("CENTRAL_HUB_URL", "https://ara.suburbancloud.ng/api/telemetry/ingest")
     node_name = args.name or saved.get("node_name") or os.environ.get("NODE_NAME", "vm-02")
     fleet_key = saved.get("fleet_key") or os.environ.get("FLEET_KEY", "default-fleet-key")
     
@@ -1209,7 +1209,7 @@ def main():
     p_node_sub = p_node.add_subparsers(dest="node_cmd", help="Node subcommands")
 
     p_node_enroll = p_node_sub.add_parser("enroll", help="Enroll this node into Central Fleet Hub")
-    p_node_enroll.add_argument("hub_url", help="Central Hub URL (e.g. https://status.dev-server.datakrib.com)")
+    p_node_enroll.add_argument("hub_url", help="Central Hub URL (e.g. https://ara.suburbancloud.ng)")
     p_node_enroll.add_argument("--token", "-t", help="Shared fleet authentication key / token")
     p_node_enroll.add_argument("--name", "-n", help="Node name override (defaults to local hostname)")
     p_node_enroll.add_argument("--insecure", action="store_true", help="Skip TLS certificate verification")

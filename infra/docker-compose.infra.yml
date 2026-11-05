@@ -33,7 +33,7 @@ services:
       - ../ai_ops:/app/ai_ops
       - ../dashboard:/app/dashboard
     environment:
-      - BASE_DOMAIN=${BASE_DOMAIN:-dev-server.datakrib.com}
+      - BASE_DOMAIN=${BASE_DOMAIN:-suburbancloud.ng}
       - CADDY_ADMIN_API=http://caddy:2019
       - DEVCTL_DOCKER_NETWORK=dev-net
       - DEVCTL_STATE_DIR=/app/.devctl
@@ -67,7 +67,7 @@ services:
       - ../devctl:/app/devctl
       - ../ai_ops:/app/ai_ops
     environment:
-      - BASE_DOMAIN=${BASE_DOMAIN:-dev-server.datakrib.com}
+      - BASE_DOMAIN=${BASE_DOMAIN:-suburbancloud.ng}
       - CADDY_ADMIN_API=http://caddy:2019
       - DEVCTL_DOCKER_NETWORK=dev-net
       - DEVCTL_STATE_DIR=/app/.devctl
