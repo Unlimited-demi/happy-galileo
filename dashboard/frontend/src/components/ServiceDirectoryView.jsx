@@ -70,7 +70,8 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy }) {
                   filteredServices.map((svc, i) => {
                     const isWeb = svc.container_type === 'web' || !!svc.url;
                     const statusText = svc.container_status || svc.status || 'UNKNOWN';
-                    const isRunning = statusText.toLowerCase().startsWith('up');
+                    const sLower = statusText.toLowerCase();
+                    const isRunning = sLower.startsWith('up') || sLower.includes('running') || sLower === 'active';
                     return (
                       <tr key={`${svc.service_name || svc.name}-${i}`} className="hover:bg-muted/30 transition-colors">
                         <td className="py-3 px-6 font-semibold text-slate-200">{svc.service_name || svc.container_name || svc.name}</td>

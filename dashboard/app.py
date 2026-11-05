@@ -56,8 +56,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, directory=None, **kwargs):
         if directory is None:
             dist_dir = Path(__file__).resolve().parent / "dist"
+            frontend_dist = Path(__file__).resolve().parent / "frontend" / "dist"
             static_dir = Path(__file__).resolve().parent / "static"
-            directory = str(dist_dir) if dist_dir.exists() and (dist_dir / "index.html").exists() else str(static_dir)
+            if frontend_dist.exists() and (frontend_dist / "index.html").exists():
+                directory = str(frontend_dist)
+            elif dist_dir.exists() and (dist_dir / "index.html").exists():
+                directory = str(dist_dir)
+            else:
+                directory = str(static_dir)
         super().__init__(*args, directory=str(directory), **kwargs)
 
     # Explicit MIME map — prevents system mimetypes from returning text/html for .js
@@ -173,11 +179,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     merged = {
                         **svc,
                         "healthy": is_running,
-                        "status_code": 200 if is_running else 503,
-                        "response_time_ms": 15 if is_running else 0,
+                        "status_code": svc.get("status_code", None),
+                        "response_time_ms": svc.get("response_time_ms", None),
                         "image": c_info.get("image", svc.get("image", "app:latest")),
                         "version": c_info.get("version", "latest"),
-                        "container_status": c_info.get("status", "RUNNING" if is_running else "STOPPED"),
+                        "container_status": c_info.get("status") or ("RUNNING" if is_running else "STOPPED"),
                         "container_id": c_info.get("id", ""),
                     }
                     merged_services.append(merged)

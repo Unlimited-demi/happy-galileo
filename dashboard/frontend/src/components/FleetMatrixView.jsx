@@ -129,7 +129,8 @@ export function FleetMatrixView({ nodes, onCopy }) {
                       services.map((svc) => {
                         const isWeb = svc.container_type === 'web' || !!svc.url;
                         const statusText = svc.container_status || svc.status || 'UNKNOWN';
-                        const isRunning = statusText.toLowerCase().startsWith('up');
+                        const sLower = statusText.toLowerCase();
+                        const isRunning = sLower.startsWith('up') || sLower.includes('running') || sLower === 'active';
                         const codebase = svc.codebase || {};
                         return (
                           <tr key={svc.service_name || svc.name} className="hover:bg-muted/30 transition-colors">

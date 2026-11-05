@@ -15,9 +15,10 @@ export function Terminal({ sessionName, onCopy }) {
   useEffect(() => {
     if (!terminalRef.current) return;
 
-    // Initialize xterm
+    // Initialize xterm in read-only mode
     const term = new XTerm({
-      cursorBlink: true,
+      cursorBlink: false,
+      disableStdin: true,
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
       fontSize: 13,
       lineHeight: 1.35,
@@ -48,16 +49,7 @@ export function Terminal({ sessionName, onCopy }) {
     termInstanceRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    term.writeln(`\x1b[36m⚡ Attaching to in-browser tmux session: ${sessionName}...\x1b[0m\r\n`);
-
-    // Keystroke forwarding
-    const dataListener = term.onData((data) => {
-      fetch(`/api/terminals/${sessionName}/input`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: data }),
-      }).catch(() => {});
-    });
+    term.writeln(`\x1b[36m⚡ Attaching to live stream: ${sessionName}...\x1b[0m\r\n\x1b[33m[Security Policy: Web terminal input is disabled. Stream is read-only. Connect via SSH for interactive shell.]\x1b[0m\r\n`);
 
     // Stream SSE terminal
     const es = new EventSource(`/api/terminals/${sessionName}/stream`);
@@ -81,11 +73,6 @@ export function Terminal({ sessionName, onCopy }) {
     const handleResize = () => {
       try {
         fitAddon.fit();
-        fetch(`/api/terminals/${sessionName}/resize`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cols: term.cols, rows: term.rows }),
-        }).catch(() => {});
       } catch (e) {}
     };
 
@@ -93,19 +80,10 @@ export function Terminal({ sessionName, onCopy }) {
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      dataListener.dispose();
       es.close();
       term.dispose();
     };
   }, [sessionName]);
-
-  const sendKey = (key) => {
-    fetch(`/api/terminals/${sessionName}/input`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input: key }),
-    }).catch(() => {});
-  };
 
   return (
     <div className="rounded-xl overflow-hidden border border-border/80 bg-zinc-950 shadow-2xl flex flex-col">
@@ -126,12 +104,9 @@ export function Terminal({ sessionName, onCopy }) {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => sendKey('\x03')} className="h-7 text-xs px-2.5">
-            Ctrl+C
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => sendKey('\r')} className="h-7 text-xs px-2.5">
-            Enter
-          </Button>
+          <Badge variant="outline" className="text-[10px] font-mono text-amber-400 border-amber-500/30 bg-amber-500/10">
+            🔒 READ-ONLY AUDIT STREAM
+          </Badge>
           <Button
             variant="outline"
             size="sm"

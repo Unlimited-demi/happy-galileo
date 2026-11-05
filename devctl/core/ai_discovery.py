@@ -122,7 +122,7 @@ class AIContainerInference:
             if m.get("Type") == "bind":
                 src = m.get("Source", "")
                 dst = m.get("Destination", "")
-                if src and os.path.exists(src):
+                if src:
                     bind_mounts.append({"host_path": src, "container_path": dst})
                     candidate_dirs.append(src)
 
@@ -134,9 +134,11 @@ class AIContainerInference:
                 workspace_dir = str(p.resolve())
                 break
 
-        # Fallback search if not found in compose labels
-        if not workspace_dir and bind_mounts:
-            workspace_dir = bind_mounts[0]["host_path"]
+        # Fallback search if path is in container namespace or test environment
+        if not workspace_dir and compose_work_dir:
+            workspace_dir = compose_work_dir
+        elif not workspace_dir and candidate_dirs:
+            workspace_dir = candidate_dirs[0]
 
         # 4. Check for Git repository & active branch
         is_git_repo = False

@@ -332,20 +332,35 @@ def cmd_incident(args):
         svc_entry = reg.get_service(service_name)
         live_url = svc_entry.get("url", f"https://{Config.get_full_domain(service_name)}") if svc_entry else f"https://{Config.get_full_domain(service_name)}"
 
-        health_probe_str = "HTTP 200 OK"
+        is_healthy = False
+        health_probe_str = "Probe Not Run"
         response_time_ms = 0
+        insecure = getattr(args, "insecure", False)
         try:
             start = time.time()
             req = urllib.request.Request(live_url, headers={"User-Agent": "devctl-verifier/1.0"})
             import ssl
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
+            if insecure:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+            else:
+                ctx = ssl.create_default_context()
+
             with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
                 response_time_ms = int((time.time() - start) * 1000)
-                health_probe_str = f"HTTP {resp.status} OK ({response_time_ms}ms)"
+                status_code = getattr(resp, "status", resp.getcode() if hasattr(resp, "getcode") else 200)
+                reason = getattr(resp, "reason", "OK")
+                health_probe_str = f"HTTP {status_code} {reason} ({response_time_ms}ms)"
+                if 200 <= status_code < 400:
+                    is_healthy = True
+        except urllib.error.HTTPError as he:
+            response_time_ms = int((time.time() - start) * 1000)
+            health_probe_str = f"HTTP {he.code} {he.reason} ({response_time_ms}ms)"
+            is_healthy = False
         except Exception as e:
-            health_probe_str = f"Health Probe: {e}"
+            health_probe_str = f"Failed ({type(e).__name__}: {e})"
+            is_healthy = False
 
         # 2. Extract git branch, commit, diff, and auto-push fix branch to origin
         evidence = inc.get("evidence", {}) or {}
@@ -396,10 +411,24 @@ def cmd_incident(args):
                 if r_res.returncode == 0:
                     remote_url = r_res.stdout.strip()
 
-                # Auto-commit if there are uncommitted changes
+                # Check for uncommitted changes and stage safely
                 status_res = subprocess.run(["git", "-C", svc_workspace, "status", "--porcelain"], stdout=subprocess.PIPE, text=True, check=False)
                 if status_res.returncode == 0 and status_res.stdout.strip():
-                    subprocess.run(["git", "-C", svc_workspace, "add", "-A"], check=False, stdout=subprocess.DEVNULL)
+                    # Stage tracked modifications first
+                    subprocess.run(["git", "-C", svc_workspace, "add", "-u"], check=False, stdout=subprocess.DEVNULL)
+                    # Check for untracked files and guard against committing secrets
+                    untracked_res = subprocess.run(["git", "-C", svc_workspace, "ls-files", "--others", "--exclude-standard"], stdout=subprocess.PIPE, text=True, check=False)
+                    if untracked_res.returncode == 0 and untracked_res.stdout.strip():
+                        untracked_files = [f for f in untracked_res.stdout.strip().splitlines() if f]
+                        sensitive_patterns = [".env", "key", "token", "secret", "id_rsa", "cred", "dump", ".pem"]
+                        has_sensitive = any(any(pat in f.lower() for pat in sensitive_patterns) for f in untracked_files)
+                        if has_sensitive:
+                            print(f"[!] SECURITY WARNING: Untracked files may contain secrets: {untracked_files}")
+                            print("    Refusing to stage untracked files blindly. Only tracked modifications staged.")
+                        else:
+                            for u_file in untracked_files:
+                                subprocess.run(["git", "-C", svc_workspace, "add", u_file], check=False, stdout=subprocess.DEVNULL)
+
                     commit_msg = f"fix({service_name}): resolve incident {args.incident_id}\n\n{notes}"
                     subprocess.run(["git", "-C", svc_workspace, "commit", "-m", commit_msg], check=False, stdout=subprocess.DEVNULL)
 
@@ -445,6 +474,8 @@ def cmd_incident(args):
         is_running = docker_mgr.is_running(service_name)
         container_state = "RUNNING" if is_running else "STOPPED"
 
+        is_verified = is_healthy and is_running
+
         proof = {
             "live_url": live_url,
             "health_probe": health_probe_str,
@@ -456,16 +487,20 @@ def cmd_incident(args):
             "remote_url": remote_url,
             "git_diff": git_diff_stat,
             "verified_by": args.agent or inc.get("claimed_by", "OpenCode"),
+            "is_verified": is_verified,
         }
 
-        res = bus.resolve_incident(args.incident_id, notes=notes, proof=proof)
+        res = bus.resolve_incident(args.incident_id, notes=notes, proof=proof, verified=is_verified)
         
+        status_label = "VERIFIED & RESOLVED" if is_verified else "RESOLVED (UNVERIFIED)"
+        status_icon = "✓" if is_verified else "⚠️"
+
         print("\n" + "╔" + "═" * 74 + "╗")
-        print(f"║{'INCIDENT RESOLUTION & VERIFICATION CERTIFICATE':^74}║")
+        print(f"║{('INCIDENT RESOLUTION CERTIFICATE [' + status_label + ']'):^74}║")
         print("╠" + "═" * 74 + "╣")
         print(f"║ Incident ID:    {args.incident_id:<56}║")
         print(f"║ Service:        {service_name:<56}║")
-        print(f"║ State:          {'VERIFIED & RESOLVED':<56}║")
+        print(f"║ State:          {status_label:<56}║")
         print(f"║ Resolved By:    {args.agent or inc.get('claimed_by', 'OpenCode'):<56}║")
         print(f"║ Git Branch:     {git_branch:<56}║")
         print(f"║ Git Push:       {git_push_status[:56]:<56}║")
@@ -475,9 +510,16 @@ def cmd_incident(args):
             print(f"║   {line[:70]:<70} ║")
         print("╠" + "─" * 74 + "╣")
         print("║ 🧪 LIVE VERIFICATION PROOF:                                               ║")
-        print(f"║   ✓ Container Status:  {container_state:<50}║")
-        print(f"║   ✓ Health Probe:      {health_probe_str:<50}║")
-        print(f"║   ✓ Live Service URL:  {live_url:<50}║")
+        print(f"║   {status_icon} Container Status:  {container_state:<50}║")
+        print(f"║   {status_icon} Health Probe:      {health_probe_str:<50}║")
+        print(f"║   {status_icon} Live Service URL:  {live_url:<50}║")
+        if not is_verified:
+            print("╠" + "─" * 74 + "╣")
+            print("║ ⚠️  WARNING: Service resolution could NOT be verified!                  ║")
+            if not is_running:
+                print("║   - Container is STOPPED or unreachable.                                ║")
+            if not is_healthy:
+                print("║   - Health probe failed or returned error HTTP status code.             ║")
         print("╠" + "─" * 74 + "╣")
         print("║ 🛠️ CODE DIFF SUMMARY:                                                    ║")
         for diff_line in git_diff_stat.splitlines()[:5]:
@@ -1008,6 +1050,7 @@ def main():
     p_incident.add_argument("--all", action="store_true", help="Include resolved incidents")
     p_incident.add_argument("--agent", help="Agent claiming the incident")
     p_incident.add_argument("--notes", help="Resolution notes")
+    p_incident.add_argument("--insecure", action="store_true", help="Allow unverified TLS certificates during verification probe")
 
     # dispatch
     p_dispatch = subparsers.add_parser("dispatch", help="Dispatch an incident dossier to OpenCode for autonomous remediation")

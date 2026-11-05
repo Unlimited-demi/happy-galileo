@@ -87,7 +87,11 @@ def test_incident_lifecycle(tmp_path):
     assert claimed["state"] == IncidentState.CLAIMED
     assert claimed["claimed_by"] == "OpenCode"
 
-    # 3. Resolve
+    # 3. Resolve without verification defaults to RESOLVED_UNVERIFIED
     resolved = bus.resolve_incident(inc_id, notes="Fixed null check in checkout controller.")
-    assert resolved["state"] == IncidentState.RESOLVED
+    assert resolved["state"] == IncidentState.RESOLVED_UNVERIFIED
     assert resolved["resolution_notes"] == "Fixed null check in checkout controller."
+
+    # 4. Resolve with verified=True sets state to VERIFIED
+    verified = bus.resolve_incident(inc_id, notes="Verified HTTP 200.", verified=True)
+    assert verified["state"] == IncidentState.VERIFIED
