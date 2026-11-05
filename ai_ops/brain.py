@@ -139,76 +139,100 @@ class BrainEngine:
         else:
             return f"Incident detected on '{service_name}' under category '{error_category}'. Error signature: {clean_excerpt}"
 
-    def handle_chatops_query(
-        self,
-        query: str,
-        thread_context: Optional[Dict[str, Any]] = None,
-        fleet_store: Optional[Any] = None,
-    ) -> Dict[str, Any]:
-        """
-        Process natural language queries from Concert engineers (e.g. '@ARA what is the status of the fleet?').
-        Dispatches tool lookups against local stores and formulates response.
-        """
-        q_lower = query.lower().strip()
-        context_data: Dict[str, Any] = {}
+    SRE_TOOLS = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_fleet_nodes",
+                "description": "Inspect all enrolled cluster servers and worker nodes in the fleet and their operational statuses.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_service_telemetry",
+                "description": "Inspect time-series telemetry trends (memory drift, latency drift, health flapping) for a specific container or fleet-wide summary.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "service_name": {
+                            "type": "string",
+                            "description": "Optional name of the target service or container (e.g. 'devctl-dashboard', 'ai-ops-daemon', 'caddy', 'billing-api', 'chaos-api'). Omit for fleet-wide summary."
+                        }
+                    },
+                    "required": []
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_active_incidents",
+                "description": "List currently open SRE incident dossiers, plain-English root causes, error signatures, and recommended actions.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "service_name": {
+                            "type": "string",
+                            "description": "Optional service name to filter incidents (e.g. 'devctl-dashboard')."
+                        }
+                    },
+                    "required": []
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_recent_rollbacks",
+                "description": "Query recent automated or manual rollback actions performed by the policy engine.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        }
+    ]
 
-        # 1. Tool dispatch based on query intent (Action -> Observation)
-        target_svc = (thread_context or {}).get("service_name") or ""
-        try:
-            from ai_ops.metrics_store import MetricsStore
-            store = MetricsStore()
-            available_services = store.services()
-        except Exception:
-            store = None
-            available_services = []
-
-        known_fleet_services = list(set(available_services + [
-            "devctl-dashboard", "dashboard", "caddy", "ai-ops-daemon", "ai-ops",
-            "ara-brain", "billing-api", "chaos-api", "chaos-db", "demo-app"
-        ]))
-
-        if not target_svc:
-            for s in sorted(known_fleet_services, key=len, reverse=True):
-                if s.lower() in q_lower:
-                    target_svc = s
-                    break
-
-        wants_diagnostic = any(w in q_lower for w in ["why", "cause", "causing", "flapping", "flap", "leak", "creep", "tell me", "about", "what happened", "crash", "restart", "unstable", "drift", "churn", "explain"]) or bool(target_svc)
-        wants_status = any(w in q_lower for w in ["status", "health", "overview", "state", "summary", "how is", "report", "check", "diagnos"]) or wants_diagnostic
-        wants_fleet = any(w in q_lower for w in ["node", "fleet", "servers", "vm-", "host"]) or (wants_status and not target_svc)
-        wants_metrics = any(w in q_lower for w in ["memory", "cpu", "metric", "trend", "latency", "usage", "ram", "drift", "flapping", "leak"]) or wants_status
-        wants_incidents = any(w in q_lower for w in ["incident", "error", "alert", "why", "down", "fail", "issue", "broke", "crash", "about"]) or wants_status
-        wants_rollback = any(w in q_lower for w in ["rollback", "revert", "undo"])
-
-        if wants_fleet:
+    def _execute_tool(self, tool_name: str, args: Dict[str, Any], fleet_store: Optional[Any] = None) -> Any:
+        """Execute a tool called by Qwen ReAct agent against live stores."""
+        if tool_name == "get_fleet_nodes":
             if fleet_store and hasattr(fleet_store, "get_all_nodes"):
                 nodes = fleet_store.get_all_nodes()
                 if nodes:
-                    context_data["nodes"] = [
+                    return [
                         {"name": n.get("node_name"), "status": n.get("status"), "services": n.get("services_count")}
                         for n in nodes
                     ]
+            return [{"name": "Central Hub (vm-test)", "status": "ONLINE", "type": "primary", "services": 6}]
+
+        elif tool_name == "get_service_telemetry":
+            svc_name = args.get("service_name")
+            try:
+                from ai_ops.metrics_store import MetricsStore
+                store = MetricsStore()
+                if svc_name:
+                    return store.detect_trends(svc_name, window_hours=2.0)
                 else:
-                    context_data["nodes"] = [{"name": "Central Hub (vm-test)", "status": "ONLINE", "type": "primary"}]
-            else:
-                context_data["nodes"] = [{"name": "Central Hub (vm-test)", "status": "ONLINE", "type": "primary"}]
+                    return store.trend_summary(window_hours=2.0)
+            except Exception as e:
+                return {"error": f"Telemetry retrieval failed: {str(e)}"}
 
-        if target_svc and store:
-            context_data["service_trends"] = store.detect_trends(target_svc, window_hours=2.0)
-            context_data["target_service"] = target_svc
-        elif wants_metrics and store:
-            context_data["fleet_trends"] = store.trend_summary(window_hours=2.0)
-
-        if wants_incidents:
+        elif tool_name == "get_active_incidents":
+            svc_name = args.get("service_name")
             try:
                 from devctl.core.incident_bus import IncidentBus
                 bus = IncidentBus()
                 open_inc = bus.list_incidents(only_open=True)
-                if target_svc:
-                    svc_inc = [i for i in open_inc if i.get("service_name") == target_svc]
-                    if svc_inc:
-                        open_inc = svc_inc
-                context_data["open_incidents"] = [
+                if svc_name:
+                    open_inc = [i for i in open_inc if i.get("service_name") == svc_name]
+                return [
                     {
                         "id": i.get("id"),
                         "service": i.get("service_name"),
@@ -220,161 +244,191 @@ class BrainEngine:
                     }
                     for i in open_inc[:5]
                 ]
-            except Exception:
-                pass
+            except Exception as e:
+                return {"error": f"Incidents retrieval failed: {str(e)}"}
 
-        if wants_rollback:
+        elif tool_name == "get_recent_rollbacks":
             try:
                 from ai_ops.policy_engine import RollbackLedger
                 ledger = RollbackLedger()
-                recent_rb = ledger.list_recent_actions(limit=5)
-                context_data["recent_rollbacks"] = recent_rb
-            except Exception:
-                pass
+                return ledger.list_recent_actions(limit=5)
+            except Exception as e:
+                return {"error": f"Rollback retrieval failed: {str(e)}"}
 
-        # 2. ReAct Synthesis: Let the Local CPU Model reason over observations if online
-        if self.is_available() and context_data:
+        return {"error": f"Unknown tool: {tool_name}"}
+
+    def handle_chatops_query(
+        self,
+        query: str,
+        thread_context: Optional[Dict[str, Any]] = None,
+        fleet_store: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Process natural language queries from Concert engineers using native ReAct tool-calling with Qwen 2.5.
+        Qwen inspects the tool schemas, issues tool calls, inspects the observations, and reasons over live telemetry.
+        """
+        import logging
+        logger = logging.getLogger("ARA.Brain")
+
+        # 1. Native ReAct Tool-Calling Execution with Qwen 2.5 via Ollama /api/chat
+        if self.is_available():
             try:
                 system_prompt = (
                     "You are ARA, an autonomous site reliability engineer for Suburban & Legend. "
-                    "Analyze the user's question alongside the live system observations retrieved from telemetry. "
-                    "Formulate a structured, professional, and visually soothing response in Markdown. "
-                    "Use bold section headers and clean bullet points for readability. "
-                    "Format statuses in uppercase brackets like [ONLINE], [STABLE], [CRITICAL], [HIGH], [WARN]. "
-                    "Format service names and IDs in backticks like `service-name`. "
-                    "Never dump long run-on sentences or pipe-separated lists. "
-                    "Never invent data. State exact metrics, node names, and operational statuses truthfully."
+                    "You investigate infrastructure issues using your provided tools. "
+                    "Always call the appropriate tools (get_service_telemetry, get_active_incidents, get_fleet_nodes, get_recent_rollbacks) "
+                    "to gather live data before answering questions about servers, containers, memory, incidents, flapping, or performance. "
+                    "Reason over the tool observations and formulate a concise, professional, technical response (under 4 sentences). "
+                    "Never invent data. Quote exact metrics, container names, and incident IDs from tool results."
                 )
-                user_prompt = (
-                    f"Engineer Query: {query}\n"
-                    f"Live System Observations: {json.dumps(context_data)}\n\n"
-                    "Provide your SRE assessment and answer:"
-                )
-                payload = {
-                    "model": self.model,
-                    "prompt": f"{system_prompt}\n\n{user_prompt}",
-                    "stream": False,
-                    "keep_alive": -1,  # Keep permanently resident in RAM
-                    "options": {
-                        "temperature": 0.2,
-                        "num_predict": 90,  # Fast bounded generation on CPU
-                        "num_thread": 2,
-                    }
-                }
-                data = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(
-                    f"{self.brain_url}/api/generate",
-                    data=data,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=15.0) as resp:
-                    if resp.status == 200:
-                        res_json = json.loads(resp.read().decode("utf-8"))
-                        llm_reply = res_json.get("response", "").strip()
-                        if llm_reply:
-                            return {
-                                "reply": llm_reply,
-                                "answer": llm_reply,
-                                "explanation": llm_reply,
-                                "context_data": context_data,
-                                "engine": f"ara-brain-react-{self.model}",
-                            }
-            except Exception as e:
-                import logging
-                logging.getLogger("ARA.Brain").warning(f"Local LLM reasoning bypassed: {e}")
 
-        # 3. Deterministic Fallback Synthesis (Fast, reliable, zero-latency, rich telemetry)
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": query}
+                ]
+
+                executed_tools_record = []
+
+                # Autonomous ReAct Loop (Up to 3 turns of tool invocation -> observation -> reasoning)
+                for _ in range(3):
+                    payload = {
+                        "model": self.model,
+                        "messages": messages,
+                        "tools": self.SRE_TOOLS,
+                        "stream": False,
+                        "keep_alive": -1,
+                        "options": {
+                            "temperature": 0.1,
+                            "num_predict": 140,
+                            "num_thread": 2,
+                        }
+                    }
+                    data = json.dumps(payload).encode("utf-8")
+                    req = urllib.request.Request(
+                        f"{self.brain_url}/api/chat",
+                        data=data,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req, timeout=18.0) as resp:
+                        if resp.status != 200:
+                            break
+                        res_json = json.loads(resp.read().decode("utf-8"))
+                        msg = res_json.get("message", {})
+                        tool_calls = msg.get("tool_calls", [])
+
+                        if not tool_calls:
+                            # Final answer synthesized by Qwen!
+                            final_answer = msg.get("content", "").strip()
+                            if final_answer:
+                                return {
+                                    "reply": final_answer,
+                                    "answer": final_answer,
+                                    "explanation": final_answer,
+                                    "context_data": {"executed_tools": executed_tools_record},
+                                    "engine": f"ara-brain-react-{self.model}",
+                                }
+                            break
+
+                        # Qwen decided to call tools! Add assistant tool_calls message
+                        messages.append(msg)
+
+                        for call in tool_calls:
+                            func = call.get("function", {})
+                            name = func.get("name", "")
+                            args = func.get("arguments", {})
+                            if isinstance(args, str):
+                                try:
+                                    args = json.loads(args)
+                                except Exception:
+                                    args = {}
+
+                            logger.info(f"[ARA Brain] ReAct Agent invoking tool '{name}' with args {args}")
+                            result = self._execute_tool(name, args, fleet_store=fleet_store)
+                            executed_tools_record.append({"tool": name, "args": args, "result": result})
+
+                            messages.append({
+                                "role": "tool",
+                                "content": json.dumps(result),
+                            })
+            except Exception as e:
+                logger.warning(f"[ARA Brain] Native ReAct tool-calling loop fallback: {e}")
+
+        # 2. Fail-Safe Telemetry Fallback (Triggered only when model container is offline)
+        # Gathers live telemetry from the exact same tools and presents honest status
+        q_lower = query.lower()
         parts = []
 
-        # Target Service diagnostics
-        if context_data.get("service_trends"):
-            st = context_data["service_trends"]
-            svc = st.get("service") or target_svc or "service"
-            mem_trend = st.get("mem_growth_pct", 0)
-            lat_factor = st.get("latency_factor", 1.0)
-            warnings = st.get("warnings", [])
+        # Find target service if mentioned
+        target_svc = (thread_context or {}).get("service_name") or ""
+        for s in ["devctl-dashboard", "ai-ops-daemon", "caddy", "billing-api", "chaos-api", "chaos-db", "demo-app"]:
+            if s in q_lower:
+                target_svc = s
+                break
 
-            lines = [f"📊 **Diagnostics for `{svc}`**:"]
-            if warnings:
-                for w in warnings:
-                    lines.append(f"• ⚠️ [{w.get('type')}] {w.get('detail', '')}")
-            else:
-                lines.append(f"• ✅ No anomalies detected across {st.get('samples', 0)} telemetry samples.")
-            lines.append(f"• **Memory Drift**: `{mem_trend:+.1f}%` | **Latency Drift**: `{lat_factor:.2f}x` | **Status**: [{st.get('verdict', 'STABLE')}]")
-
-            svc_incidents = [i for i in context_data.get("open_incidents", []) if i.get("service") == svc]
-            if svc_incidents:
-                lines.append(f"\n🚨 **Correlated Incidents ({len(svc_incidents)})**:")
-                for inc in svc_incidents:
-                    summary = inc.get("summary") or inc.get("title")
-                    lines.append(f"• `{inc['id']}` [{inc.get('severity', 'HIGH')}]: {summary}")
-            parts.append("\n".join(lines))
-
-        # Fleet / Nodes part (if general status or fleet asked)
-        if context_data.get("nodes") and not target_svc:
-            nodes = context_data["nodes"]
-            online_count = sum(1 for n in nodes if n.get("status") == "ONLINE")
-            node_lines = [f"🌐 **Fleet Status** ({online_count}/{len(nodes)} Online):"]
-            for n in nodes:
-                st = n.get("status", "ONLINE")
-                svcs = n.get("services")
-                svc_suffix = f" — {svcs} services" if svcs else ""
-                node_lines.append(f"• `{n['name']}` [{st}]{svc_suffix}")
-            parts.append("\n".join(node_lines))
-
-        # Open Incidents part (when general status or incident query)
-        if "open_incidents" in context_data and not context_data.get("service_trends"):
-            incidents = context_data["open_incidents"]
-            if incidents:
-                inc_lines = [f"🚨 **Active Incidents ({len(incidents)})**:"]
-                for i in incidents:
-                    summary = i.get("summary") or i.get("title") or "Under investigation"
-                    inc_lines.append(f"• `{i['id']}` [{i.get('severity', 'HIGH')}] on `{i.get('service', 'unknown')}`: {summary}")
-                parts.append("\n".join(inc_lines))
-            elif wants_incidents:
-                parts.append("✅ **Incidents**: Zero active incidents across fleet. All systems operational.")
-
-        # Fleet-wide trends
-        if context_data.get("fleet_trends"):
-            ft = context_data["fleet_trends"]
-            warnings = []
-            stable_svcs = []
-            for svc, data in ft.items():
-                svc_warns = data.get("warnings", [])
-                if svc_warns:
-                    for w in svc_warns:
-                        warnings.append(f"• ⚠️ `{svc}`: {w.get('detail')}")
+        # Service specific diagnostic
+        if target_svc:
+            st = self._execute_tool("get_service_telemetry", {"service_name": target_svc})
+            if isinstance(st, dict) and "service" in st:
+                warnings = st.get("warnings", [])
+                lines = [f"📊 Diagnostics for `{target_svc}`:"]
+                if warnings:
+                    lines.append("  • " + " | ".join(f"[{w.get('type')}] {w.get('detail', '')}" for w in warnings))
                 else:
-                    stable_svcs.append(svc)
+                    lines.append(f"  • ✅ No anomalies detected across {st.get('samples', 0)} telemetry samples.")
+                lines.append(f"  • Memory Drift: {st.get('mem_growth_pct', 0):+.1f}% | Latency Drift: {st.get('latency_factor', 1.0):.2f}x | Verdict: {st.get('verdict', 'STABLE')}")
+                parts.append("\n".join(lines))
 
-            trend_lines = ["📈 **Fleet Telemetry & Resource Trends**:"]
-            if warnings:
-                trend_lines.append("**Anomaly Warnings**:\n" + "\n".join(warnings))
-            if stable_svcs:
-                trend_lines.append(f"• **Nominal Services ({len(stable_svcs)})**: " + ", ".join(f"`{s}`" for s in stable_svcs))
-            parts.append("\n".join(trend_lines))
+            svc_inc = self._execute_tool("get_active_incidents", {"service_name": target_svc})
+            if isinstance(svc_inc, list) and svc_inc:
+                inc_lines = [f"🚨 Active Incidents on `{target_svc}` ({len(svc_inc)}):"]
+                for inc in svc_inc:
+                    inc_lines.append(f"  • `{inc['id']}` [{inc.get('severity', 'HIGH')}]: {inc.get('summary') or inc.get('title')}")
+                parts.append("\n".join(inc_lines))
 
-        # Rollbacks part
-        if context_data.get("recent_rollbacks"):
-            last_rb = context_data["recent_rollbacks"][0]
-            parts.append(f"⏪ **Automated Remediation**: `{last_rb.get('action')}` on `{last_rb.get('service_name')}` [{last_rb.get('status', 'EXECUTED')}]")
+        # Fleet nodes check
+        if any(w in q_lower for w in ["node", "fleet", "servers", "status", "overview", "how many"]):
+            nodes = self._execute_tool("get_fleet_nodes", {}, fleet_store=fleet_store)
+            if isinstance(nodes, list):
+                parts.append(f"🌐 Nodes: " + ", ".join(f"{n['name']} ({n.get('status', 'ONLINE')})" for n in nodes))
+
+        # General incidents check
+        if any(w in q_lower for w in ["incident", "error", "alert", "status", "about", "issue"]) and not target_svc:
+            incidents = self._execute_tool("get_active_incidents", {})
+            if isinstance(incidents, list) and incidents:
+                inc_lines = [f"🚨 Active Incidents ({len(incidents)}):"]
+                for inc in incidents:
+                    inc_lines.append(f"• `{inc['id']}` [{inc.get('severity', 'HIGH')}] on `{inc.get('service', 'unknown')}`: {inc.get('summary') or inc.get('title')}")
+                parts.append("\n".join(inc_lines))
+
+        # Memory / trend summary
+        if any(w in q_lower for w in ["memory", "trend", "usage", "status", "resource", "flapping"]) and not target_svc:
+            ft = self._execute_tool("get_service_telemetry", {})
+            if isinstance(ft, dict):
+                warnings = []
+                for svc, data in ft.items():
+                    if isinstance(data, dict):
+                        for w in data.get("warnings", []):
+                            warnings.append(f"• ⚠️ `{svc}`: {w.get('detail')}")
+                if warnings:
+                    parts.append("📈 Fleet Telemetry Warnings:\n" + "\n".join(warnings))
 
         if parts:
             answer = "\n\n".join(parts)
         else:
             answer = (
                 "Hello! I am ARA, your autonomous SRE companion for Suburban & Legend. "
-                "All systems are currently being monitored. "
-                "You can ask me about fleet nodes, active incidents, memory trends, or rollbacks."
+                "I investigate systems using real-time telemetry, node state, and incident dossiers. "
+                "Ask me about any container, fleet status, memory leaks, or active incidents."
             )
 
         return {
             "reply": answer,
             "answer": answer,
             "explanation": answer,
-            "context_data": context_data,
+            "context_data": {"mode": "deterministic_fallback"},
             "engine": "ara-brain-local",
         }
+
 
 

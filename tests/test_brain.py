@@ -95,3 +95,47 @@ class TestBrainEngine:
             assert "devctl-dashboard" in res_flap["answer"]
             assert "FLAPPING" in res_flap["answer"]
             assert "INC-042" in res_flap["answer"]
+
+    def test_react_tool_calling_loop(self):
+        """When local model decides to call tools, ARA executes them and feeds observations back to Qwen."""
+        import json
+        brain = BrainEngine(brain_url="http://localhost:11434")
+
+        # Step 1: LLM returns tool_calls for get_service_telemetry
+        mock_step1 = MagicMock()
+        mock_step1.status = 200
+        mock_step1.__enter__.return_value = mock_step1
+        mock_step1.read.return_value = json.dumps({
+            "message": {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "get_service_telemetry",
+                            "arguments": {"service_name": "devctl-dashboard"}
+                        }
+                    }
+                ]
+            }
+        }).encode("utf-8")
+
+        # Step 2: LLM receives tool observation and writes final answer
+        mock_step2 = MagicMock()
+        mock_step2.status = 200
+        mock_step2.__enter__.return_value = mock_step2
+        mock_step2.read.return_value = json.dumps({
+            "message": {
+                "role": "assistant",
+                "content": "The flapping on devctl-dashboard was caused by 12 health state transitions during startup."
+            }
+        }).encode("utf-8")
+
+        with patch.object(brain, "is_available", return_value=True), \
+             patch("urllib.request.urlopen", side_effect=[mock_step1, mock_step2]), \
+             patch.object(brain, "_execute_tool", return_value={"warnings": [{"detail": "12 flips"}]}) as mock_exec:
+
+            res = brain.handle_chatops_query("what is causing the flapping on devctl-dashboard?")
+            mock_exec.assert_called_once_with("get_service_telemetry", {"service_name": "devctl-dashboard"}, fleet_store=None)
+            assert "The flapping on devctl-dashboard" in res["answer"]
+            assert res["engine"] == f"ara-brain-react-{brain.model}"
+            assert len(res["context_data"]["executed_tools"]) == 1
