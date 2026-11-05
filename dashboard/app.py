@@ -810,6 +810,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 content_length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
                 payload = json.loads(body) if body else {}
+                node_name = payload.get("node_name", "unknown")
                 # Extract real client IP: prioritize reverse proxy headers (X-Forwarded-For / X-Real-IP) and payload
                 forwarded_for = self.headers.get("X-Forwarded-For", "")
                 real_ip = self.headers.get("X-Real-IP", "")
