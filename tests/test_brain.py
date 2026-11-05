@@ -76,3 +76,22 @@ class TestBrainEngine:
             assert "Central Hub (vm-test)" in res_status["answer"]
             assert "INC-999" in res_status["answer"]
             assert "billing-api" in res_status["answer"]
+
+        # Query specific service diagnostics (e.g. devctl-dashboard flapping)
+        with patch("ai_ops.metrics_store.MetricsStore.detect_trends") as mock_trends, \
+             patch("devctl.core.incident_bus.IncidentBus.list_incidents") as mock_list:
+            mock_trends.return_value = {
+                "service": "devctl-dashboard",
+                "samples": 100,
+                "verdict": "UNSTABLE",
+                "warnings": [{"type": "FLAPPING", "detail": "Health state flipped 12 times"}],
+                "mem_growth_pct": 0.0,
+                "latency_factor": 1.0,
+            }
+            mock_list.return_value = [
+                {"id": "INC-042", "service_name": "devctl-dashboard", "severity": "HIGH", "title": "Crash loop"}
+            ]
+            res_flap = brain.handle_chatops_query("what is causing the flapping on devctl-dashboard?")
+            assert "devctl-dashboard" in res_flap["answer"]
+            assert "FLAPPING" in res_flap["answer"]
+            assert "INC-042" in res_flap["answer"]

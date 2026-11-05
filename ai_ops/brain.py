@@ -153,10 +153,31 @@ class BrainEngine:
         context_data: Dict[str, Any] = {}
 
         # 1. Tool dispatch based on query intent (Action -> Observation)
-        wants_status = any(w in q_lower for w in ["status", "health", "overview", "state", "summary", "how is", "report"])
-        wants_fleet = any(w in q_lower for w in ["node", "fleet", "servers", "vm-", "host"]) or wants_status
-        wants_metrics = any(w in q_lower for w in ["memory", "cpu", "metric", "trend", "latency", "usage", "ram"]) or wants_status
-        wants_incidents = any(w in q_lower for w in ["incident", "error", "alert", "why", "down", "fail", "issue"]) or wants_status
+        target_svc = (thread_context or {}).get("service_name") or ""
+        try:
+            from ai_ops.metrics_store import MetricsStore
+            store = MetricsStore()
+            available_services = store.services()
+        except Exception:
+            store = None
+            available_services = []
+
+        known_fleet_services = list(set(available_services + [
+            "devctl-dashboard", "dashboard", "caddy", "ai-ops-daemon", "ai-ops",
+            "ara-brain", "billing-api", "chaos-api", "chaos-db", "demo-app"
+        ]))
+
+        if not target_svc:
+            for s in sorted(known_fleet_services, key=len, reverse=True):
+                if s.lower() in q_lower:
+                    target_svc = s
+                    break
+
+        wants_diagnostic = any(w in q_lower for w in ["why", "cause", "causing", "flapping", "flap", "leak", "creep", "tell me", "about", "what happened", "crash", "restart", "unstable", "drift", "churn", "explain"]) or bool(target_svc)
+        wants_status = any(w in q_lower for w in ["status", "health", "overview", "state", "summary", "how is", "report", "check", "diagnos"]) or wants_diagnostic
+        wants_fleet = any(w in q_lower for w in ["node", "fleet", "servers", "vm-", "host"]) or (wants_status and not target_svc)
+        wants_metrics = any(w in q_lower for w in ["memory", "cpu", "metric", "trend", "latency", "usage", "ram", "drift", "flapping", "leak"]) or wants_status
+        wants_incidents = any(w in q_lower for w in ["incident", "error", "alert", "why", "down", "fail", "issue", "broke", "crash", "about"]) or wants_status
         wants_rollback = any(w in q_lower for w in ["rollback", "revert", "undo"])
 
         if wants_fleet:
@@ -172,31 +193,31 @@ class BrainEngine:
             else:
                 context_data["nodes"] = [{"name": "Central Hub (vm-test)", "status": "ONLINE", "type": "primary"}]
 
-        if wants_metrics:
-            try:
-                from ai_ops.metrics_store import MetricsStore
-                store = MetricsStore()
-                target_svc = (thread_context or {}).get("service_name") or ""
-                # Attempt to extract service from query if not in context
-                if not target_svc:
-                    for s in store.services():
-                        if s.lower() in q_lower:
-                            target_svc = s
-                            break
-                if target_svc:
-                    context_data["service_trends"] = store.detect_trends(target_svc, window_hours=2.0)
-                else:
-                    context_data["fleet_trends"] = store.trend_summary(window_hours=2.0)
-            except Exception:
-                pass
+        if target_svc and store:
+            context_data["service_trends"] = store.detect_trends(target_svc, window_hours=2.0)
+            context_data["target_service"] = target_svc
+        elif wants_metrics and store:
+            context_data["fleet_trends"] = store.trend_summary(window_hours=2.0)
 
         if wants_incidents:
             try:
                 from devctl.core.incident_bus import IncidentBus
                 bus = IncidentBus()
                 open_inc = bus.list_incidents(only_open=True)
+                if target_svc:
+                    svc_inc = [i for i in open_inc if i.get("service_name") == target_svc]
+                    if svc_inc:
+                        open_inc = svc_inc
                 context_data["open_incidents"] = [
-                    {"id": i.get("id"), "service": i.get("service_name"), "severity": i.get("severity"), "title": i.get("title")}
+                    {
+                        "id": i.get("id"),
+                        "service": i.get("service_name"),
+                        "severity": i.get("severity"),
+                        "title": i.get("title", ""),
+                        "summary": i.get("plain_english_summary") or i.get("title", ""),
+                        "state": i.get("state", "ACTIVE"),
+                        "occurrences": i.get("occurrences", 1),
+                    }
                     for i in open_inc[:5]
                 ]
             except Exception:
@@ -231,8 +252,8 @@ class BrainEngine:
                     "stream": False,
                     "keep_alive": -1,  # Keep permanently resident in RAM
                     "options": {
-                        "temperature": 0.1,
-                        "num_predict": 120,
+                        "temperature": 0.2,
+                        "num_predict": 90,  # Fast bounded generation on CPU
                         "num_thread": 2,
                     }
                 }
@@ -243,7 +264,7 @@ class BrainEngine:
                     headers={"Content-Type": "application/json"},
                     method="POST",
                 )
-                with urllib.request.urlopen(req, timeout=8.0) as resp:
+                with urllib.request.urlopen(req, timeout=15.0) as resp:
                     if resp.status == 200:
                         res_json = json.loads(resp.read().decode("utf-8"))
                         llm_reply = res_json.get("response", "").strip()
@@ -262,37 +283,64 @@ class BrainEngine:
         # 3. Deterministic Fallback Synthesis (Fast, reliable, zero-latency, rich telemetry)
         parts = []
 
+        # Target Service diagnostics
+        if context_data.get("service_trends"):
+            st = context_data["service_trends"]
+            svc = st.get("service") or target_svc or "service"
+            mem_trend = st.get("mem_growth_pct", 0)
+            lat_factor = st.get("latency_factor", 1.0)
+            warnings = st.get("warnings", [])
+
+            lines = [f"📊 Diagnostics for `{svc}`:"]
+            if warnings:
+                lines.append("  • " + " | ".join(f"[{w.get('type')}] {w.get('detail', '')}" for w in warnings))
+            else:
+                lines.append(f"  • ✅ No anomalies detected across {st.get('samples', 0)} telemetry samples.")
+            lines.append(f"  • Memory Drift: {mem_trend:+.1f}% | Latency Drift: {lat_factor:.2f}x | Verdict: {st.get('verdict', 'STABLE')}")
+
+            svc_incidents = [i for i in context_data.get("open_incidents", []) if i.get("service") == svc]
+            if svc_incidents:
+                for inc in svc_incidents:
+                    summary = inc.get("summary") or inc.get("title")
+                    lines.append(f"  • 🚨 Active Incident `{inc['id']}` [{inc.get('severity', 'HIGH')}]: {summary}")
+            parts.append("\n".join(lines))
+
         # Fleet / Nodes part
-        if context_data.get("nodes"):
+        if context_data.get("nodes") and not target_svc:
             node_summaries = ", ".join(f"{n['name']} ({n.get('status', 'ONLINE')})" for n in context_data["nodes"])
             parts.append(f"🌐 Nodes: {node_summaries}")
 
-        # Incidents part
-        if "open_incidents" in context_data:
+        # Open Incidents part (when general status or incident query)
+        if "open_incidents" in context_data and not context_data.get("service_trends"):
             incidents = context_data["open_incidents"]
             if incidents:
-                inc_list = ", ".join(f"`{i['id']}` [{i.get('severity', 'WARN')}] on `{i.get('service', 'unknown')}`" for i in incidents)
-                parts.append(f"🚨 Active Incidents ({len(incidents)}): {inc_list}")
-            else:
+                inc_lines = [f"🚨 Active Incidents ({len(incidents)}):"]
+                for i in incidents:
+                    summary = i.get("summary") or i.get("title") or "Under investigation"
+                    inc_lines.append(f"• `{i['id']}` [{i.get('severity', 'HIGH')}] on `{i.get('service', 'unknown')}`: {summary}")
+                parts.append("\n".join(inc_lines))
+            elif wants_incidents:
                 parts.append("✅ Incidents: Zero active incidents across fleet")
 
-        # Specific service trends
-        if context_data.get("service_trends"):
-            st = context_data["service_trends"]
-            mem_trend = st.get("mem_growth_pct", 0)
-            parts.append(f"📊 Service metrics: Memory growth {mem_trend:+.1f}%, latency drift {st.get('latency_factor', 1.0):.2f}x ({st.get('verdict', 'STABLE')})")
-
         # Fleet-wide trends
-        elif context_data.get("fleet_trends"):
+        if context_data.get("fleet_trends"):
             ft = context_data["fleet_trends"]
             warnings = []
+            stable_svcs = []
             for svc, data in ft.items():
-                for w in data.get("warnings", []):
-                    warnings.append(f"`{svc}`: {w.get('detail')}")
+                svc_warns = data.get("warnings", [])
+                if svc_warns:
+                    for w in svc_warns:
+                        warnings.append(f"• ⚠️ `{svc}`: {w.get('detail')}")
+                else:
+                    stable_svcs.append(svc)
+
+            trend_lines = ["📈 Fleet Telemetry & Memory Trends:"]
             if warnings:
-                parts.append(f"⚠️ Telemetry Warnings: {' | '.join(warnings[:2])}")
-            else:
-                parts.append(f"📈 Telemetry: All {len(ft)} services operating within healthy thresholds")
+                trend_lines.append("Detected Anomaly Warnings:\n" + "\n".join(warnings))
+            if stable_svcs:
+                trend_lines.append(f"Stable Services ({len(stable_svcs)}): {', '.join(f'`{s}`' for s in stable_svcs)}")
+            parts.append("\n".join(trend_lines))
 
         # Rollbacks part
         if context_data.get("recent_rollbacks"):
@@ -300,7 +348,7 @@ class BrainEngine:
             parts.append(f"⏪ Last Rollback: `{last_rb.get('action')}` on `{last_rb.get('service_name')}` ({last_rb.get('status')})")
 
         if parts:
-            answer = "\n".join(parts)
+            answer = "\n\n".join(parts)
         else:
             answer = (
                 "Hello! I am ARA, your autonomous SRE companion for Suburban & Legend. "
@@ -315,4 +363,5 @@ class BrainEngine:
             "context_data": context_data,
             "engine": "ara-brain-local",
         }
+
 
