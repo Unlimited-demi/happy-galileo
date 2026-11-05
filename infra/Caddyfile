@@ -3,8 +3,8 @@
     admin 127.0.0.1:2019
 }
 
-# 1. Base Status Dashboard
-status.dev-server.datakrib.com {
+# 1. Base Status Dashboard & ARA Central Hub
+status.dev-server.datakrib.com, ara.suburbancloud.ng {
     encode zstd gzip
 
     log {

@@ -151,7 +151,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if path == "/api/ask":
                 params = parse_qs(parsed.query)
                 domain = params.get("domain", [""])[0].lower()
-                if domain.endswith(Config.BASE_DOMAIN):
+                allowed_roots = [Config.BASE_DOMAIN, "suburbancloud.ng", "dev-server.datakrib.com"]
+                if any(domain == root or domain.endswith("." + root) or domain.endswith(root) for root in allowed_roots if root):
                     self.send_response(200)
                     self.end_headers()
                     self.wfile.write(b"OK")
