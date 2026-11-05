@@ -41,6 +41,7 @@ services:
       - NODE_NAME=${NODE_NAME:-Primary Workstation}
       - CENTRAL_HUB_URL=${CENTRAL_HUB_URL:-}
       - FLEET_KEY=${FLEET_KEY:-}
+      - BRAIN_URL=${BRAIN_URL:-http://ara-brain:11434}
       - PYTHONPATH=/app
     command: python3 /app/dashboard/app.py
     networks:
@@ -70,14 +71,32 @@ services:
       - NODE_NAME=${NODE_NAME:-Primary Workstation}
       - CENTRAL_HUB_URL=${CENTRAL_HUB_URL:-}
       - FLEET_KEY=${FLEET_KEY:-}
+      - BRAIN_URL=${BRAIN_URL:-http://ara-brain:11434}
       - PYTHONPATH=/app
     command: python3 /app/ai_ops/daemon.py
+    networks:
+      - dev-net
+
+  # 4. ARA Local CPU Intelligence Engine (Ollama / Qwen2.5-3B)
+  ara-brain:
+    image: ollama/ollama:latest
+    container_name: ara-brain
+    restart: unless-stopped
+    cpus: 2.0                 # Hard clamp: never consumes more than 2 CPU cores
+    mem_limit: 2500m          # Hard limit: maximum 2.5GB RAM
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_NUM_PARALLEL=1 # Prevents CPU thread thrashing
+      - OLLAMA_KEEP_ALIVE=24h # Keeps model resident in memory for instant responses
+      - OLLAMA_HOST=0.0.0.0
     networks:
       - dev-net
 
 volumes:
   caddy_data:
   caddy_config:
+  ollama_models:
 
 networks:
   dev-net:

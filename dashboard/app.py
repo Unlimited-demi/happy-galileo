@@ -534,6 +534,30 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     self._send_json(result, status=200 if result.get("success") else 400)
                     return
 
+            elif path == "/api/chatops/query":
+                # ChatOps endpoint for Concert (@ARA mentions)
+                wh_secret = self.headers.get("X-Webhook-Secret", "")
+                expected_secret = os.environ.get("CONCERT_WEBHOOK_SECRET", "")
+                is_valid_wh = expected_secret and wh_secret and secrets.compare_digest(expected_secret, wh_secret)
+
+                if not is_valid_wh and not self._require_role(ROLE_OPERATOR):
+                    return
+
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+                payload = json.loads(body) if body else {}
+                query_text = payload.get("query", "")
+
+                from ai_ops.brain import BrainEngine
+                brain = BrainEngine()
+                chatops_result = brain.handle_chatops_query(
+                    query=query_text,
+                    thread_context=payload,
+                    fleet_store=FLEET_STORE
+                )
+                self._send_json(chatops_result)
+                return
+
             elif path == "/api/incidents/purge":
                 # Requires ADMIN role
                 if not self._require_role(ROLE_ADMIN):
