@@ -96,7 +96,7 @@ services:
       - ollama_models:/root/.ollama
     environment:
       - OLLAMA_NUM_PARALLEL=1 # Prevents CPU thread thrashing
-      - OLLAMA_KEEP_ALIVE=24h # Keeps model resident in memory for instant responses
+      - OLLAMA_KEEP_ALIVE=-1  # Keeps model resident in memory permanently (never unloads)
       - OLLAMA_HOST=0.0.0.0
     networks:
       - dev-net

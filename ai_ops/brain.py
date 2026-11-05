@@ -34,6 +34,25 @@ class BrainEngine:
         except Exception:
             return False
 
+    def preload_model(self) -> bool:
+        """
+        Pre-warm and pin the model in RAM with keep_alive=-1 so it never unloads
+        and responds with 0 cold-start latency.
+        """
+        try:
+            payload = {"model": self.model, "keep_alive": -1}
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                f"{self.brain_url}/api/generate",
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10.0) as resp:
+                return resp.status == 200
+        except Exception:
+            return False
+
     def explain_incident(
         self,
         service_name: str,
@@ -66,6 +85,7 @@ class BrainEngine:
                     "model": self.model,
                     "prompt": f"{system_prompt}\n\n{user_prompt}",
                     "stream": False,
+                    "keep_alive": -1,  # Keep permanently resident in RAM
                     "options": {
                         "temperature": 0.1,
                         "num_predict": 120,
@@ -177,6 +197,7 @@ class BrainEngine:
                     "model": self.model,
                     "prompt": f"{system_prompt}\n\n{user_prompt}",
                     "stream": False,
+                    "keep_alive": -1,  # Keep permanently resident in RAM
                     "options": {
                         "temperature": 0.1,
                         "num_predict": 120,
