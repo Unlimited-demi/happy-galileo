@@ -9,6 +9,7 @@ from devctl.core.config import Config
 from devctl.core.incident_bus import IncidentBus
 from ai_ops.docker_socket import DockerSocket
 from ai_ops.dossier_builder import DossierBuilder
+from ai_ops.incident_throttle import IncidentThrottle
 
 
 class RemediationEngine:
@@ -18,6 +19,8 @@ class RemediationEngine:
         self.docker = DockerSocket()
         self.incident_bus = IncidentBus()
         self.dossier_builder = DossierBuilder()
+        self._throttle_dir = None
+        self._throttle = None
         self.restart_tracker: Dict[str, int] = {}
         # In-memory dedup: set of service names with open incidents
         # This is the PRIMARY dedup guard — prevents spam even if file I/O is slow
@@ -34,6 +37,13 @@ class RemediationEngine:
                     self._open_incidents.add(svc)
         except Exception:
             pass
+
+    @property
+    def throttle(self) -> IncidentThrottle:
+        if self._throttle is None or self._throttle_dir != self.incident_bus.incidents_dir:
+            self._throttle_dir = self.incident_bus.incidents_dir
+            self._throttle = IncidentThrottle(state_dir=self.incident_bus.incidents_dir)
+        return self._throttle
 
     def _detect_proxy_container(self) -> Optional[Tuple[str, str]]:
         """
@@ -115,6 +125,8 @@ class RemediationEngine:
             self.restart_tracker[service_name] = 0
             self._open_incidents.discard(service_name)
             self._l2_fixed.discard(service_name)
+            if hasattr(self, "throttle"):
+                self.throttle.reset_service(service_name)
             return {"level": 0, "action": "OBSERVE", "status": "HEALTHY"}
 
         reasons_str = "; ".join(failure_reasons) if failure_reasons else "Container unhealthy"
@@ -149,8 +161,42 @@ class RemediationEngine:
             if l2_result is not None:
                 return l2_result
 
-        # ── DEDUP GUARD ──
-        # Only create ONE incident per service. Never spam.
+        # Determine error category & signature for deterministic fingerprinting
+        if oom_killed:
+            error_cat = "oom"
+            error_sig = "OOM killed (memory exhaustion)"
+        elif new_restarts > 0:
+            error_cat = "crash_restart"
+            error_sig = f"crashed and restarted {new_restarts}x"
+        elif not container_running:
+            error_cat = "stopped"
+            error_sig = "container stopped or exited"
+        elif docker_health == "unhealthy":
+            error_cat = "docker_health"
+            error_sig = "Docker HEALTHCHECK reports unhealthy"
+        elif log_error:
+            error_cat = "log_error"
+            error_sig = log_error.strip()[:100]
+        else:
+            error_cat = "health_check"
+            error_sig = reasons_str[:100]
+
+        fingerprint = IncidentBus.compute_fingerprint(service_name, error_cat, error_sig)
+
+        # ── FINGERPRINT & DEDUP GUARD ──
+        # Check if an open incident with this exact fingerprint already exists
+        existing_inc = self.incident_bus.find_by_fingerprint(fingerprint, only_open=True)
+        if existing_inc:
+            self.incident_bus.record_occurrence(existing_inc["id"])
+            self._open_incidents.add(service_name)
+            return {
+                "level": 3,
+                "action": "ALREADY_REPORTED",
+                "service": service_name,
+                "incident_id": existing_inc["id"],
+                "fingerprint": fingerprint,
+            }
+
         # Sync with disk — if an incident was resolved via CLI, remove from dedup set
         try:
             disk_open = {inc['service_name'] for inc in self.incident_bus.list_incidents(only_open=True)}
@@ -160,6 +206,32 @@ class RemediationEngine:
 
         if service_name in self._open_incidents:
             return {"level": 3, "action": "ALREADY_REPORTED", "service": service_name}
+
+        # Determine severity
+        severity = "HIGH"
+        if oom_killed:
+            severity = "CRITICAL"
+        elif new_restarts >= 3:
+            severity = "CRITICAL"
+        elif docker_health == "unhealthy":
+            severity = "HIGH"
+
+        # Rate throttle check (max per window, contextual escalation)
+        if hasattr(self, "throttle"):
+            should_create, ctx_type, adjusted_sev = self.throttle.should_create_incident(
+                service_name=service_name,
+                error_category=error_cat,
+                severity=severity.lower(),
+            )
+            if not should_create:
+                return {
+                    "level": 3,
+                    "action": "THROTTLED",
+                    "service": service_name,
+                    "error_category": error_cat,
+                }
+            if adjusted_sev and adjusted_sev.upper() in ["LOW", "MEDIUM", "HIGH", "CRITICAL"]:
+                severity = adjusted_sev.upper()
 
         # Level 3: Application Bug → Escalate to OpenCode with Incident Dossier
         print(f"[Level 3] Building Incident Dossier for OpenCode...")
@@ -172,15 +244,6 @@ class RemediationEngine:
             failure_reasons=failure_reasons,
         )
         recommendation = self.dossier_builder.generate_recommendation(evidence)
-
-        # Determine severity
-        severity = "HIGH"
-        if oom_killed:
-            severity = "CRITICAL"
-        elif new_restarts >= 3:
-            severity = "CRITICAL"
-        elif docker_health == "unhealthy":
-            severity = "HIGH"
 
         # Create incident title from actual failure cause
         if oom_killed:
@@ -211,6 +274,7 @@ class RemediationEngine:
             level=3,
             evidence=evidence,
             recommendation=recommendation,
+            fingerprint=fingerprint,
         )
 
         # Mark in-memory dedup IMMEDIATELY

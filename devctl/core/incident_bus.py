@@ -4,6 +4,7 @@ Tracks, stores, and manages incidents and handoffs between AI-Ops and OpenCode.
 """
 
 import json
+import hashlib
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -31,7 +32,38 @@ class IncidentBus:
     def __init__(self, incidents_dir: Optional[Path] = None):
         self.incidents_dir = incidents_dir or Config.INCIDENTS_DIR
         self.incidents_dir.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+
+    @staticmethod
+    def compute_fingerprint(
+        service_name: str,
+        error_category: str = "",
+        error_signature: str = ""
+    ) -> str:
+        """Compute a deterministic hash for deduplicating identical service errors."""
+        raw = f"{service_name.strip().lower()}:{error_category.strip().lower()}:{error_signature.strip()}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+    def find_by_fingerprint(self, fingerprint: str, only_open: bool = True) -> Optional[Dict[str, Any]]:
+        """Find an existing incident by its error fingerprint."""
+        if not fingerprint:
+            return None
+        incidents = self.list_incidents(only_open=only_open)
+        for inc in incidents:
+            if inc.get("fingerprint") == fingerprint:
+                return inc
+        return None
+
+    def record_occurrence(self, incident_id: str) -> Optional[Dict[str, Any]]:
+        """Increment occurrence counter and refresh updated_at timestamp."""
+        with self._lock:
+            incident = self.get_incident(incident_id)
+            if not incident:
+                return None
+            incident["occurrences"] = incident.get("occurrences", 1) + 1
+            incident["updated_at"] = datetime.now(timezone.utc).isoformat()
+            self.save_incident(incident)
+            return incident
 
     def create_incident(
         self,
@@ -41,11 +73,16 @@ class IncidentBus:
         level: int = 3,  # Level 1-3
         evidence: Optional[Dict[str, Any]] = None,
         recommendation: Optional[str] = None,
+        fingerprint: Optional[str] = None,
+        occurrences: int = 1,
     ) -> Dict[str, Any]:
         """Create and persist a new incident dossier."""
         date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
         short_id = uuid.uuid4().hex[:6].upper()
         incident_id = f"INC-{date_str}-{short_id}"
+
+        if not fingerprint:
+            fingerprint = self.compute_fingerprint(service_name, severity, title)
 
         incident = {
             "id": incident_id,
@@ -54,6 +91,8 @@ class IncidentBus:
             "severity": severity,
             "level": level,
             "state": IncidentState.DETECTED,
+            "fingerprint": fingerprint,
+            "occurrences": occurrences,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "claimed_by": None,
@@ -120,6 +159,7 @@ class IncidentBus:
 **Service:** `{incident['service_name']}`  
 **Severity:** `{incident['severity']}` | **Level:** `{incident['level']}`  
 **State:** `{incident['state']}`  
+**Fingerprint:** `{incident.get('fingerprint', 'N/A')}` | **Occurrences:** {incident.get('occurrences', 1)}  
 **Detected At:** `{incident['created_at']}`  
 
 ---

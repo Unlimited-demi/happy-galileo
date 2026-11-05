@@ -63,13 +63,15 @@ class IncidentDispatcher:
 
         # If not found on local disk, search fleet store (connected satellite nodes)
         if not incident and fleet_store:
-            for n_name, n_data in list(fleet_store.items()):
+            nodes_data = fleet_store.get_all_nodes() if hasattr(fleet_store, "get_all_nodes") else list(fleet_store.values())
+            for n_data in nodes_data:
                 if isinstance(n_data, dict):
+                    n_name = n_data.get("node_name", "Unknown Node")
                     for rinc in (n_data.get("all_incidents") or n_data.get("open_incidents") or []):
                         if isinstance(rinc, dict) and rinc.get("id") == incident_id:
                             incident = rinc
                             target_node = n_name
-                            # Mutate state in fleet store so dashboard UI updates immediately
+                            # Mutate state so dashboard UI updates immediately
                             rinc["state"] = "CLAIMED"
                             rinc["claimed_by"] = agent_name
                             # Also persist a local dossier copy

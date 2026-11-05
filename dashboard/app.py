@@ -7,6 +7,7 @@ Playwright screenshots, and Incident dossiers directly from your phone or browse
 import json
 import os
 import time
+import secrets
 import subprocess
 import shutil
 from pathlib import Path
@@ -16,15 +17,12 @@ from urllib.parse import urlparse, parse_qs
 from devctl.core.config import Config
 from devctl.core.domains import DomainRegistry
 from devctl.core.incident_bus import IncidentBus
+from devctl.core.fleet_store import FleetStore, NodeStatus
 from ai_ops.docker_socket import DockerSocket
 from devctl.core.auth import AuthManager
 
 STATIC_DIR = Path(__file__).parent / "static"
-FLEET_STORE = {}
-# Pending hub → node commands, keyed by node name. Delivered (and drained) in
-# the telemetry heartbeat response; nodes execute a strict whitelist only.
-FLEET_COMMANDS = {}
-FLEET_COMMAND_LOG = []
+FLEET_STORE = FleetStore()
 ALLOWED_NODE_ACTIONS = {"restart_container", "resync_network", "purge_incidents"}
 
 
@@ -189,18 +187,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     merged_services.append(merged)
 
                 # Auto-register local node into FLEET_STORE
+                # Auto-register local node into FLEET_STORE
                 local_node_name = os.environ.get("NODE_NAME", "vm-01 (Primary)")
-                FLEET_STORE[local_node_name] = {
+                client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else "127.0.0.1"
+                FLEET_STORE.upsert_node({
                     "node_name": local_node_name,
                     "base_domain": Config.BASE_DOMAIN,
-                    "timestamp": time.time(),
-                    "status": "ONLINE",
                     "containers_count": len(containers),
                     "services_count": len(merged_services),
                     "services": merged_services,
                     "open_incidents_count": len(incidents),
-                    "online": True,
-                }
+                }, client_ip=client_ip)
 
                 self._send_json({
                     "node_name": local_node_name,
@@ -226,8 +223,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
                 # Merge incidents from all remote fleet nodes safely
                 all_incidents = [inc for inc in local_incidents if isinstance(inc, dict)]
-                for node_name, node_data in list(FLEET_STORE.items()):
-                    if not isinstance(node_data, dict) or node_name == local_node_name:
+                for node_data in FLEET_STORE.get_all_nodes():
+                    if not isinstance(node_data, dict):
+                        continue
+                    node_name = node_data.get("node_name")
+                    if not node_name or node_name == local_node_name:
                         continue
                     remote_incidents = node_data.get("all_incidents") or node_data.get("open_incidents") or []
                     if isinstance(remote_incidents, list):
@@ -260,9 +260,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 
                 # If not found locally, search connected satellite nodes in FLEET_STORE
                 if not inc:
-                    for n_name, n_data in list(FLEET_STORE.items()):
-                        if isinstance(n_data, dict):
-                            for rinc in (n_data.get("all_incidents") or n_data.get("open_incidents") or []):
+                    for node_data in FLEET_STORE.get_all_nodes():
+                        if isinstance(node_data, dict):
+                            for rinc in (node_data.get("all_incidents") or node_data.get("open_incidents") or []):
                                 if isinstance(rinc, dict) and rinc.get("id") == inc_id:
                                     inc = dict(rinc)
                                     break
@@ -311,9 +311,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
 
             elif path == "/api/fleet/commands":
+                history = FLEET_STORE.get_command_history(limit=50)
                 self._send_json({
-                    "queued": FLEET_COMMANDS,
-                    "results": FLEET_COMMAND_LOG[-50:],
+                    "history": history,
+                    "results": history,
                     "allowed_actions": sorted(ALLOWED_NODE_ACTIONS),
                 })
                 return
@@ -321,33 +322,23 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             elif path == "/api/fleet/nodes":
                 # Ensure local node is always populated
                 local_node_name = os.environ.get("NODE_NAME", "vm-01 (Primary)")
-                if local_node_name not in FLEET_STORE:
+                if not FLEET_STORE.get_node(local_node_name):
                     registry = DomainRegistry()
                     docker = DockerSocket()
                     bus = IncidentBus()
                     services = registry.list_services() or []
                     containers = docker.list_containers(all_containers=True) or []
-                    FLEET_STORE[local_node_name] = {
+                    client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else "127.0.0.1"
+                    FLEET_STORE.upsert_node({
                         "node_name": local_node_name,
                         "base_domain": Config.BASE_DOMAIN,
-                        "timestamp": time.time(),
-                        "status": "ONLINE",
                         "containers_count": len(containers),
                         "services_count": len(services),
                         "services": services,
                         "open_incidents_count": len(bus.list_incidents(only_open=True)),
-                        "online": True,
-                    }
+                    }, client_ip=client_ip)
 
-                nodes_list = []
-                current_time = time.time()
-                for k, n in list(FLEET_STORE.items()):
-                    if isinstance(n, dict):
-                        n_copy = dict(n)
-                        # Mark offline if no heartbeat in 90 seconds
-                        n_copy["online"] = (current_time - float(n_copy.get("timestamp", 0) or 0)) < 90
-                        nodes_list.append(n_copy)
-
+                nodes_list = FLEET_STORE.get_all_nodes()
                 self._send_json({"nodes": nodes_list, "total_nodes": len(nodes_list)})
                 return
 
@@ -450,21 +441,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
                 payload = json.loads(body) if body else {}
                 node_name = payload.get("node_name", "unknown")
-                payload["received_at"] = time.time()
-                payload["client_ip"] = self.client_address[0]
-                FLEET_STORE[node_name] = payload
+                client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else "127.0.0.1"
+
+                # Persist node heartbeat in fleet store
+                FLEET_STORE.upsert_node(payload, client_ip=client_ip)
 
                 # Record command results reported back by the node
-                for res in payload.get("command_results", []) or []:
-                    if isinstance(res, dict) and not any(
-                        r.get("id") == res.get("id") and r.get("node") == node_name
-                        for r in FLEET_COMMAND_LOG if r.get("id")
-                    ):
-                        FLEET_COMMAND_LOG.append({**res, "node": node_name})
-                del FLEET_COMMAND_LOG[:-100]
+                cmd_results = payload.get("command_results", [])
+                if cmd_results and isinstance(cmd_results, list):
+                    FLEET_STORE.record_command_results(node_name, cmd_results)
 
-                # Deliver (and drain) any commands queued for this node
-                pending = FLEET_COMMANDS.pop(node_name, [])
+                # Deliver (and drain) any pending commands queued for this node
+                pending = FLEET_STORE.drain_pending_commands(node_name)
                 self._send_json({
                     "status": "received",
                     "node": node_name,
@@ -495,21 +483,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     self._send_json({"error": "Missing 'node'"}, status=400)
                     return
 
-                command = {
-                    "id": f"CMD-{int(time.time())}-{os.urandom(3).hex()}",
-                    "action": action,
-                    "target": target,
-                    "queued_at": time.time(),
-                }
-                queue = FLEET_COMMANDS.setdefault(node, [])
-                # Cap per-node command queue to prevent unbounded growth
-                if len(queue) >= 20:
-                    self._send_json({
-                        "error": f"Command queue full for node '{node}' (max 20 pending)",
-                    }, status=429)
-                    return
-                queue.append(command)
+                command = FLEET_STORE.queue_command(node_name=node, action=action, target=target)
                 self._send_json({"status": "queued", "node": node, "command": command})
+                return
+
+            elif path == "/api/fleet/nodes/prune":
+                if not self._check_auth():
+                    self._send_json({"error": "Unauthorized"}, status=401)
+                    return
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+                payload = json.loads(body) if body else {}
+                max_age = float(payload.get("max_age_seconds", 3600))
+                deleted = FLEET_STORE.prune_offline_nodes(max_age_seconds=max_age)
+                self._send_json({"status": "pruned", "deleted_nodes": deleted})
                 return
 
             elif path.startswith("/api/incidents/") and path.endswith("/dispatch"):
