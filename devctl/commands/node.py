@@ -110,25 +110,39 @@ class NodeManager:
         name = (node_name or cls.get_default_node_name()).strip().lower()
 
         # Build initial enrollment telemetry payload
-        from ai_ops.docker_socket import DockerSocket
-        docker = DockerSocket()
-        containers = docker.list_containers(all_containers=True) or []
+        try:
+            from devctl.core.domains import DomainRegistry
+            registry = DomainRegistry()
+            if not registry.list_services():
+                # Auto discover any running containers
+                registry.discover_and_index_containers(use_ai=False)
 
-        payload = {
-            "node_name": name,
-            "base_domain": Config.BASE_DOMAIN,
-            "timestamp": time.time(),
-            "status": "ONLINE",
-            "platform": platform.platform(),
-            "system": platform.system(),
-            "containers_count": len(containers),
-            "services_count": 0,
-            "enrollment": True,
-            "metrics": {
-                "cpu_percent": 0.0,
-                "memory_percent": 0.0,
-            },
-        }
+            from ai_ops.telemetry import FleetTelemetryStreamer
+            streamer = FleetTelemetryStreamer(node_name=name, hub_url=ingest_url, fleet_key=token.strip())
+            payload = streamer.collect_node_telemetry()
+            payload["enrollment"] = True
+            payload["platform"] = platform.platform()
+            payload["system"] = platform.system()
+        except Exception:
+            from ai_ops.docker_socket import DockerSocket
+            docker = DockerSocket()
+            containers = docker.list_containers(all_containers=True) or []
+
+            payload = {
+                "node_name": name,
+                "base_domain": Config.BASE_DOMAIN,
+                "timestamp": time.time(),
+                "status": "ONLINE",
+                "platform": platform.platform(),
+                "system": platform.system(),
+                "containers_count": len(containers),
+                "services_count": 0,
+                "enrollment": True,
+                "metrics": {
+                    "cpu_percent": 0.0,
+                    "memory_percent": 0.0,
+                },
+            }
 
         # Send test request to verify connection & authentication
         data = json.dumps(payload).encode("utf-8")
