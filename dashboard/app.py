@@ -447,6 +447,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if not self._check_auth(auth_type='telemetry'):
                     self._send_json({"error": "Unauthorized telemetry key"}, status=401)
                     return
+            elif path == "/api/chatops/query":
+                # ChatOps endpoint: authenticated via X-Webhook-Secret or dashboard role
+                wh_secret = self.headers.get("X-Webhook-Secret", "")
+                expected_secret = os.environ.get("CONCERT_WEBHOOK_SECRET", "")
+                is_valid_wh = bool(expected_secret and wh_secret and secrets.compare_digest(expected_secret, wh_secret))
+                if not is_valid_wh and not self._check_auth(auth_type='dashboard'):
+                    self._send_json({"error": "Unauthorized ChatOps request"}, status=401)
+                    return
             elif path.startswith("/api/"):
                 if not self._check_auth(auth_type='dashboard'):
                     self._send_json({"error": "Unauthorized dashboard access"}, status=401)
