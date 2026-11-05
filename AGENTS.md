@@ -118,3 +118,34 @@ AI-Ops monitors the server 24/7. When an application regression occurs, AI-Ops c
 | `devctl incident claim <id>` | Assign incident to OpenCode |
 | `devctl incident resolve <id>` | Mark incident as resolved |
 | `devctl doctor` | Verify system health, Docker, Caddy API, and DNS |
+
+---
+
+## 🔐 SECURITY-FIRST PROTOCOL (OVERRIDES CONVENIENCE)
+Security is the top priority, above speed, UX, and "it works". If a request conflicts with this, stop and warn first.
+
+### Secrets
+- Never echo, log, print, commit, or embed secrets (tokens, keys, passwords) in code, URLs, banners, CLI args, git remotes, or docs.
+- If a secret is pasted in chat, say it is now exposed and should be rotated. Do not write it to files.
+- Prefer least privilege: deploy keys, fine-grained or repo-scoped tokens, per-node credentials. Never broad classic PATs on servers.
+- Never `git add -A` blindly; check for .env/keys/dumps and make sure .gitignore exists first.
+
+### Endpoints & auth
+- Every API route requires auth by default and fails closed (deny on error or missing config).
+- No endpoint may execute commands, send shell/tmux input, or trigger agents without auth and explicit human approval.
+- Bind admin and dashboard services to localhost/VPN unless public exposure is explicitly requested and justified.
+
+### Privilege
+- No `docker.sock` read-write, `pid: host`, `privileged`, `nsenter`, or host root mounts unless strictly required. Flag them as root-equivalent when used.
+- Autonomous agents must not push, deploy, or modify production without a human approval gate.
+
+### Infra changes
+- Do not auto-edit third-party configs (proxies, firewalls, other stacks). Print the change and let the operator apply it.
+- No `curl | bash` from unpinned branches for production; no `git reset --hard` on servers without a backup.
+- Firewall changes must not risk lockout or break existing services' ports.
+
+### Honesty
+- Never report "verified/healthy/secure" unless actually checked. Show real failures.
+
+### Process
+- Before finishing any change touching auth, network exposure, credentials, containers, or setup scripts, run a short threat review: what can an unauthenticated internet user do with this? State the answer.
