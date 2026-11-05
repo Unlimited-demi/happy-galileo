@@ -249,6 +249,54 @@ class DomainRegistry:
         except Exception:
             return []
 
+    @staticmethod
+    def parse_caddy_blocks(content: str) -> List[Any]:
+        """
+        Extract top-level Caddyfile site blocks supporting arbitrary nested braces
+        such as `header { ... }` and `log { ... }`.
+        """
+        blocks = []
+        lines = content.splitlines()
+        current_header = []
+        current_body = []
+        brace_depth = 0
+        full_header = ""
+
+        for line in lines:
+            trimmed = line.strip()
+            if not trimmed or trimmed.startswith('#'):
+                if brace_depth > 0:
+                    current_body.append(line)
+                continue
+
+            if brace_depth == 0:
+                if '{' in trimmed:
+                    idx = trimmed.find('{')
+                    hdr = trimmed[:idx].strip()
+                    if hdr:
+                        current_header.append(hdr)
+                    full_header = ' '.join(current_header).strip()
+                    current_body = []
+                    brace_depth = 1 + trimmed[idx+1:].count('{') - trimmed[idx+1:].count('}')
+                    rest = trimmed[idx+1:]
+                    if rest:
+                        current_body.append(rest)
+                    current_header = []
+                else:
+                    current_header.append(trimmed)
+            else:
+                open_c = trimmed.count('{')
+                close_c = trimmed.count('}')
+                brace_depth += open_c - close_c
+                if brace_depth <= 0:
+                    blocks.append((full_header, '\n'.join(current_body)))
+                    brace_depth = 0
+                    current_header = []
+                    current_body = []
+                else:
+                    current_body.append(line)
+        return blocks
+
     def detect_existing_domains(self) -> Dict[str, Dict[str, str]]:
         """
         Universal Heuristic Domain & Reverse Proxy Resolver.
@@ -354,8 +402,8 @@ class DomainRegistry:
                     continue
                 with open(conf_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
-                # Parse blocks: match header { body } with multi-domain comma support
-                blocks = re.findall(r'([^\r\n{}#]+)\s*\{([^}]+)\}', content)
+                # Parse blocks: match top-level blocks with balanced brace support
+                blocks = self.parse_caddy_blocks(content)
                 for header, body in blocks:
                     candidates = [d.strip() for d in re.split(r'[, \t]+', header) if d.strip()]
                     valid_domains = [d for d in candidates if self._is_valid_public_domain(d)]
@@ -533,7 +581,7 @@ class DomainRegistry:
 
                             # Generic Caddyfile domain blocks in workspace
                             if "Caddyfile" in conf_file.name or conf_file.suffix == ".caddy":
-                                for header, body in re.findall(r'([^\r\n{}#]+)\s*\{([^}]+)\}', f_text):
+                                for header, body in self.parse_caddy_blocks(f_text):
                                     candidates = [d.strip() for d in re.split(r'[, \t]+', header) if d.strip()]
                                     valid_domains = [d for d in candidates if self._is_valid_public_domain(d)]
                                     if not valid_domains:
@@ -640,7 +688,7 @@ class DomainRegistry:
                                             domains[c_name] = domain_info
 
                             # Caddyfile domain blocks
-                            for header, body in re.findall(r'([^\r\n{}#]+)\s*\{([^}]+)\}', cf_content):
+                            for header, body in self.parse_caddy_blocks(cf_content):
                                 candidates = [d.strip() for d in re.split(r'[, \t]+', header) if d.strip()]
                                 valid_domains = [d for d in candidates if self._is_valid_public_domain(d)]
                                 if not valid_domains:
