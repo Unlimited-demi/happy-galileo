@@ -42,6 +42,10 @@ services:
       - CENTRAL_HUB_URL=${CENTRAL_HUB_URL:-}
       - FLEET_KEY=${FLEET_KEY:-}
       - BRAIN_URL=${BRAIN_URL:-http://ara-brain:11434}
+      - CONCERT_WEBHOOK_URL=${CONCERT_WEBHOOK_URL:-}
+      - CONCERT_WEBHOOK_SECRET=${CONCERT_WEBHOOK_SECRET:-}
+      - CONCERT_TENANT_ID=${CONCERT_TENANT_ID:-suburban}
+      - CONCERT_TEAM_ID=${CONCERT_TEAM_ID:-2f808764-78c2-4235-a40a-3cc57346e9fb}
       - PYTHONPATH=/app
     command: python3 /app/dashboard/app.py
     networks:
@@ -72,6 +76,10 @@ services:
       - CENTRAL_HUB_URL=${CENTRAL_HUB_URL:-}
       - FLEET_KEY=${FLEET_KEY:-}
       - BRAIN_URL=${BRAIN_URL:-http://ara-brain:11434}
+      - CONCERT_WEBHOOK_URL=${CONCERT_WEBHOOK_URL:-}
+      - CONCERT_WEBHOOK_SECRET=${CONCERT_WEBHOOK_SECRET:-}
+      - CONCERT_TENANT_ID=${CONCERT_TENANT_ID:-suburban}
+      - CONCERT_TEAM_ID=${CONCERT_TEAM_ID:-2f808764-78c2-4235-a40a-3cc57346e9fb}
       - PYTHONPATH=/app
     command: python3 /app/ai_ops/daemon.py
     networks:

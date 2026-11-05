@@ -74,6 +74,7 @@ class ConcertNotifier:
             "Content-Type": "application/json",
             "User-Agent": "ARA-Fleet-Agent/2.0",
             "X-Tenant-Id": os.environ.get("CONCERT_TENANT_ID", "suburban"),
+            "X-Tenant-ID": os.environ.get("CONCERT_TENANT_ID", "suburban"),
         }
         if self.webhook_secret:
             headers["X-Webhook-Secret"] = self.webhook_secret
