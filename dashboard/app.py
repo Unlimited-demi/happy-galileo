@@ -30,6 +30,7 @@ from devctl.core.auth import (
 )
 from ai_ops.job_signer import JobSigner
 from ai_ops.metrics import MetricsCollector
+from ai_ops.codebase_resolver import CodebaseResolver
 
 STATIC_DIR = Path(__file__).parent / "static"
 FLEET_STORE = FleetStore()
@@ -456,6 +457,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         }
 
                 merged_services = []
+                code_resolver = CodebaseResolver()
                 for svc in services:
                     if not isinstance(svc, dict):
                         continue
@@ -463,6 +465,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     c_name = svc.get("container_name", name) or name
                     c_info = container_map.get(c_name, {})
                     is_running = c_info.get("state") == "running"
+                    c_codebase = code_resolver.resolve(c_name)
                     merged = {
                         **svc,
                         "healthy": is_running,
@@ -472,6 +475,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         "version": c_info.get("version", "latest"),
                         "container_status": c_info.get("status") or ("RUNNING" if is_running else "STOPPED"),
                         "container_id": c_info.get("id", ""),
+                        "git_url": c_codebase.get("web_url") or c_codebase.get("git_url"),
+                        "repo_name": c_codebase.get("repo_name"),
+                        "git_branch": c_codebase.get("git_branch", "master"),
                     }
                     merged_services.append(merged)
 
@@ -587,6 +593,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         }
                         for m in info.get("Mounts", [])
                     ],
+                    "codebase": CodebaseResolver().resolve(service_name),
                 }
                 self._send_json({"service": clean_inspect})
                 return

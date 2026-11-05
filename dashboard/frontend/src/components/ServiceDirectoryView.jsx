@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { ExternalLink, Copy, Lock } from 'lucide-react';
+import { ExternalLink, Copy, Lock, Github, GitBranch } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -61,13 +61,14 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy, onSelec
                   <th className="py-3 px-6">Type</th>
                   <th className="py-3 px-6">Port</th>
                   <th className="py-3 px-6">Status</th>
+                  <th className="py-3 px-6">Repository</th>
                   <th className="py-3 px-6 text-right">Access / Logs</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40 font-mono text-xs">
                 {filteredServices.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="py-8 text-center text-muted-foreground font-sans">
+                    <td colSpan="7" className="py-8 text-center text-muted-foreground font-sans">
                       No matching services found.
                     </td>
                   </tr>
@@ -106,6 +107,24 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy, onSelec
                               {statusText}
                             </span>
                           </div>
+                        </td>
+                        <td className="py-3 px-6 font-sans">
+                          {svc.git_url ? (
+                            <a
+                              href={svc.git_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-slate-800/80 hover:bg-slate-700/80 text-sky-400 hover:text-sky-300 border border-slate-700/60 font-mono text-[11px] transition-colors max-w-[160px] truncate"
+                              title={`${svc.git_url} (${svc.git_branch || 'master'})`}
+                            >
+                              <Github className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                              <span className="truncate">{svc.repo_name || svc.git_url.split('/').slice(-2).join('/')}</span>
+                              <ExternalLink className="w-2.5 h-2.5 text-slate-400 shrink-0" />
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground text-xs font-mono">—</span>
+                          )}
                         </td>
                         <td className="py-3 px-6 text-right font-sans">
                           <div className="flex items-center justify-end gap-2">

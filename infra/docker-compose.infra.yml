@@ -32,6 +32,7 @@ services:
       - ../devctl:/app/devctl
       - ../ai_ops:/app/ai_ops
       - ../dashboard:/app/dashboard
+      - ../.git:/app/.git:ro
     environment:
       - BASE_DOMAIN=${BASE_DOMAIN:-suburbancloud.ng}
       - CADDY_ADMIN_API=http://caddy:2019
@@ -69,6 +70,7 @@ services:
       - ../.devctl:/app/.devctl
       - ../devctl:/app/devctl
       - ../ai_ops:/app/ai_ops
+      - ../.git:/app/.git:ro
     environment:
       - BASE_DOMAIN=${BASE_DOMAIN:-suburbancloud.ng}
       - CADDY_ADMIN_API=http://caddy:2019

@@ -17,6 +17,8 @@ import {
   Lock,
   Search,
   CheckCheck,
+  Github,
+  GitBranch,
 } from 'lucide-react';
 import {
   Dialog,
@@ -42,6 +44,14 @@ export function ServiceDetailModal({ service, onClose, onCopy, onRestartSuccess,
   const [autoRefreshLogs, setAutoRefreshLogs] = useState(true);
   const [restarting, setRestarting] = useState(false);
   const [copiedLogs, setCopiedLogs] = useState(false);
+
+  const codebase = inspectData?.codebase || {
+    web_url: service.git_url,
+    repo_name: service.repo_name,
+    git_branch: service.git_branch || 'master',
+    workspace_dir: null,
+    compose_file: null,
+  };
 
   const logsViewportRef = useRef(null);
 
@@ -317,6 +327,63 @@ export function ServiceDetailModal({ service, onClose, onCopy, onRestartSuccess,
                   <span className="text-muted-foreground font-sans">Port Mapping:</span>{' '}
                   <span className="text-slate-200">{service.port ? `${service.port} (Internal dev-net)` : '—'}</span>
                 </div>
+              </div>
+            </div>
+
+            {/* Codebase & Git Repository Card */}
+            <div className="rounded-lg bg-slate-950/40 border border-border/60 p-4 space-y-3 font-mono text-xs">
+              <div className="text-xs font-semibold text-slate-300 font-sans uppercase tracking-wider border-b border-border/40 pb-2 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Github className="w-3.5 h-3.5 text-slate-300" />
+                  <span>Source Code & Git Repository</span>
+                </div>
+                {codebase?.web_url && (
+                  <a
+                    href={codebase.web_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 font-sans text-xs underline font-normal"
+                  >
+                    View on GitHub <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-y-2.5 gap-x-4 text-slate-300">
+                <div>
+                  <span className="text-muted-foreground font-sans">GitHub Repo:</span>{' '}
+                  {codebase?.web_url ? (
+                    <a
+                      href={codebase.web_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sky-400 hover:text-sky-300 hover:underline font-semibold"
+                    >
+                      {codebase.repo_name || codebase.web_url}
+                    </a>
+                  ) : (
+                    <span className="text-slate-400 font-sans">Unmapped / Internal</span>
+                  )}
+                </div>
+                <div>
+                  <span className="text-muted-foreground font-sans">Active Branch:</span>{' '}
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-700 text-[11px]">
+                    <GitBranch className="w-3 h-3" />
+                    {codebase?.git_branch || service.git_branch || 'master'}
+                  </span>
+                </div>
+                {codebase?.workspace_dir && (
+                  <div className="col-span-2">
+                    <span className="text-muted-foreground font-sans">Host Workspace:</span>{' '}
+                    <span className="text-slate-300 select-all">{codebase.workspace_dir}</span>
+                  </div>
+                )}
+                {codebase?.compose_file && (
+                  <div className="col-span-2">
+                    <span className="text-muted-foreground font-sans">Compose Config:</span>{' '}
+                    <span className="text-slate-400 select-all text-[11px]">{codebase.compose_file}</span>
+                  </div>
+                )}
               </div>
             </div>
           </TabsContent>

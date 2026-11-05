@@ -34,8 +34,17 @@ class CodebaseResolver:
             if not info:
                 return result
 
-            # 1. Try Docker Compose labels (most reliable)
+            # 1. Check explicit container labels first
             labels = info.get("Config", {}).get("Labels", {}) or {}
+            label_repo = (
+                labels.get("org.opencontainers.image.source") or
+                labels.get("devctl.repo") or
+                labels.get("git.url") or
+                labels.get("git.repo")
+            )
+            if label_repo:
+                result["git_url"] = label_repo
+
             workspace_dir = labels.get("com.docker.compose.project.working_dir")
             compose_file = labels.get("com.docker.compose.project.config_files")
 
@@ -45,15 +54,36 @@ class CodebaseResolver:
 
             if workspace_dir:
                 result["workspace_dir"] = workspace_dir
-                # If compose_file wasn't in labels, try to find it in the workspace
                 if not compose_file:
                     compose_file = self._find_compose_file(workspace_dir)
                 result["compose_file"] = compose_file
 
-                # 3. Extract Git Metadata
-                git_info = self._extract_git_metadata(workspace_dir)
-                result["git_url"] = git_info.get("url")
-                result["git_branch"] = git_info.get("branch", "master")
+                # 3. Extract Git Metadata from workspace directory or its parents
+                if not result["git_url"]:
+                    git_info = self._extract_git_metadata(workspace_dir)
+                    result["git_url"] = git_info.get("url")
+                    result["git_branch"] = git_info.get("branch", "master")
+                else:
+                    git_info = self._extract_git_metadata(workspace_dir)
+                    if git_info.get("branch"):
+                        result["git_branch"] = git_info.get("branch")
+
+            # 4. Fallback: if running inside container and resolving host services, check /app/.git
+            if not result["git_url"]:
+                app_git = self._extract_git_metadata("/app")
+                if app_git.get("url"):
+                    # Check if this container is part of the serverguard/happy-galileo project
+                    proj_name = labels.get("com.docker.compose.project", "")
+                    if proj_name in ["infra", "happy-galileo", "serverguard"] or "devctl" in container_name or "ai-ops" in container_name:
+                        result["git_url"] = app_git.get("url")
+                        result["git_branch"] = app_git.get("branch", "master")
+
+            # 5. Normalize Git & GitHub metadata
+            parsed_git = self.normalize_git_url(result.get("git_url"))
+            result["web_url"] = parsed_git.get("web_url")
+            result["repo_name"] = parsed_git.get("repo_name")
+            if parsed_git.get("web_url") and not result.get("git_url"):
+                result["git_url"] = parsed_git.get("web_url")
 
         except Exception as e:
             print(f"[CodebaseResolver] Error resolving {container_name}: {e}")
@@ -88,8 +118,18 @@ class CodebaseResolver:
         return None
 
     def _extract_git_metadata(self, workspace_dir: str) -> Dict[str, Any]:
-        """Extract remote URL and current branch from the .git directory."""
-        git_dir = Path(workspace_dir) / ".git"
+        """Extract remote URL and current branch from the .git directory or its parents."""
+        if not workspace_dir:
+            return {}
+        wp = Path(workspace_dir)
+        git_dir = wp / ".git"
+        if not git_dir.exists():
+            # Check up to 3 parent directories
+            for parent in list(wp.parents)[:3]:
+                if (parent / ".git").exists():
+                    git_dir = parent / ".git"
+                    break
+
         if not git_dir.exists():
             return {}
 
@@ -99,7 +139,6 @@ class CodebaseResolver:
             config_path = git_dir / "config"
             if config_path.exists():
                 content = config_path.read_text(encoding="utf-8", errors="ignore")
-                # Find [remote "origin"] then the url = ... line
                 match = re.search(r'\[remote\s+"origin"\]\s*[^\]]*\n\s*url\s*=\s*([^\s]+)', content, re.MULTILINE)
                 if match:
                     metadata["url"] = match.group(1).strip()
@@ -117,3 +156,37 @@ class CodebaseResolver:
             pass
 
         return metadata
+
+    @staticmethod
+    def normalize_git_url(raw_url: Optional[str]) -> Dict[str, Optional[str]]:
+        """
+        Normalize any git URL into web-accessible HTTPS URL and human-readable repo name.
+        Supports:
+          - git@github.com:owner/repo.git -> https://github.com/owner/repo
+          - https://github.com/owner/repo.git -> https://github.com/owner/repo
+          - https://gitlab.com/owner/repo.git -> https://gitlab.com/owner/repo
+        """
+        if not raw_url:
+            return {"web_url": None, "repo_name": None}
+
+        url = raw_url.strip()
+        # Handle SSH style: git@github.com:owner/repo.git
+        ssh_match = re.match(r"^git@([^:]+):(.+?)(?:\.git)?$", url)
+        if ssh_match:
+            host, path = ssh_match.groups()
+            web_url = f"https://{host}/{path}"
+            return {"web_url": web_url, "repo_name": path}
+
+        # Handle HTTPS style: https://github.com/owner/repo.git or https://token@github.com/...
+        http_match = re.match(r"^https?://(?:[^@]+@)?([^/]+)/(.+?)(?:\.git)?$", url)
+        if http_match:
+            host, path = http_match.groups()
+            web_url = f"https://{host}/{path}"
+            return {"web_url": web_url, "repo_name": path}
+
+        # Raw owner/repo shorthand: owner/repo
+        if re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", url):
+            return {"web_url": f"https://github.com/{url}", "repo_name": url}
+
+        return {"web_url": url, "repo_name": url.split("/")[-1].replace(".git", "")}
+
