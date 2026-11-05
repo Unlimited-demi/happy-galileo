@@ -50,3 +50,26 @@ class TestConcertNotifier:
             assert payload["occurrences"] == 2
             assert "plain_english_summary" in payload
             assert len(payload["plain_english_summary"]) > 0
+
+    def test_send_chatops_reply_success(self):
+        """Should construct structured reply and post back to Concert webhook."""
+        notifier = ConcertNotifier(
+            webhook_url="https://api-collab.suburban.ng/api/v1/webhooks/teams/team-123/incoming",
+            webhook_secret="secret_abc_123"
+        )
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = MagicMock()
+            mock_resp.status = 201
+            mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+            res = notifier.send_chatops_reply(
+                reply_text="🟢 All nodes online and healthy.",
+                query="@ARA status",
+                thread_context={"thread_id": "thread-456", "user_id": "eng-789"}
+            )
+            assert res["sent"] is True
+            assert res["status_code"] == 201
+            payload = res["payload"]
+            assert payload["thread_id"] == "thread-456"
+            assert payload["user_id"] == "eng-789"
+            assert "All nodes online" in payload["text"]

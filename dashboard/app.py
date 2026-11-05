@@ -14,6 +14,7 @@ from pathlib import Path
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from typing import Optional, Dict, List, Any
+import threading
 
 from devctl.core.config import Config
 from devctl.core.domains import DomainRegistry
@@ -703,23 +704,64 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     or ""
                 )
 
-                try:
-                    from ai_ops.brain import BrainEngine
-                    brain = BrainEngine()
-                    chatops_result = brain.handle_chatops_query(
-                        query=query_text,
-                        thread_context=payload,
-                        fleet_store=FLEET_STORE
-                    )
-                except Exception as e:
-                    chatops_result = {
-                        "reply": f"⚠️ **ARA Notice**: Query failed: {str(e)}\n• Dashboard: https://ara.suburbancloud.ng",
-                        "answer": f"⚠️ **ARA Notice**: Query failed: {str(e)}\n• Dashboard: https://ara.suburbancloud.ng",
-                        "error": str(e),
-                        "engine": "ara-fail-safe"
-                    }
+                # Check if client explicitly requests synchronous processing (e.g. testing or CLI)
+                is_sync = payload.get("sync", False) is True
 
-                self._send_json(chatops_result)
+                if is_sync:
+                    try:
+                        from ai_ops.brain import BrainEngine
+                        brain = BrainEngine()
+                        chatops_result = brain.handle_chatops_query(
+                            query=query_text,
+                            thread_context=payload,
+                            fleet_store=FLEET_STORE
+                        )
+                    except Exception as e:
+                        chatops_result = {
+                            "reply": f"⚠️ **ARA Notice**: Query failed: {str(e)}\n• Dashboard: https://ara.suburbancloud.ng",
+                            "answer": f"⚠️ **ARA Notice**: Query failed: {str(e)}\n• Dashboard: https://ara.suburbancloud.ng",
+                            "error": str(e),
+                            "engine": "ara-fail-safe"
+                        }
+                    self._send_json(chatops_result)
+                    return
+
+                # ASYNCHRONOUS PROCESSING (Default):
+                # Acknowledge immediately to Concert (<5ms) so webhook connections are never held open
+                self._send_json({
+                    "ok": True,
+                    "status": "accepted",
+                    "mode": "asynchronous",
+                    "message": "ARA received query and is processing in background. Response will be posted directly to Concert.",
+                    "query": query_text,
+                }, status=200)
+
+                # Process query in background thread and post reply back to Concert
+                def _async_chatops_worker():
+                    try:
+                        from ai_ops.brain import BrainEngine
+                        from ai_ops.concert_notifier import ConcertNotifier
+                        brain = BrainEngine()
+                        result = brain.handle_chatops_query(
+                            query=query_text,
+                            thread_context=payload,
+                            fleet_store=FLEET_STORE
+                        )
+                        reply = result.get("reply") or result.get("answer") or ""
+                        notifier = ConcertNotifier()
+                        post_res = notifier.send_chatops_reply(
+                            reply_text=reply,
+                            query=query_text,
+                            thread_context=payload,
+                            engine=result.get("engine", "ara-brain")
+                        )
+                        import logging
+                        logging.getLogger("ARA.ChatOps").info(f"Async reply posted to Concert: sent={post_res.get('sent')}")
+                    except Exception as err:
+                        import logging
+                        logging.getLogger("ARA.ChatOps").error(f"Async ChatOps processing error: {err}")
+
+                threading.Thread(target=_async_chatops_worker, daemon=True).start()
                 return
 
             elif path in ("/api/discover", "/api/fleet/discover"):
