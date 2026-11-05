@@ -7,9 +7,11 @@ Uses Docker socket API directly (no docker CLI dependency).
 from typing import Dict, Any, Optional, Set, Tuple
 from devctl.core.config import Config
 from devctl.core.incident_bus import IncidentBus
+from devctl.core.docker_mgr import DockerManager
 from ai_ops.docker_socket import DockerSocket
 from ai_ops.dossier_builder import DossierBuilder
 from ai_ops.incident_throttle import IncidentThrottle
+from ai_ops.policy_engine import PolicyEngine, RollbackLedger
 
 
 class RemediationEngine:
@@ -19,6 +21,10 @@ class RemediationEngine:
         self.docker = DockerSocket()
         self.incident_bus = IncidentBus()
         self.dossier_builder = DossierBuilder()
+        self._policy_dir = None
+        self._policy_engine = None
+        self._ledger_dir = None
+        self._rollback_ledger = None
         self._throttle_dir = None
         self._throttle = None
         self.restart_tracker: Dict[str, int] = {}
@@ -44,6 +50,20 @@ class RemediationEngine:
             self._throttle_dir = self.incident_bus.incidents_dir
             self._throttle = IncidentThrottle(state_dir=self.incident_bus.incidents_dir)
         return self._throttle
+
+    @property
+    def policy_engine(self) -> PolicyEngine:
+        if self._policy_engine is None or self._policy_dir != self.incident_bus.incidents_dir:
+            self._policy_dir = self.incident_bus.incidents_dir
+            self._policy_engine = PolicyEngine(policy_file=self.incident_bus.incidents_dir / "remediation_policy.json")
+        return self._policy_engine
+
+    @property
+    def rollback_ledger(self) -> RollbackLedger:
+        if self._rollback_ledger is None or self._ledger_dir != self.incident_bus.incidents_dir:
+            self._ledger_dir = self.incident_bus.incidents_dir
+            self._rollback_ledger = RollbackLedger(ledger_file=self.incident_bus.incidents_dir / "rollback_ledger.json")
+        return self._rollback_ledger
 
     def _detect_proxy_container(self) -> Optional[Tuple[str, str]]:
         """
@@ -132,6 +152,10 @@ class RemediationEngine:
         reasons_str = "; ".join(failure_reasons) if failure_reasons else "Container unhealthy"
         print(f"\n[AI-Ops ALERT] Unhealthy: {service_name} — {reasons_str}")
 
+        # Check database/stateful classification
+        docker_mgr = DockerManager()
+        is_db, db_desc = docker_mgr.is_database_or_cache(container_name)
+
         # Level 1: Container crashed, stopped, or returning 502/503 → Auto-restart
         http_error = health.get("http_error")
         http_code = health.get("http_status_code")
@@ -140,11 +164,30 @@ class RemediationEngine:
         )
         if should_restart:
             restarts = self.restart_tracker.get(service_name, 0)
-            if Config.AUTO_REMEDIATION_ENABLED and restarts < Config.MAX_AUTO_RESTARTS:
+            permitted, policy_reason = self.policy_engine.evaluate_action(service_name, "restart_container", is_database=is_db)
+            if Config.AUTO_REMEDIATION_ENABLED and restarts < Config.MAX_AUTO_RESTARTS and permitted:
                 self.restart_tracker[service_name] = restarts + 1
                 reason = f"HTTP {http_code}" if http_code and http_code >= 500 else "container stopped"
                 print(f"[Level 1] Auto-restarting '{container_name}' ({reason}, attempt {restarts + 1}/{Config.MAX_AUTO_RESTARTS})")
+
+                state_before = {
+                    "container_running": container_running,
+                    "http_code": http_code,
+                    "attempt": restarts + 1,
+                }
                 restarted = self.docker.restart_container(container_name)
+
+                # Record compensation action in rollback ledger
+                self.rollback_ledger.record_action(
+                    service_name=service_name,
+                    container_name=container_name,
+                    action="RESTART_CONTAINER",
+                    state_before=state_before,
+                    rollback_command=f"docker stop {container_name}",
+                    metadata={"reason": reason, "success": bool(restarted)}
+                )
+                self.policy_engine.record_executed_action(service_name)
+
                 return {
                     "level": 1,
                     "action": "RESTART_CONTAINER",
@@ -152,14 +195,27 @@ class RemediationEngine:
                     "attempt": restarts + 1,
                     "reason": reason,
                 }
+            elif not permitted:
+                print(f"[Level 1 Policy Gated] Restart skipped for '{service_name}': {policy_reason}")
 
         # Level 2: Deployment / network desync → re-attach dev-net & re-sync Caddy
         # A container that is running but fell off the internal network (compose
         # recreate, manual disconnect) is an infra problem, not an app bug.
-        if container_running and Config.AUTO_REMEDIATION_ENABLED:
-            l2_result = self._try_level2_network_fix(service_name, container_name)
-            if l2_result is not None:
-                return l2_result
+        if container_running and Config.AUTO_REMEDIATION_ENABLED and not is_db:
+            permitted_l2, _ = self.policy_engine.evaluate_action(service_name, "resync_network", is_database=is_db)
+            if permitted_l2:
+                l2_result = self._try_level2_network_fix(service_name, container_name)
+                if l2_result is not None:
+                    self.rollback_ledger.record_action(
+                        service_name=service_name,
+                        container_name=container_name,
+                        action="REATTACH_NETWORK",
+                        state_before={"detached": True},
+                        rollback_command=f"docker network disconnect {Config.DOCKER_NETWORK} {container_name}",
+                        metadata=l2_result
+                    )
+                    self.policy_engine.record_executed_action(service_name)
+                    return l2_result
 
         # Determine error category & signature for deterministic fingerprinting
         if oom_killed:
