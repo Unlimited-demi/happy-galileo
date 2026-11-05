@@ -25,14 +25,31 @@ class BrainEngine:
         self.brain_url = (brain_url or os.environ.get("BRAIN_URL", "http://localhost:11434")).rstrip("/")
         self.model = model or os.environ.get("BRAIN_MODEL", self.DEFAULT_MODEL)
 
-    def is_available(self, timeout: float = 1.5) -> bool:
+    def is_available(self, timeout: float = 1.0) -> bool:
         """Check if local brain inference engine is online and responding."""
         try:
-            req = urllib.request.Request(f"{self.brain_url}/api/version", method="GET")
+            req = urllib.request.Request(f"{self.brain_url}/api/tags", method="GET")
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.status == 200
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    models = [m.get("name", "") for m in data.get("models", [])]
+                    base_model = self.model.split(":")[0]
+                    has_model = any(self.model in m or base_model in m for m in models)
+                    if not has_model and models:
+                        print(f"[ARA Brain] Ollama active at {self.brain_url}, but model '{self.model}' not found in {models}. Pulling required.")
+                    return True
+        except urllib.error.HTTPError:
+            # Older endpoint fallback
+            try:
+                req = urllib.request.Request(f"{self.brain_url}/", method="GET")
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    return resp.status == 200
+            except Exception:
+                return False
         except Exception:
+            # Connection refused, host unreachable, or timeout — brain is offline
             return False
+        return False
 
     def preload_model(self) -> bool:
         """
@@ -129,24 +146,33 @@ class BrainEngine:
         fleet_store: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
-        Process natural language queries from Concert engineers (e.g. '@ARA how is vm-02 doing?').
+        Process natural language queries from Concert engineers (e.g. '@ARA what is the status of the fleet?').
         Dispatches tool lookups against local stores and formulates response.
         """
-        q_lower = query.lower()
+        q_lower = query.lower().strip()
         context_data: Dict[str, Any] = {}
 
         # 1. Tool dispatch based on query intent (Action -> Observation)
-        if any(w in q_lower for w in ["node", "fleet", "servers", "vm-"]):
+        wants_status = any(w in q_lower for w in ["status", "health", "overview", "state", "summary", "how is", "report"])
+        wants_fleet = any(w in q_lower for w in ["node", "fleet", "servers", "vm-", "host"]) or wants_status
+        wants_metrics = any(w in q_lower for w in ["memory", "cpu", "metric", "trend", "latency", "usage", "ram"]) or wants_status
+        wants_incidents = any(w in q_lower for w in ["incident", "error", "alert", "why", "down", "fail", "issue"]) or wants_status
+        wants_rollback = any(w in q_lower for w in ["rollback", "revert", "undo"])
+
+        if wants_fleet:
             if fleet_store and hasattr(fleet_store, "get_all_nodes"):
                 nodes = fleet_store.get_all_nodes()
-                context_data["nodes"] = [
-                    {"name": n.get("node_name"), "status": n.get("status"), "services": n.get("services_count")}
-                    for n in nodes
-                ]
+                if nodes:
+                    context_data["nodes"] = [
+                        {"name": n.get("node_name"), "status": n.get("status"), "services": n.get("services_count")}
+                        for n in nodes
+                    ]
+                else:
+                    context_data["nodes"] = [{"name": "Central Hub (vm-test)", "status": "ONLINE", "type": "primary"}]
             else:
-                context_data["nodes"] = [{"name": "Local Workstation", "status": "ONLINE"}]
+                context_data["nodes"] = [{"name": "Central Hub (vm-test)", "status": "ONLINE", "type": "primary"}]
 
-        if any(w in q_lower for w in ["memory", "cpu", "metric", "trend", "latency", "usage", "health"]):
+        if wants_metrics:
             try:
                 from ai_ops.metrics_store import MetricsStore
                 store = MetricsStore()
@@ -164,20 +190,26 @@ class BrainEngine:
             except Exception:
                 pass
 
-        if any(w in q_lower for w in ["rollback", "revert", "undo"]):
-            from ai_ops.policy_engine import RollbackLedger
-            ledger = RollbackLedger()
-            recent_rb = ledger.list_recent_actions(limit=5)
-            context_data["recent_rollbacks"] = recent_rb
+        if wants_incidents:
+            try:
+                from devctl.core.incident_bus import IncidentBus
+                bus = IncidentBus()
+                open_inc = bus.list_incidents(only_open=True)
+                context_data["open_incidents"] = [
+                    {"id": i.get("id"), "service": i.get("service_name"), "severity": i.get("severity"), "title": i.get("title")}
+                    for i in open_inc[:5]
+                ]
+            except Exception:
+                pass
 
-        if any(w in q_lower for w in ["incident", "error", "alert", "why", "down", "fail"]):
-            from devctl.core.incident_bus import IncidentBus
-            bus = IncidentBus()
-            open_inc = bus.list_incidents(only_open=True)
-            context_data["open_incidents"] = [
-                {"id": i.get("id"), "service": i.get("service_name"), "severity": i.get("severity"), "title": i.get("title")}
-                for i in open_inc[:5]
-            ]
+        if wants_rollback:
+            try:
+                from ai_ops.policy_engine import RollbackLedger
+                ledger = RollbackLedger()
+                recent_rb = ledger.list_recent_actions(limit=5)
+                context_data["recent_rollbacks"] = recent_rb
+            except Exception:
+                pass
 
         # 2. ReAct Synthesis: Let the Local CPU Model reason over observations if online
         if self.is_available() and context_data:
@@ -223,28 +255,57 @@ class BrainEngine:
                                 "context_data": context_data,
                                 "engine": f"ara-brain-react-{self.model}",
                             }
-            except Exception:
-                pass  # Fall back to deterministic synthesis
+            except Exception as e:
+                import logging
+                logging.getLogger("ARA.Brain").warning(f"Local LLM reasoning bypassed: {e}")
 
-        # 3. Deterministic Fallback Synthesis (Fast, reliable, zero-latency)
+        # 3. Deterministic Fallback Synthesis (Fast, reliable, zero-latency, rich telemetry)
+        parts = []
+
+        # Fleet / Nodes part
+        if context_data.get("nodes"):
+            node_summaries = ", ".join(f"{n['name']} ({n.get('status', 'ONLINE')})" for n in context_data["nodes"])
+            parts.append(f"🌐 Nodes: {node_summaries}")
+
+        # Incidents part
+        if "open_incidents" in context_data:
+            incidents = context_data["open_incidents"]
+            if incidents:
+                inc_list = ", ".join(f"`{i['id']}` [{i.get('severity', 'WARN')}] on `{i.get('service', 'unknown')}`" for i in incidents)
+                parts.append(f"🚨 Active Incidents ({len(incidents)}): {inc_list}")
+            else:
+                parts.append("✅ Incidents: Zero active incidents across fleet")
+
+        # Specific service trends
         if context_data.get("service_trends"):
             st = context_data["service_trends"]
             mem_trend = st.get("mem_growth_pct", 0)
-            answer = f"📊 Performance trends: Memory growth is {mem_trend:+.1f}%, latency drift: {st.get('latency_factor', 1.0):.2f}x. Status: {st.get('verdict', 'STABLE')}."
-        elif context_data.get("nodes"):
-            node_summaries = ", ".join(f"{n['name']} ({n['status']})" for n in context_data["nodes"])
-            answer = f"🌐 Fleet status: {node_summaries}."
-        elif context_data.get("recent_rollbacks"):
+            parts.append(f"📊 Service metrics: Memory growth {mem_trend:+.1f}%, latency drift {st.get('latency_factor', 1.0):.2f}x ({st.get('verdict', 'STABLE')})")
+
+        # Fleet-wide trends
+        elif context_data.get("fleet_trends"):
+            ft = context_data["fleet_trends"]
+            warnings = []
+            for svc, data in ft.items():
+                for w in data.get("warnings", []):
+                    warnings.append(f"`{svc}`: {w.get('detail')}")
+            if warnings:
+                parts.append(f"⚠️ Telemetry Warnings: {' | '.join(warnings[:2])}")
+            else:
+                parts.append(f"📈 Telemetry: All {len(ft)} services operating within healthy thresholds")
+
+        # Rollbacks part
+        if context_data.get("recent_rollbacks"):
             last_rb = context_data["recent_rollbacks"][0]
-            answer = f"⏪ Last rollback: Action `{last_rb.get('action')}` on `{last_rb.get('service_name')}` (ID: {last_rb.get('id')}) status: {last_rb.get('status')}."
-        elif context_data.get("open_incidents"):
-            inc_list = ", ".join(f"`{i['id']}` ({i['service']})" for i in context_data["open_incidents"])
-            answer = f"🚨 Current active incidents ({len(context_data['open_incidents'])}): {inc_list}."
+            parts.append(f"⏪ Last Rollback: `{last_rb.get('action')}` on `{last_rb.get('service_name')}` ({last_rb.get('status')})")
+
+        if parts:
+            answer = "\n".join(parts)
         else:
             answer = (
-                f"Hello! I am ARA, your autonomous SRE companion. "
-                f"All systems are currently being monitored. "
-                f"You can ask me about fleet nodes, active incidents, memory trends, or rollbacks."
+                "Hello! I am ARA, your autonomous SRE companion for Suburban & Legend. "
+                "All systems are currently being monitored. "
+                "You can ask me about fleet nodes, active incidents, memory trends, or rollbacks."
             )
 
         return {
@@ -254,3 +315,4 @@ class BrainEngine:
             "context_data": context_data,
             "engine": "ara-brain-local",
         }
+

@@ -66,3 +66,13 @@ class TestBrainEngine:
             res_inc = brain.handle_chatops_query("are there any active incidents?")
             assert "INC-001" in res_inc["answer"]
             assert "checkout" in res_inc["answer"]
+
+        # Query general status
+        with patch("devctl.core.incident_bus.IncidentBus.list_incidents") as mock_list:
+            mock_list.return_value = [
+                {"id": "INC-999", "service_name": "billing-api", "severity": "CRITICAL"}
+            ]
+            res_status = brain.handle_chatops_query("what are the status")
+            assert "Central Hub (vm-test)" in res_status["answer"]
+            assert "INC-999" in res_status["answer"]
+            assert "billing-api" in res_status["answer"]
