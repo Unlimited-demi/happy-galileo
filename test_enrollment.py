@@ -70,6 +70,7 @@ mock_docker_mgr_instance = MagicMock()
 mock_docker_mgr_instance.inspect_container.return_value = container_inspect_info
 mock_docker_mgr_instance.detect_ports.return_value = [80]
 mock_docker_mgr_instance.connect_to_network.return_value = True
+mock_docker_mgr_instance.is_database_or_cache.return_value = (False, "")
 
 # Mock AIContainerInference
 mock_ai_inference_instance = MagicMock()

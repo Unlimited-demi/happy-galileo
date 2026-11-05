@@ -65,6 +65,18 @@ def cmd_expose(args):
 
         domain = args.domain or Config.get_full_domain(service_name, env)
 
+    # 1b. Database & Cache Sealing Enforcement (Never expose databases to public ingress)
+    is_db, db_desc = docker_mgr.is_database_or_cache(service_name)
+    if is_db:
+        print("\n" + "=" * 70)
+        print("🚨 [SECURITY ENFORCEMENT] EXPOSURE REJECTED:")
+        print(f"   Container '{service_name}' was identified as a {db_desc}.")
+        print("   Databases and cache engines (PostgreSQL, Redis, MySQL, MongoDB, etc.)")
+        print("   must NEVER be exposed to public or wildcard domains.")
+        print("   They must remain sealed on internal Docker networks with password auth.")
+        print("=" * 70 + "\n")
+        sys.exit(1)
+
     # 2. Port detection / validation
     port = args.port
     if not port:
@@ -206,7 +218,7 @@ def cmd_discover(args):
             ws = "..." + ws[-27:]
         print(f"{d['container_name']:<24} {role:<22} {str(d['port']):<7} {ws:<32} {access:<35}")
     print("=" * 125)
-    print("💡 All discovered services are safely attached to dev-net and continuously monitored.\n")
+    print("💡 Discovered services are indexed for health telemetry. Databases and non-public services remain sealed.\n")
 
 
 def cmd_heartbeat(args):
@@ -1008,6 +1020,28 @@ def cmd_doctor(args):
         print(f"  [✓] Wildcard DNS:         RESOLVES ({test_host} -> {ip})")
     except Exception:
         print(f"  [!] Wildcard DNS:         Cannot resolve {test_host} locally (Ensure DNS wildcard is active)")
+
+    # 5. Database & Cache Security Audit
+    containers = docker_mgr.list_containers()
+    db_found = 0
+    db_violations = []
+    for c in containers:
+        c_name = c.get("Names", "").strip("/").split(",")[0]
+        db_audit = docker_mgr.audit_database_security(c_name)
+        if db_audit.get("is_database"):
+            db_found += 1
+            if not db_audit.get("safe"):
+                for v in db_audit.get("violations", []):
+                    db_violations.append(f"{c_name}: {v}")
+
+    if db_violations:
+        print(f"  [✗] Database Security:    CRITICAL VIOLATION ({len(db_violations)} issue(s) detected)")
+        for v in db_violations:
+            print(f"      🚨 {v}")
+    elif db_found > 0:
+        print(f"  [✓] Database Security:    SEALED ({db_found} database/cache service(s) verified on internal network)")
+    else:
+        print("  [✓] Database Security:    CLEAN (No database services exposed to 0.0.0.0)")
 
     print("=" * 60 + "\n")
 

@@ -696,11 +696,19 @@ class DomainRegistry:
             if not state_info.get("Running", False):
                 continue
 
-            image = info.get('Config', {}).get('Image', '')
+            config_info = info.get("Config", {})
+            labels = config_info.get("Labels") or {}
+            # Exclude containers explicitly marked not to be monitored
+            if str(labels.get("ara.monitor", "")).lower() == "false" or \
+               str(labels.get("serverguard.monitor", "")).lower() == "false" or \
+               str(labels.get("devctl.monitor", "")).lower() == "false":
+                continue
+
+            image = config_info.get('Image', '')
             ports = docker_mgr.detect_ports(c_name)
 
-            # Connect container to dev-net for internal monitoring
-            docker_mgr.connect_to_network(c_name)
+            # NOTE: We NEVER force connect foreign containers to dev-net during auto-discovery!
+            # Zero network meddling contract.
 
             # AI-assisted classification and workspace inspection
             ai_profile = None
@@ -710,103 +718,139 @@ class DomainRegistry:
                 except Exception:
                     ai_profile = None
 
-            # Check if this container has an existing real domain from reverse proxy detection
-            # Try multiple lookup strategies: container name, container:port, :port, container IP
-            real_domain_info = None
-            real_domain = None
-            real_domain_source = None
-
-            # Strategy 1: Exact container name match
-            if c_name in existing_domains:
-                real_domain_info = existing_domains[c_name]
-            # Strategy 2: Container name with port (e.g., "grafana:3000")
-            elif ports:
-                for p in ports:
-                    key = f"{c_name}:{p}"
-                    if key in existing_domains:
-                        real_domain_info = existing_domains[key]
-                        break
-            # Strategy 3: Port only (e.g., ":3000")
-            if not real_domain_info and ports:
-                for p in ports:
-                    key = f":{p}"
-                    if key in existing_domains:
-                        real_domain_info = existing_domains[key]
-                        break
-            # Strategy 4: Container IP address (inspect container network)
-            if not real_domain_info:
-                try:
-                    net_info = info.get("NetworkSettings", {}).get("Networks", {})
-                    for net_name, net_data in net_info.items():
-                        ip_addr = net_data.get("IPAddress")
-                        if ip_addr and ip_addr in existing_domains:
-                            real_domain_info = existing_domains[ip_addr]
-                            break
-                        # Also try IP:port
-                        if ip_addr and ports:
-                            for p in ports:
-                                key = f"{ip_addr}:{p}"
-                                if key in existing_domains:
-                                    real_domain_info = existing_domains[key]
-                                    break
-                            if real_domain_info:
-                                break
-                except Exception:
-                    pass
-
-            if real_domain_info:
-                real_domain = real_domain_info.get("domain")
-                real_domain_source = real_domain_info.get("source")
-                # Debug: print where the domain was detected from
-                print(f"  [DEBUG] {c_name}: {real_domain} (from {real_domain_source})")
-
-            # Classify container type
-            if real_domain and ("nginx" in c_name or "frontend" in c_name or "web" in c_name or "sogo" in c_name):
-                c_type = SERVICE_TYPE_WEB
-            elif ai_profile and "database" in ai_profile.get("archetype", ""):
-                c_type = SERVICE_TYPE_DATABASE
-            elif ai_profile and "cache" in ai_profile.get("archetype", ""):
-                c_type = SERVICE_TYPE_CACHE
-            elif ai_profile and "mail" in ai_profile.get("archetype", ""):
-                # If Mailcow Nginx/SOGo has a web domain, it's WEB
-                c_type = SERVICE_TYPE_WEB if (real_domain and "nginx" in c_name) else SERVICE_TYPE_MAIL
-            elif ai_profile and "worker" in ai_profile.get("archetype", ""):
-                c_type = SERVICE_TYPE_WORKER
-            elif ai_profile and "ingress" in ai_profile.get("archetype", ""):
-                c_type = SERVICE_TYPE_INFRA
-            else:
-                c_type = self.classify_container(c_name, image, ports)
-
-            # Determine port
-            port = 0
-            if ai_profile and ai_profile.get("recommended_port"):
-                port = ai_profile["recommended_port"]
-            elif ports:
-                web_ports = [p for p in ports if p in self.WEB_PORTS]
-                port = web_ports[0] if web_ports else ports[0]
-
             # Resolve codebase metadata (git repo, workspace, compose file)
             codebase = resolver.resolve(c_name)
 
-            meta = {
-                "auto_discovered": True,
-                "detected_ports": ports,
-                "image": image,
-                "ai_inference": ai_profile,
-                "codebase": codebase,
-            }
-
-            # If we detected a real domain from nginx/Caddy/Apache, use it!
-            if real_domain:
-                meta["existing_domain"] = real_domain
-                meta["domain_source"] = real_domain_source
-                # Set the public URL and domain so users see what's actually exposed
-                public_domain = real_domain
-                public_url = f"https://{real_domain}"
+            # Check if this container is a database or cache store that must be sealed
+            res_db = docker_mgr.is_database_or_cache(c_name)
+            if isinstance(res_db, tuple) and len(res_db) >= 2:
+                is_db, db_desc = res_db[0], res_db[1]
             else:
-                # No existing domain detected — register for monitoring only
-                public_url = None
+                is_db, db_desc = bool(res_db), ""
+
+            if is_db:
+                # DATABASE / CACHE SEALING:
+                # Databases and cache containers are strictly sealed on internal networks.
+                # Under NO circumstances are they assigned a public domain or ingress route.
+                db_audit = docker_mgr.audit_database_security(c_name)
+
+                # Distinguish database vs cache
+                c_name_lower = c_name.lower()
+                image_lower = (image or "").lower()
+                if any(kw in c_name_lower or kw in image_lower for kw in ["redis", "memcached", "valkey", "dragonfly", "keydb"]):
+                    c_type = SERVICE_TYPE_CACHE
+                else:
+                    c_type = SERVICE_TYPE_DATABASE
+
+                port = ports[0] if ports else 0
                 public_domain = None
+                public_url = None
+
+                meta = {
+                    "auto_discovered": True,
+                    "detected_ports": ports,
+                    "image": image,
+                    "ai_inference": ai_profile or {
+                        "role_label": f"Internal Sealed {db_desc}",
+                        "is_publicly_exposable": False,
+                        "archetype": "database" if c_type == SERVICE_TYPE_DATABASE else "cache",
+                    },
+                    "codebase": codebase,
+                    "sealed_database": True,
+                    "publicly_exposable": False,
+                    "security_audit": db_audit,
+                }
+            else:
+                # Check if this container has an existing real domain from reverse proxy detection
+                # Try multiple lookup strategies: container name, container:port, :port, container IP
+                real_domain_info = None
+                real_domain = None
+                real_domain_source = None
+
+                # Strategy 1: Exact container name match
+                if c_name in existing_domains:
+                    real_domain_info = existing_domains[c_name]
+                # Strategy 2: Container name with port (e.g., "grafana:3000")
+                elif ports:
+                    for p in ports:
+                        key = f"{c_name}:{p}"
+                        if key in existing_domains:
+                            real_domain_info = existing_domains[key]
+                            break
+                # Strategy 3: Port only (e.g., ":3000")
+                if not real_domain_info and ports:
+                    for p in ports:
+                        key = f":{p}"
+                        if key in existing_domains:
+                            real_domain_info = existing_domains[key]
+                            break
+                # Strategy 4: Container IP address (inspect container network)
+                if not real_domain_info:
+                    try:
+                        net_info = info.get("NetworkSettings", {}).get("Networks", {})
+                        for net_name, net_data in net_info.items():
+                            ip_addr = net_data.get("IPAddress")
+                            if ip_addr and ip_addr in existing_domains:
+                                real_domain_info = existing_domains[ip_addr]
+                                break
+                            # Also try IP:port
+                            if ip_addr and ports:
+                                for p in ports:
+                                    key = f"{ip_addr}:{p}"
+                                    if key in existing_domains:
+                                        real_domain_info = existing_domains[key]
+                                        break
+                                if real_domain_info:
+                                    break
+                    except Exception:
+                        pass
+
+                if real_domain_info:
+                    real_domain = real_domain_info.get("domain")
+                    real_domain_source = real_domain_info.get("source")
+                    # Debug: print where the domain was detected from
+                    print(f"  [DEBUG] {c_name}: {real_domain} (from {real_domain_source})")
+
+                # Classify container type
+                if real_domain and ("nginx" in c_name or "frontend" in c_name or "web" in c_name or "sogo" in c_name):
+                    c_type = SERVICE_TYPE_WEB
+                elif ai_profile and "mail" in ai_profile.get("archetype", ""):
+                    # If Mailcow Nginx/SOGo has a web domain, it's WEB
+                    c_type = SERVICE_TYPE_WEB if (real_domain and "nginx" in c_name) else SERVICE_TYPE_MAIL
+                elif ai_profile and "worker" in ai_profile.get("archetype", ""):
+                    c_type = SERVICE_TYPE_WORKER
+                elif ai_profile and "ingress" in ai_profile.get("archetype", ""):
+                    c_type = SERVICE_TYPE_INFRA
+                else:
+                    c_type = self.classify_container(c_name, image, ports)
+
+                # Determine port
+                port = 0
+                if ai_profile and ai_profile.get("recommended_port"):
+                    port = ai_profile["recommended_port"]
+                elif ports:
+                    web_ports = [p for p in ports if p in self.WEB_PORTS]
+                    port = web_ports[0] if web_ports else ports[0]
+
+                meta = {
+                    "auto_discovered": True,
+                    "detected_ports": ports,
+                    "image": image,
+                    "ai_inference": ai_profile,
+                    "codebase": codebase,
+                }
+
+                # If we detected a real domain from nginx/Caddy/Apache, use it!
+                if real_domain:
+                    meta["existing_domain"] = real_domain
+                    meta["domain_source"] = real_domain_source
+                    # Set the public URL and domain so users see what's actually exposed
+                    public_domain = real_domain
+                    public_url = f"https://{real_domain}"
+                else:
+                    # No existing domain detected — register for monitoring only
+                    public_url = None
+                    public_domain = None
 
             entry = self.register(
                 service_name=slug,
