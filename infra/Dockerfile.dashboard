@@ -28,7 +28,8 @@ COPY devctl /app/devctl
 COPY ai_ops /app/ai_ops
 COPY dashboard /app/dashboard
 
-# Copy compiled frontend from Stage 1
+# Copy compiled frontend from Stage 1 (both inside and outside /app/dashboard)
+COPY --from=frontend-builder /build/dist /app/frontend_dist
 COPY --from=frontend-builder /build/dist /app/dashboard/dist
 COPY --from=frontend-builder /build/dist /app/dashboard/static
 

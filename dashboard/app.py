@@ -78,10 +78,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def __init__(self, *args, directory=None, **kwargs):
         if directory is None:
-            dist_dir = Path(__file__).resolve().parent / "dist"
-            frontend_dist = Path(__file__).resolve().parent / "frontend" / "dist"
+            built_in_dist = Path("/app/frontend_dist")
             static_dir = Path(__file__).resolve().parent / "static"
-            if frontend_dist.exists() and (frontend_dist / "index.html").exists():
+            frontend_dist = Path(__file__).resolve().parent / "frontend" / "dist"
+            dist_dir = Path(__file__).resolve().parent / "dist"
+            if built_in_dist.exists() and (built_in_dist / "index.html").exists():
+                directory = str(built_in_dist)
+            elif static_dir.exists() and (static_dir / "index.html").exists():
+                directory = str(static_dir)
+            elif frontend_dist.exists() and (frontend_dist / "index.html").exists():
                 directory = str(frontend_dist)
             elif dist_dir.exists() and (dist_dir / "index.html").exists():
                 directory = str(dist_dir)
@@ -436,7 +441,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     self.send_error(404, "Screenshot not found")
                     return
 
-            # Serve static assets
+            # Serve static assets with Single Page Application (SPA) fallback
+            req_rel = path.lstrip("/")
+            full_path = Path(self.directory) / req_rel
+            if not full_path.exists() and not path.startswith("/api/") and not path.startswith("/screenshots/"):
+                index_path = Path(self.directory) / "index.html"
+                if index_path.exists():
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(index_path.stat().st_size))
+                    self.end_headers()
+                    with open(index_path, "rb") as f:
+                        self.wfile.write(f.read())
+                    return
+
             super().do_GET()
 
         except Exception as e:
