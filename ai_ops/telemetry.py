@@ -130,6 +130,23 @@ class FleetTelemetryStreamer:
             "success": False,
         }
 
+        # 1. Cryptographic HMAC signature and freshness check
+        from ai_ops.job_signer import JobSigner
+        is_valid, err_msg = JobSigner.verify_command(command, self.fleet_key)
+        if not is_valid:
+            result["error"] = f"Cryptographic verification rejected: {err_msg}"
+            print(f"[fleet] 🚨 Rejected forged or stale command {cmd_id}: {err_msg}")
+            return result
+
+        # 2. Database & Sealed Service Protection: Under no circumstances attach databases to network
+        from devctl.core.docker_mgr import DockerManager
+        docker_mgr = DockerManager()
+        is_db, db_desc = docker_mgr.is_database_or_cache(target)
+        if is_db and action in ("resync_network", "expose"):
+            result["error"] = f"Action '{action}' rejected: Target '{target}' is a sealed {db_desc} and cannot be attached to external networks."
+            print(f"[fleet] 🚨 Blocked command attempting to attach sealed database '{target}' to network")
+            return result
+
         if action not in self.ALLOWED_COMMANDS:
             result["error"] = f"Action '{action}' is not in the node command whitelist"
             return result

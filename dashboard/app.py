@@ -19,7 +19,14 @@ from devctl.core.domains import DomainRegistry
 from devctl.core.incident_bus import IncidentBus
 from devctl.core.fleet_store import FleetStore, NodeStatus
 from ai_ops.docker_socket import DockerSocket
-from devctl.core.auth import AuthManager
+from devctl.core.auth import (
+    AuthManager,
+    ROLE_VIEWER,
+    ROLE_OPERATOR,
+    ROLE_APPROVER,
+    ROLE_ADMIN,
+)
+from ai_ops.job_signer import JobSigner
 
 STATIC_DIR = Path(__file__).parent / "static"
 FLEET_STORE = FleetStore()
@@ -27,7 +34,31 @@ ALLOWED_NODE_ACTIONS = {"restart_container", "resync_network", "purge_incidents"
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
-    """Multi-threaded HTTP Request handler serving static UI and REST API."""
+    """Multi-threaded HTTP Request handler serving static UI and REST API with RBAC."""
+
+    def _get_request_role(self) -> Optional[str]:
+        """Extract and return authenticated RBAC role. Fails closed (returns None)."""
+        auth_header = self.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            key = auth_header[7:].strip()
+            auth_mgr = AuthManager()
+            return auth_mgr.get_role_for_key(key)
+        return None
+
+    def _require_role(self, required_role: str) -> bool:
+        """Enforce RBAC role requirement. Sends 401/403 and returns False if unauthorized."""
+        role = self._get_request_role()
+        if not role:
+            self._send_json({"error": "Unauthorized: Authentication required"}, status=401)
+            return False
+        if not AuthManager.has_permission(role, required_role):
+            self._send_json({
+                "error": f"Forbidden: Insufficient permissions (requires role '{required_role}', your role is '{role}')",
+                "required_role": required_role,
+                "current_role": role,
+            }, status=403)
+            return False
+        return True
 
     def _check_auth(self, auth_type='dashboard'):
         """Check authentication. Returns True if authorized. Fails closed."""
@@ -40,14 +71,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     return True
                 return auth_mgr.validate_telemetry_key(key)
             else:
-                auth_header = self.headers.get('Authorization', '')
-                if auth_header.startswith('Bearer '):
-                    key = auth_header[7:].strip()
-                    dashboard_key_env = os.environ.get('DASHBOARD_KEY', '')
-                    if dashboard_key_env and key and secrets.compare_digest(dashboard_key_env, key):
-                        return True
-                    return auth_mgr.validate_dashboard_key(key)
-                return False
+                return self._get_request_role() is not None
         except Exception:
             return False
 
@@ -120,8 +144,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 path = self.path.split("?")[0]
 
             if path.startswith("/api/") and path != "/api/ask":
-                if not self._check_auth(auth_type='dashboard'):
-                    self._send_json({"error": "Unauthorized"}, status=401)
+                if not self._require_role(ROLE_VIEWER):
                     return
 
             # Caddy On-Demand TLS Permission Verification
@@ -451,20 +474,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if cmd_results and isinstance(cmd_results, list):
                     FLEET_STORE.record_command_results(node_name, cmd_results)
 
-                # Deliver (and drain) any pending commands queued for this node
+                # Deliver (and drain) any pending commands queued for this node, cryptographically signed
                 pending = FLEET_STORE.drain_pending_commands(node_name)
+                fleet_key = os.environ.get("FLEET_KEY", "default-fleet-key")
+                signed_pending = [JobSigner.sign_command(cmd, fleet_key) for cmd in pending]
                 self._send_json({
                     "status": "received",
                     "node": node_name,
-                    "pending_commands": pending,
+                    "pending_commands": signed_pending,
                 })
                 return
 
             elif path == "/api/fleet/command":
-                # Queue a whitelisted infra command for a sub-node. It is delivered
-                # in that node's next heartbeat response (usually within ~15s).
-                if not self._check_auth():
-                    self._send_json({"error": "Unauthorized"}, status=401)
+                # Queue a whitelisted infra command for a sub-node. Requires OPERATOR role or above.
+                if not self._require_role(ROLE_OPERATOR):
                     return
                 content_length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
@@ -488,8 +511,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
 
             elif path == "/api/fleet/nodes/prune":
-                if not self._check_auth():
-                    self._send_json({"error": "Unauthorized"}, status=401)
+                # Requires ADMIN role
+                if not self._require_role(ROLE_ADMIN):
                     return
                 content_length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
@@ -500,7 +523,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
 
             elif path.startswith("/api/incidents/") and path.endswith("/dispatch"):
-                # Extract incident_id: /api/incidents/<id>/dispatch
+                # Requires APPROVER role or above
+                if not self._require_role(ROLE_APPROVER):
+                    return
                 inc_id = path[len("/api/incidents/"): -len("/dispatch")].strip("/")
                 if inc_id:
                     from ai_ops.dispatcher import IncidentDispatcher
@@ -510,6 +535,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     return
 
             elif path == "/api/incidents/purge":
+                # Requires ADMIN role
+                if not self._require_role(ROLE_ADMIN):
+                    return
                 bus = IncidentBus()
                 deleted = 0
                 if bus.incidents_dir.exists():
