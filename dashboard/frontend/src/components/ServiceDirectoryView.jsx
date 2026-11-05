@@ -4,7 +4,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
-export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy }) {
+export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy, onSelectService }) {
   const allServices = useMemo(() => {
     const list = [];
     nodes.forEach((n) => {
@@ -26,23 +26,28 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy }) {
   return (
     <div className="space-y-4">
       {/* Sub Filter Buttons */}
-      <div className="flex items-center gap-2">
-        {[
-          { id: 'all', label: 'All Services' },
-          { id: 'web', label: 'Web & APIs' },
-          { id: 'db', label: 'Databases & Caches' },
-          { id: 'mail', label: 'Mail Infrastructure' },
-        ].map((btn) => (
-          <Button
-            key={btn.id}
-            variant={filter === btn.id ? 'default' : 'secondary'}
-            size="sm"
-            onClick={() => setFilter(btn.id)}
-            className="text-xs h-8"
-          >
-            {btn.label}
-          </Button>
-        ))}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {[
+            { id: 'all', label: 'All Services' },
+            { id: 'web', label: 'Web & APIs' },
+            { id: 'db', label: 'Databases & Caches' },
+            { id: 'mail', label: 'Mail Infrastructure' },
+          ].map((btn) => (
+            <Button
+              key={btn.id}
+              variant={filter === btn.id ? 'default' : 'secondary'}
+              size="sm"
+              onClick={() => setFilter(btn.id)}
+              className="text-xs h-8"
+            >
+              {btn.label}
+            </Button>
+          ))}
+        </div>
+        <span className="text-xs text-muted-foreground hidden sm:inline">
+          💡 Click any service row to view runtime inspection & live logs
+        </span>
       </div>
 
       <Card className="border-border/80 overflow-hidden">
@@ -56,7 +61,7 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy }) {
                   <th className="py-3 px-6">Type</th>
                   <th className="py-3 px-6">Port</th>
                   <th className="py-3 px-6">Status</th>
-                  <th className="py-3 px-6 text-right">Access URL</th>
+                  <th className="py-3 px-6 text-right">Access / Logs</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40 font-mono text-xs">
@@ -73,8 +78,16 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy }) {
                     const sLower = statusText.toLowerCase();
                     const isRunning = sLower.startsWith('up') || sLower.includes('running') || sLower === 'active';
                     return (
-                      <tr key={`${svc.service_name || svc.name}-${i}`} className="hover:bg-muted/30 transition-colors">
-                        <td className="py-3 px-6 font-semibold text-slate-200">{svc.service_name || svc.container_name || svc.name}</td>
+                      <tr
+                        key={`${svc.service_name || svc.name}-${i}`}
+                        onClick={() => onSelectService && onSelectService(svc)}
+                        className="hover:bg-slate-800/40 cursor-pointer transition-colors group"
+                      >
+                        <td className="py-3 px-6 font-semibold text-slate-200 group-hover:text-sky-400 transition-colors">
+                          <div className="flex items-center gap-2">
+                            <span>{svc.service_name || svc.container_name || svc.name}</span>
+                          </div>
+                        </td>
                         <td className="py-3 px-6 font-sans text-muted-foreground">{svc.node_name}</td>
                         <td className="py-3 px-6 font-sans">
                           <Badge variant="outline" className="text-[11px] uppercase font-mono">
@@ -95,32 +108,48 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy }) {
                           </div>
                         </td>
                         <td className="py-3 px-6 text-right font-sans">
-                          {isWeb && svc.url ? (
-                            <div className="flex items-center justify-end gap-1.5">
-                              <a
-                                href={svc.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 font-mono text-xs underline underline-offset-2"
-                              >
-                                {svc.url}
-                                <ExternalLink className="w-3 h-3" />
-                              </a>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6 text-muted-foreground hover:text-slate-100"
-                                onClick={() => onCopy && onCopy(svc.url)}
-                              >
-                                <Copy className="w-3 h-3" />
-                              </Button>
-                            </div>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-muted-foreground text-xs font-mono">
-                              <Lock className="w-3 h-3" />
-                              [INTERNAL ONLY]
-                            </span>
-                          )}
+                          <div className="flex items-center justify-end gap-2">
+                            {isWeb && svc.url ? (
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                <a
+                                  href={svc.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 font-mono text-xs underline underline-offset-2"
+                                >
+                                  {svc.url}
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 text-muted-foreground hover:text-slate-100"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (onCopy) onCopy(svc.url);
+                                  }}
+                                >
+                                  <Copy className="w-3 h-3" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-muted-foreground text-xs font-mono mr-2">
+                                <Lock className="w-3 h-3" />
+                                [INTERNAL]
+                              </span>
+                            )}
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="h-6 text-[11px] px-2 gap-1 text-slate-300 group-hover:bg-sky-500/10 group-hover:text-sky-400 group-hover:border group-hover:border-sky-500/20"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (onSelectService) onSelectService(svc);
+                              }}
+                            >
+                              Inspect & Logs
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     );

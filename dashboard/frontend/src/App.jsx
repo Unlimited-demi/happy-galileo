@@ -6,6 +6,7 @@ import { FleetMatrixView } from '@/components/FleetMatrixView';
 import { ServiceDirectoryView } from '@/components/ServiceDirectoryView';
 import { IncidentConsoleView } from '@/components/IncidentConsoleView';
 import { IncidentModal } from '@/components/IncidentModal';
+import { ServiceDetailModal } from '@/components/ServiceDetailModal';
 import { HealthDigestView } from '@/components/HealthDigestView';
 import { AuthModal } from '@/components/AuthModal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -15,6 +16,7 @@ export function App() {
   const [fleet, setFleet] = useState({ nodes: [] });
   const [incidents, setIncidents] = useState([]);
   const [selectedIncident, setSelectedIncident] = useState(null);
+  const [selectedService, setSelectedService] = useState(null);
   const [activeTab, setActiveTab] = useState('fleet');
   const [serviceFilter, setServiceFilter] = useState('all');
   const [toast, setToast] = useState(null);
@@ -216,7 +218,11 @@ export function App() {
         </TabsList>
 
         <TabsContent value="fleet" className="mt-0">
-          <FleetMatrixView nodes={nodes.length > 0 ? nodes : [status]} onCopy={showToast} />
+          <FleetMatrixView
+            nodes={nodes.length > 0 ? nodes : [status]}
+            onCopy={showToast}
+            onSelectService={setSelectedService}
+          />
         </TabsContent>
 
         <TabsContent value="services" className="mt-0">
@@ -225,6 +231,7 @@ export function App() {
             filter={serviceFilter}
             setFilter={setServiceFilter}
             onCopy={showToast}
+            onSelectService={setSelectedService}
           />
         </TabsContent>
 
@@ -248,6 +255,15 @@ export function App() {
         onClose={() => setSelectedIncident(null)}
         onCopy={showToast}
         onDispatch={handleDispatch}
+      />
+
+      {/* Service Detail & Live Log Modal */}
+      <ServiceDetailModal
+        service={selectedService}
+        onClose={() => setSelectedService(null)}
+        onCopy={showToast}
+        onRestartSuccess={fetchData}
+        showToast={showToast}
       />
 
       {/* Auth & RBAC Key Modal */}

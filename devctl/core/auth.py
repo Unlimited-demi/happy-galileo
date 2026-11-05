@@ -92,6 +92,8 @@ class AuthManager:
 
         # 1. Check environment variables
         env_roles = [
+            ("DASHBOARD_API_KEY", ROLE_ADMIN),
+            ("ARA_API_KEY", ROLE_ADMIN),
             ("DASHBOARD_KEY", ROLE_ADMIN),
             ("ADMIN_KEY", ROLE_ADMIN),
             ("APPROVER_KEY", ROLE_APPROVER),

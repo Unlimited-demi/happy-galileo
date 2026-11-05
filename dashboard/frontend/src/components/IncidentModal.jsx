@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { AlertTriangle, FileText, Terminal as TerminalIcon, X, Copy, ShieldCheck } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { AlertTriangle, FileText, ScrollText, X, Copy, ShieldCheck, RefreshCw, Zap } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -9,7 +9,6 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Terminal } from '@/components/Terminal';
 
 export function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
   if (!incident) return null;
@@ -23,7 +22,33 @@ export function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
   const stack = evidence.stack_trace || evidence.logs || 'No stack trace captured.';
 
   const hasProof = !!incident.resolution_proof || !!incident.resolved_at;
-  const [activeTab, setActiveTab] = useState(hasProof ? 'proof' : isClaimed ? 'terminal' : 'dossier');
+  const [activeTab, setActiveTab] = useState(hasProof ? 'proof' : isClaimed ? 'worker' : 'dossier');
+  const [workerLogs, setWorkerLogs] = useState('');
+  const [workerStatus, setWorkerStatus] = useState(null);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+
+  const fetchWorkerLogs = async () => {
+    if (!incident) return;
+    setLoadingLogs(true);
+    try {
+      const key = localStorage.getItem('ara_api_key') || '';
+      const headers = key ? { Authorization: `Bearer ${key}` } : {};
+      const res = await fetch(`/api/incidents/${incident.id}/worker-logs`, { headers });
+      const data = await res.json();
+      setWorkerStatus(data);
+      setWorkerLogs(data.logs || data.output || 'No active worker execution recorded for this incident.');
+    } catch (e) {
+      setWorkerLogs('Failed to fetch worker logs.');
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'worker') {
+      fetchWorkerLogs();
+    }
+  }, [activeTab, incident?.id]);
 
   return (
     <Dialog open={!!incident} onOpenChange={(open) => !open && onClose()}>
@@ -49,7 +74,7 @@ export function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
                 onClick={() => onDispatch && onDispatch(incident.id)}
                 className="h-7 text-xs gap-1.5 font-semibold"
               >
-                <TerminalIcon className="w-3.5 h-3.5" />
+                <Zap className="w-3.5 h-3.5" />
                 {isClaimed ? 'Re-Dispatch' : '⚡ Dispatch OpenCode'}
               </Button>
             )}
@@ -69,9 +94,9 @@ export function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
                 Resolution Proof
               </TabsTrigger>
             )}
-            <TabsTrigger value="terminal" className="gap-2 text-xs">
-              <TerminalIcon className="w-4 h-4" />
-              ⚡ Stream Terminal
+            <TabsTrigger value="worker" className="gap-2 text-xs">
+              <ScrollText className="w-4 h-4" />
+              Worker Audit Log
               {isClaimed && <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />}
             </TabsTrigger>
           </TabsList>
@@ -157,12 +182,44 @@ export function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
             </TabsContent>
           )}
 
-          {/* Tab 2: Interactive XTerm Terminal */}
-          <TabsContent value="terminal" className="pt-2">
-            <Terminal
-              sessionName={`opencode-${incident.id}`}
-              onCopy={onCopy}
-            />
+          {/* Tab 3: Safe Read-Only Worker Audit Log */}
+          <TabsContent value="worker" className="space-y-3 pt-2">
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-muted-foreground flex items-center gap-2">
+                <span>Worker Process: <strong className="font-mono text-slate-200">opencode-{incident.id}</strong></span>
+                {workerStatus?.state && (
+                  <Badge variant="outline" className="text-[10px] uppercase font-mono">
+                    {workerStatus.state}
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={fetchWorkerLogs}
+                  disabled={loadingLogs}
+                  className="h-7 text-xs gap-1"
+                >
+                  <RefreshCw className={`w-3 h-3 ${loadingLogs ? 'animate-spin' : ''}`} />
+                  Refresh
+                </Button>
+                {workerLogs && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onCopy && onCopy(workerLogs)}
+                    className="h-7 text-xs gap-1"
+                  >
+                    <Copy className="w-3 h-3" />
+                    Copy
+                  </Button>
+                )}
+              </div>
+            </div>
+            <div className="rounded-lg bg-zinc-950 border border-border/80 p-4 font-mono text-xs text-slate-200 max-h-80 overflow-y-auto whitespace-pre-wrap">
+              {workerLogs}
+            </div>
           </TabsContent>
         </Tabs>
       </DialogContent>

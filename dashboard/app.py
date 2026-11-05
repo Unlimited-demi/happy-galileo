@@ -186,11 +186,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 path = self.path.split("?")[0]
 
             if path.startswith("/api/") and path != "/api/ask":
-                # By default, read-only status and telemetry (/api/status, /api/fleet/nodes, /api/incidents)
-                # are viewable by anyone visiting the dashboard (unless REQUIRE_AUTH_FOR_STATUS is set to true).
-                # All mutating POST operations (dispatch, approvals, fleet commands, purge) STRICTLY require RBAC.
-                require_auth_for_status = os.environ.get("REQUIRE_AUTH_FOR_STATUS", "false").lower() in ("true", "1", "yes")
-                if require_auth_for_status:
+                # When DASHBOARD_API_KEY, ARA_API_KEY, or REQUIRE_AUTH_FOR_STATUS is set,
+                # all API endpoints strictly require authentication (ROLE_VIEWER or above).
+                # ChatOps endpoint authenticates separately via webhook HMAC or origin header.
+                require_auth = (
+                    bool(os.environ.get("DASHBOARD_API_KEY", "").strip())
+                    or bool(os.environ.get("ARA_API_KEY", "").strip())
+                    or os.environ.get("REQUIRE_AUTH_FOR_STATUS", "false").lower() in ("true", "1", "yes")
+                )
+                if path != "/api/chatops/query" and require_auth:
                     if not self._require_role(ROLE_VIEWER):
                         return
 
@@ -500,38 +504,91 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                     "file_name": img.name,
                                     "url_path": f"/screenshots/{svc_name}/{img.name}",
                                     })
-            elif path.startswith("/api/terminals/") and path.endswith("/stream"):
-                # SSE Terminal Stream: /api/terminals/<session>/stream
-                session_name = path[len("/api/terminals/"): -len("/stream")].strip("/")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-                self.send_header("Cache-Control", "no-cache, no-transform")
-                self.send_header("Connection", "keep-alive")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
+            elif path.startswith("/api/services/") and path.endswith("/logs"):
+                # GET /api/services/<name>/logs?tail=200
+                service_name = path[len("/api/services/"): -len("/logs")].strip("/")
+                qs = parse_qs(parsed.query)
+                tail = int((qs.get("tail") or ["150"])[0])
+                tail = min(max(tail, 10), 1000)
 
-                # Ensure session exists: auto-spawn if not present
-                has_sess = subprocess.run(["tmux", "has-session", "-t", session_name], capture_output=True)
-                if has_sess.returncode != 0:
-                    target_cwd = "/app" if os.path.isdir("/app") else "."
-                    subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", target_cwd, "bash"], check=False)
-                    welcome = f'echo "=== [ARA WORKER CONSOLE: {session_name}] ==="; echo "Physical Workspace: $(pwd)"; echo "Agent Status: Ready (Type commands or run: opencode)"; echo ""'
-                    subprocess.run(["tmux", "send-keys", "-t", session_name, welcome, "C-m"], check=False)
+                docker = DockerSocket()
+                logs_text = docker.get_logs(service_name, tail=tail)
+                self._send_json({
+                    "service_name": service_name,
+                    "tail": tail,
+                    "logs": logs_text or "[No logs recorded or container just started]",
+                    "timestamp": time.time(),
+                })
+                return
 
-                last_output = None
-                try:
-                    for _ in range(60): # Stream for 30s before client auto-reconnects
-                        capture = subprocess.run(["tmux", "capture-pane", "-e", "-p", "-t", session_name], capture_output=True, text=True)
-                        output = capture.stdout if capture.returncode == 0 else f"[Tmux session '{session_name}' initialized]\r\n"
-                        
-                        if output != last_output:
-                            last_output = output
-                            msg = f"data: {json.dumps({'output': output, 'session': session_name})}\n\n"
-                            self.wfile.write(msg.encode("utf-8"))
-                            self.wfile.flush()
-                        time.sleep(0.4)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
+            elif path.startswith("/api/services/") and path.endswith("/inspect"):
+                # GET /api/services/<name>/inspect
+                service_name = path[len("/api/services/"): -len("/inspect")].strip("/")
+                docker = DockerSocket()
+                info = docker.inspect_container(service_name)
+                if not info:
+                    self._send_json({"error": f"Container '{service_name}' not found"}, status=404)
+                    return
+
+                state = info.get("State", {})
+                config = info.get("Config", {})
+                net_settings = info.get("NetworkSettings", {})
+                host_config = info.get("HostConfig", {})
+
+                raw_env = config.get("Env", [])
+                safe_env = []
+                for e in raw_env:
+                    if "=" in e:
+                        k, v = e.split("=", 1)
+                        k_upper = k.upper()
+                        if any(s in k_upper for s in ["KEY", "SECRET", "PASS", "TOKEN", "AUTH", "CRED"]):
+                            safe_env.append(f"{k}=******")
+                        else:
+                            safe_env.append(f"{k}={v}")
+
+                networks = net_settings.get("Networks", {})
+                net_info = {}
+                for n_name, n_data in networks.items():
+                    net_info[n_name] = {
+                        "ip_address": n_data.get("IPAddress", ""),
+                        "gateway": n_data.get("Gateway", ""),
+                        "mac_address": n_data.get("MacAddress", ""),
+                    }
+
+                clean_inspect = {
+                    "id": info.get("Id", "")[:12],
+                    "full_id": info.get("Id", ""),
+                    "name": info.get("Name", "").lstrip("/"),
+                    "created": info.get("Created", ""),
+                    "image": config.get("Image", ""),
+                    "cmd": config.get("Cmd", []),
+                    "entrypoint": config.get("Entrypoint", []),
+                    "state": {
+                        "status": state.get("Status", ""),
+                        "running": state.get("Running", False),
+                        "started_at": state.get("StartedAt", ""),
+                        "finished_at": state.get("FinishedAt", ""),
+                        "exit_code": state.get("ExitCode", 0),
+                        "oom_killed": state.get("OOMKilled", False),
+                        "error": state.get("Error", ""),
+                    },
+                    "restart_count": info.get("RestartCount", 0),
+                    "restart_policy": host_config.get("RestartPolicy", {}).get("Name", ""),
+                    "networks": net_info,
+                    "ports": config.get("ExposedPorts", {}),
+                    "env": safe_env,
+                    "mounts": [
+                        {
+                            "type": m.get("Type", ""),
+                            "source": m.get("Source", ""),
+                            "destination": m.get("Destination", ""),
+                            "mode": m.get("Mode", ""),
+                            "rw": m.get("RW", True),
+                        }
+                        for m in info.get("Mounts", [])
+                    ],
+                }
+                self._send_json({"service": clean_inspect})
                 return
 
             # Serve screenshots directory dynamically
@@ -601,11 +658,24 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     return
 
             # Explicitly reject remote shell input endpoints (Zero RCE Surface)
-            if path.startswith("/api/terminals/") and (path.endswith("/input") or path.endswith("/resize")):
+            if path.startswith("/api/terminals/"):
                 self._send_json({
                     "error": "Terminal keystroke input and remote execution are permanently disabled for security.",
                     "status": "disabled"
                 }, status=403)
+                return
+
+            elif path.startswith("/api/services/") and path.endswith("/restart"):
+                # Requires OPERATOR role or above
+                if not self._require_role(ROLE_OPERATOR):
+                    return
+                service_name = path[len("/api/services/"): -len("/restart")].strip("/")
+                docker = DockerSocket()
+                success = docker.restart_container(service_name)
+                if success:
+                    self._send_json({"success": True, "message": f"Container '{service_name}' restarted successfully."})
+                else:
+                    self._send_json({"success": False, "error": f"Failed to restart container '{service_name}'"}, status=500)
                 return
 
             if path == "/api/telemetry/ingest":

@@ -4,7 +4,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
-export function FleetMatrixView({ nodes, onCopy }) {
+export function FleetMatrixView({ nodes, onCopy, onSelectService }) {
   return (
     <div className="space-y-6">
       {nodes.map((node, idx) => {
@@ -64,10 +64,13 @@ export function FleetMatrixView({ nodes, onCopy }) {
               const memTotalGB = ((mem.total_bytes || 0) / 1073741824).toFixed(1);
               const loadPct = cores > 0 ? ((la['5min'] || 0) / cores) * 100 : 0;
               const loadColor = loadPct > 90 ? 'text-rose-400' : loadPct > 70 ? 'text-amber-400' : 'text-slate-200';
+              const net = sm.network || {};
+              const rx = net.rx_rate_human || (net.rx_kbps ? `${net.rx_kbps} kbps` : null);
+              const tx = net.tx_rate_human || (net.tx_kbps ? `${net.tx_kbps} kbps` : null);
               const hasMetrics = la['5min'] !== undefined || mem.total_bytes > 0;
               if (!hasMetrics) return null;
               return (
-                <div className="flex items-center gap-6 px-6 py-2.5 bg-muted/15 border-b border-border/40 text-xs font-mono">
+                <div className="flex items-center gap-6 px-6 py-2.5 bg-muted/15 border-b border-border/40 text-xs font-mono flex-wrap">
                   <div className="flex items-center gap-2">
                     <Cpu className="w-3.5 h-3.5 text-sky-400" />
                     <span className="text-muted-foreground">CPU</span>
@@ -99,6 +102,14 @@ export function FleetMatrixView({ nodes, onCopy }) {
                           style={{ width: `${Math.min(memPct, 100)}%` }}
                         />
                       </div>
+                    </div>
+                  )}
+                  {(rx || tx) && (
+                    <div className="flex items-center gap-2">
+                      <Activity className="w-3.5 h-3.5 text-sky-400" />
+                      <span className="text-muted-foreground">Network</span>
+                      <span className="text-sky-400 font-semibold">↓ {rx || '0 kbps'}</span>
+                      <span className="text-sky-300 font-semibold">↑ {tx || '0 kbps'}</span>
                     </div>
                   )}
                 </div>
@@ -133,8 +144,14 @@ export function FleetMatrixView({ nodes, onCopy }) {
                         const isRunning = sLower.startsWith('up') || sLower.includes('running') || sLower === 'active';
                         const codebase = svc.codebase || {};
                         return (
-                          <tr key={svc.service_name || svc.name} className="hover:bg-muted/30 transition-colors">
-                            <td className="py-3 px-6 font-semibold text-slate-200">{svc.service_name || svc.container_name || svc.name}</td>
+                          <tr
+                            key={svc.service_name || svc.name}
+                            onClick={() => onSelectService && onSelectService({ ...svc, node_name: node.node_name })}
+                            className="hover:bg-slate-800/40 cursor-pointer transition-colors group"
+                          >
+                            <td className="py-3 px-6 font-semibold text-slate-200 group-hover:text-sky-400 transition-colors">
+                              {svc.service_name || svc.container_name || svc.name}
+                            </td>
                             <td className="py-3 px-6 font-sans">
                               <Badge variant="outline" className="text-[11px] uppercase font-mono">
                                 {svc.container_type || 'service'}
@@ -166,32 +183,48 @@ export function FleetMatrixView({ nodes, onCopy }) {
                               </div>
                             </td>
                             <td className="py-3 px-6 text-right font-sans">
-                              {isWeb && svc.url ? (
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <a
-                                    href={svc.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 font-mono text-xs underline underline-offset-2"
-                                  >
-                                    {svc.url}
-                                    <ExternalLink className="w-3 h-3" />
-                                  </a>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6 text-muted-foreground hover:text-slate-100"
-                                    onClick={() => onCopy && onCopy(svc.url)}
-                                  >
-                                    <Copy className="w-3 h-3" />
-                                  </Button>
-                                </div>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 text-muted-foreground text-xs font-mono">
-                                  <Lock className="w-3 h-3" />
-                                  [INTERNAL ONLY]
-                                </span>
-                              )}
+                              <div className="flex items-center justify-end gap-2">
+                                {isWeb && svc.url ? (
+                                  <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                    <a
+                                      href={svc.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 font-mono text-xs underline underline-offset-2"
+                                    >
+                                      {svc.url}
+                                      <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6 text-muted-foreground hover:text-slate-100"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (onCopy) onCopy(svc.url);
+                                      }}
+                                    >
+                                      <Copy className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-muted-foreground text-xs font-mono mr-1">
+                                    <Lock className="w-3 h-3" />
+                                    [INTERNAL]
+                                  </span>
+                                )}
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  className="h-6 text-[11px] px-2 gap-1 text-slate-300 group-hover:bg-sky-500/10 group-hover:text-sky-400 group-hover:border group-hover:border-sky-500/20"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (onSelectService) onSelectService({ ...svc, node_name: node.node_name });
+                                  }}
+                                >
+                                  Inspect & Logs
+                                </Button>
+                              </div>
                             </td>
                           </tr>
                         );

@@ -15,8 +15,11 @@ class MetricsCollector:
 
     def __init__(self):
         self.last_collection_time = 0
-        self.collection_interval = 30  # Collect every 30 seconds
+        self.collection_interval = 3  # Collect fresh metrics every 3 seconds
         self.cached_metrics = {}
+        self._prev_net_time = 0.0
+        self._prev_rx_bytes = 0
+        self._prev_tx_bytes = 0
 
     def collect_all_metrics(self) -> Dict[str, Any]:
         """Collect both server and container metrics."""
@@ -115,7 +118,8 @@ class MetricsCollector:
         except Exception:
             metrics["disks"] = []
 
-        # Network Connections (TCP connection count)
+        # Network Connections (TCP connection count) & Bandwidth (/proc/net/dev)
+        tcp_connections = 0
         try:
             result = subprocess.run(
                 ["ss", "-t", "-H"],
@@ -125,9 +129,65 @@ class MetricsCollector:
                 timeout=5,
             )
             tcp_connections = len(result.stdout.splitlines()) if result.returncode == 0 else 0
-            metrics["network"] = {"tcp_connections": tcp_connections}
         except Exception:
-            metrics["network"] = {"tcp_connections": 0}
+            tcp_connections = 0
+
+        # Live Bandwidth I/O from /proc/net/dev
+        try:
+            rx_bytes_total = 0
+            tx_bytes_total = 0
+            dev_file = Path("/proc/net/dev")
+            if dev_file.exists():
+                lines = dev_file.read_text(encoding="utf-8", errors="replace").splitlines()
+                for line in lines[2:]:
+                    if ":" in line:
+                        iface, data = line.split(":", 1)
+                        iface = iface.strip()
+                        if iface == "lo":
+                            continue
+                        cols = data.split()
+                        if len(cols) >= 9:
+                            rx_bytes_total += int(cols[0])
+                            tx_bytes_total += int(cols[8])
+
+                curr_time = time.time()
+                rx_kbps = 0.0
+                tx_kbps = 0.0
+                if self._prev_net_time > 0:
+                    dt = curr_time - self._prev_net_time
+                    if dt > 0:
+                        drx = max(0, rx_bytes_total - self._prev_rx_bytes)
+                        dtx = max(0, tx_bytes_total - self._prev_tx_bytes)
+                        rx_kbps = round((drx * 8) / (dt * 1000), 1)
+                        tx_kbps = round((dtx * 8) / (dt * 1000), 1)
+
+                self._prev_net_time = curr_time
+                self._prev_rx_bytes = rx_bytes_total
+                self._prev_tx_bytes = tx_bytes_total
+
+                def _fmt_rate(kbps):
+                    if kbps >= 10000:
+                        return f"{round(kbps / 1000, 1)} Mbps"
+                    elif kbps >= 1000:
+                        return f"{round(kbps / 1000, 2)} Mbps"
+                    elif kbps >= 1:
+                        return f"{int(kbps)} kbps"
+                    else:
+                        return f"{kbps:.1f} kbps"
+
+                metrics["network"] = {
+                    "tcp_connections": tcp_connections,
+                    "rx_bytes_total": rx_bytes_total,
+                    "tx_bytes_total": tx_bytes_total,
+                    "rx_kbps": rx_kbps,
+                    "tx_kbps": tx_kbps,
+                    "rx_rate_human": _fmt_rate(rx_kbps),
+                    "tx_rate_human": _fmt_rate(tx_kbps),
+                }
+            else:
+                metrics["network"] = {"tcp_connections": tcp_connections, "rx_kbps": 0.0, "tx_kbps": 0.0}
+        except Exception:
+            metrics["network"] = {"tcp_connections": tcp_connections, "rx_kbps": 0.0, "tx_kbps": 0.0}
 
         # Uptime
         try:

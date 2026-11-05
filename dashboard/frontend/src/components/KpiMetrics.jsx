@@ -46,15 +46,32 @@ export function KpiMetrics({ totalNodes, totalContainers, totalServices, openInc
             const cores = serverMetrics.cpu_cores || 0;
             const load5 = loadAvg['5min'] || 0;
             const pct = cores > 0 ? ((load5 / cores) * 100) : null;
+            const network = serverMetrics.network || {};
+            const rxRate = network.rx_rate_human || (network.rx_kbps ? `${network.rx_kbps} kbps` : null);
+            const txRate = network.tx_rate_human || (network.tx_kbps ? `${network.tx_kbps} kbps` : null);
+            const memPct = memory.usage_percent !== undefined ? `${Math.round(memory.usage_percent)}%` : null;
+
             return (
               <>
-                <div className="text-2xl font-bold tabular-nums">
-                  {pct !== null ? `${pct.toFixed(0)}%` : '—'}
+                <div className="text-2xl font-bold tabular-nums flex items-baseline justify-between">
+                  <span>{pct !== null ? `${pct.toFixed(0)}%` : '—'}</span>
+                  {memPct && (
+                    <span className="text-xs font-mono font-normal text-muted-foreground">
+                      RAM: <strong className="text-slate-200">{memPct}</strong>
+                    </span>
+                  )}
                 </div>
                 <div className="text-[10px] text-muted-foreground mt-1 font-mono">
                   {loadAvg['1min']?.toFixed(2) || '0'} / {load5.toFixed(2)} / {loadAvg['15min']?.toFixed(2) || '0'}
-                  {cores > 0 ? ` (${cores} cores)` : ''}
+                  {cores > 0 ? ` (${cores} c)` : ''}
                 </div>
+                {(rxRate || txRate) && (
+                  <div className="text-[10px] text-sky-400 mt-1 font-mono flex items-center gap-2">
+                    <span>↓ {rxRate || '0 kbps'}</span>
+                    <span className="text-muted-foreground">•</span>
+                    <span>↑ {txRate || '0 kbps'}</span>
+                  </div>
+                )}
               </>
             );
           })()}

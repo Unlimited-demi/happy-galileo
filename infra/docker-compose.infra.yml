@@ -47,6 +47,9 @@ services:
       - CONCERT_WEBHOOK_SECRET=${CONCERT_WEBHOOK_SECRET:-}
       - CONCERT_TENANT_ID=${CONCERT_TENANT_ID:-suburban}
       - CONCERT_TEAM_ID=${CONCERT_TEAM_ID:-2f808764-78c2-4235-a40a-3cc57346e9fb}
+      - DASHBOARD_API_KEY=${DASHBOARD_API_KEY:-}
+      - ARA_API_KEY=${ARA_API_KEY:-}
+      - REQUIRE_AUTH_FOR_STATUS=${REQUIRE_AUTH_FOR_STATUS:-}
       - PYTHONPATH=/app
     command: python3 /app/dashboard/app.py
     networks:
