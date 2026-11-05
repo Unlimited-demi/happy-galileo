@@ -45,8 +45,12 @@ export function App() {
         if (!sRes.error) {
           setStatus(sRes);
           if (sRes.current_role) setCurrentRole(sRes.current_role);
-        } else if (sRes.error && sRes.error.toLowerCase().includes('auth')) {
-          setCurrentRole('unauthorized');
+        } else if (sRes.error) {
+          const errLower = sRes.error.toLowerCase();
+          if (errLower.includes('auth') || errLower.includes('unauthorized') || errLower.includes('required')) {
+            setCurrentRole('unauthorized');
+            setAuthModalOpen(true);
+          }
         }
       }
       if (fRes && fRes.nodes) setFleet(fRes);
@@ -58,14 +62,21 @@ export function App() {
 
   useEffect(() => {
     // Check if key or token is in URL query parameters
+    let foundKey = false;
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const urlKey = urlParams.get('key') || urlParams.get('token');
       if (urlKey) {
         localStorage.setItem('ara_api_key', urlKey);
         showToast('🔑 API Key detected from URL');
+        foundKey = true;
       }
     } catch (e) {}
+
+    // Auto-prompt AuthModal immediately if no key is present in localStorage or URL
+    if (!foundKey && !localStorage.getItem('ara_api_key')) {
+      setAuthModalOpen(true);
+    }
 
     fetchData();
     const interval = setInterval(fetchData, 4000);
