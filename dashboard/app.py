@@ -104,7 +104,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             auth_mgr = AuthManager()
             if auth_type == 'telemetry':
                 key = self.headers.get('X-Fleet-Key', '')
-                fleet_key_env = os.environ.get('FLEET_KEY', '')
+                if not key:
+                    auth_h = self.headers.get('Authorization', '')
+                    if auth_h.startswith('Bearer '):
+                        key = auth_h[7:].strip()
+                fleet_key_env = os.environ.get('FLEET_KEY', 'default-fleet-key')
                 if fleet_key_env and key and secrets.compare_digest(fleet_key_env, key):
                     return True
                 return auth_mgr.validate_telemetry_key(key)
@@ -641,7 +645,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             path = parsed.path
 
             # Strictly require authentication on ALL API POST routes
-            if path == "/api/telemetry/ingest":
+            if path in ["/api/telemetry/ingest", "/api/telemetry/heartbeat"]:
                 if not self._check_auth(auth_type='telemetry'):
                     self._send_json({"error": "Unauthorized telemetry key"}, status=401)
                     return
@@ -685,7 +689,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     self._send_json({"success": False, "error": f"Failed to restart container '{service_name}'"}, status=500)
                 return
 
-            if path == "/api/telemetry/ingest":
+            if path in ["/api/telemetry/ingest", "/api/telemetry/heartbeat"]:
                 content_length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
                 payload = json.loads(body) if body else {}
