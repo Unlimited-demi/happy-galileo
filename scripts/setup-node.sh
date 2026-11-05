@@ -215,11 +215,17 @@ if [ -f "package.json" ]; then
   npx playwright install chromium 2>/dev/null || true
 fi
 
-# Install OpenCode for autonomous remediation
-if ! command -v opencode &> /dev/null; then
-  echo "[*] Installing OpenCode CLI..."
-  npm install -g opencode-ai 2>/dev/null || npm install -g @opencode/cli 2>/dev/null || echo "[!] OpenCode not found in npm. Install manually."
+# Install OpenCode CLI for autonomous remediation
+echo "[*] Installing / Upgrading OpenCode CLI..."
+curl -fsSL https://opencode.ai/install | bash || npm install -g opencode-ai 2>/dev/null || true
+if [ -f "/root/.opencode/bin/opencode" ]; then
+  ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode
+  ln -sf /root/.opencode/bin/opencode /usr/bin/opencode
+elif [ -f "${HOME}/.opencode/bin/opencode" ]; then
+  ln -sf "${HOME}/.opencode/bin/opencode" /usr/local/bin/opencode 2>/dev/null || true
+  ln -sf "${HOME}/.opencode/bin/opencode" /usr/bin/opencode 2>/dev/null || true
 fi
+
 
 # ── Step 5: Docker network ──
 echo "[5/8] Creating internal Docker network 'dev-net'..."

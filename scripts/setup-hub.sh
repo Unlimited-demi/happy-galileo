@@ -95,9 +95,15 @@ if [ -f "package.json" ]; then
 fi
 
 echo "[4/9] Installing OpenCode CLI..."
-if ! command -v opencode &> /dev/null; then
-  npm install -g opencode-ai 2>/dev/null || npm install -g @opencode/cli 2>/dev/null || echo "[!] OpenCode not found in npm. Install manually."
+curl -fsSL https://opencode.ai/install | bash || npm install -g opencode-ai 2>/dev/null || true
+if [ -f "/root/.opencode/bin/opencode" ]; then
+  ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode
+  ln -sf /root/.opencode/bin/opencode /usr/bin/opencode
+elif [ -f "${HOME}/.opencode/bin/opencode" ]; then
+  ln -sf "${HOME}/.opencode/bin/opencode" /usr/local/bin/opencode 2>/dev/null || true
+  ln -sf "${HOME}/.opencode/bin/opencode" /usr/bin/opencode 2>/dev/null || true
 fi
+
 
 echo "[5/9] Creating internal Docker network 'dev-net'..."
 docker network inspect dev-net &>/dev/null || docker network create dev-net
