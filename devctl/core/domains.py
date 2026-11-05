@@ -459,6 +459,12 @@ class DomainRegistry:
                             if self._is_valid_public_domain(token):
                                 domains[c_name] = {"domain": token, "source": f"label:{key}"}
 
+                SYSTEM_PATHS = {
+                    "/", "/root", "/var", "/usr", "/etc", "/proc", "/sys", "/dev",
+                    "/tmp", "/bin", "/sbin", "/lib", "/lib64", "/var/lib", "/var/run",
+                    "/var/log", "/var/lib/docker"
+                }
+
                 # C. Project Workspace Configuration Files
                 # Check compose labels, or check bind mounts to locate workspace directory
                 candidate_workspaces = []
@@ -471,8 +477,11 @@ class DomainRegistry:
                     if m.get("Type") == "bind":
                         src_path = Path(m.get("Source", ""))
                         if src_path.exists():
-                            # Add parent dirs up to 3 levels
+                            # Add parent dirs up to 3 levels, excluding root/system dirs
                             for p in [src_path] + list(src_path.parents)[:3]:
+                                p_str = str(p).rstrip("/\\")
+                                if p_str in SYSTEM_PATHS or any(p_str.startswith(sp + "/") for sp in ["/proc", "/sys", "/dev", "/var/lib/docker"]):
+                                    continue
                                 if p.is_dir() and any((p / f).exists() for f in ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml", ".env", "mailcow.conf"]):
                                     if p not in candidate_workspaces:
                                         candidate_workspaces.append(p)
@@ -538,13 +547,23 @@ class DomainRegistry:
                     src = mount.get("Source", "")
                     if not src or not os.path.exists(src):
                         continue
+                    src_str = str(src).rstrip("/\\")
+                    if src_str in SYSTEM_PATHS or any(src_str.startswith(sp + "/") for sp in ["/proc", "/sys", "/dev", "/var/lib/docker"]):
+                        continue
+                    if any(ignored in src_str for ignored in ["node_modules", ".git", "site-packages", "/overlay2", "/volumes"]):
+                        continue
 
-                    # If mount is a directory, scan config files inside it
+                    # If mount is a directory, scan config files shallowly (never recursive=True)
                     config_files = []
                     if os.path.isdir(src):
-                        config_files = glob.glob(f"{src}/**/*.conf", recursive=True) + glob.glob(f"{src}/**/*.caddy", recursive=True) + glob.glob(f"{src}/**/Caddyfile", recursive=True)
+                        try:
+                            for pat in ["*.conf", "*.caddy", "Caddyfile", "*/*.conf", "*/*.caddy", "*/Caddyfile"]:
+                                config_files.extend(glob.glob(os.path.join(src, pat)))
+                        except Exception:
+                            pass
                     elif os.path.isfile(src):
-                        config_files = [src]
+                        if any(src.endswith(ext) for ext in [".conf", ".caddy", "Caddyfile", ".yaml", ".yml", ".env"]):
+                            config_files = [src]
 
                     for cf in config_files[:10]:
                         try:
