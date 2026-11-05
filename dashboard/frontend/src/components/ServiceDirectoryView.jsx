@@ -74,10 +74,14 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy, onSelec
                   </tr>
                 ) : (
                   filteredServices.map((svc, i) => {
-                    const isWeb = svc.container_type === 'web' || !!svc.url;
+                    const serviceUrl = svc.url || (svc.access_url && svc.access_url !== '[INTERNAL]' ? svc.access_url : null);
+                    const isWeb = svc.container_type === 'web' || svc.service_type === 'web' || !!serviceUrl;
                     const statusText = svc.container_status || svc.status || 'UNKNOWN';
                     const sLower = statusText.toLowerCase();
                     const isRunning = sLower.startsWith('up') || sLower.includes('running') || sLower === 'active';
+                    const gitUrl = svc.git_url || (svc.git_repo ? (svc.git_repo.startsWith('http') ? svc.git_repo : `https://github.com/${svc.git_repo}`) : null);
+                    const gitRepoName = svc.repo_name || svc.git_repo || (gitUrl ? gitUrl.split('/').slice(-2).join('/') : null);
+                    const gitBranch = svc.git_branch || 'main';
                     return (
                       <tr
                         key={`${svc.service_name || svc.name}-${i}`}
@@ -109,17 +113,17 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy, onSelec
                           </div>
                         </td>
                         <td className="py-3 px-6 font-sans">
-                          {svc.git_url ? (
+                          {gitUrl ? (
                             <a
-                              href={svc.git_url}
+                              href={gitUrl}
                               target="_blank"
                               rel="noreferrer"
                               onClick={(e) => e.stopPropagation()}
                               className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-slate-800/80 hover:bg-slate-700/80 text-sky-400 hover:text-sky-300 border border-slate-700/60 font-mono text-[11px] transition-colors max-w-[160px] truncate"
-                              title={`${svc.git_url} (${svc.git_branch || 'master'})`}
+                              title={`${gitUrl} (${gitBranch})`}
                             >
                               <Github className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                              <span className="truncate">{svc.repo_name || svc.git_url.split('/').slice(-2).join('/')}</span>
+                              <span className="truncate">{gitRepoName}</span>
                               <ExternalLink className="w-2.5 h-2.5 text-slate-400 shrink-0" />
                             </a>
                           ) : (
@@ -128,15 +132,15 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy, onSelec
                         </td>
                         <td className="py-3 px-6 text-right font-sans">
                           <div className="flex items-center justify-end gap-2">
-                            {isWeb && svc.url ? (
+                            {isWeb && serviceUrl ? (
                               <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                                 <a
-                                  href={svc.url}
+                                  href={serviceUrl}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 font-mono text-xs underline underline-offset-2"
                                 >
-                                  {svc.url}
+                                  {serviceUrl}
                                   <ExternalLink className="w-3 h-3" />
                                 </a>
                                 <Button
@@ -145,7 +149,7 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy, onSelec
                                   className="h-6 w-6 text-muted-foreground hover:text-slate-100"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (onCopy) onCopy(svc.url);
+                                    if (onCopy) onCopy(serviceUrl);
                                   }}
                                 >
                                   <Copy className="w-3 h-3" />

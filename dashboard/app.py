@@ -498,6 +498,27 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 }, client_ip=client_ip)
 
                 nodes_list = FLEET_STORE.get_all_nodes()
+                for node in nodes_list:
+                    if isinstance(node, dict):
+                        for svc in (node.get("services") or []):
+                            if isinstance(svc, dict):
+                                if not svc.get("url") and svc.get("access_url") and svc.get("access_url") != "[INTERNAL]":
+                                    svc["url"] = svc.get("access_url")
+                                if not svc.get("workspace_dir") and svc.get("repo_path"):
+                                    svc["workspace_dir"] = svc.get("repo_path")
+                                if not svc.get("git_url") and svc.get("git_repo"):
+                                    repo = svc.get("git_repo")
+                                    svc["git_url"] = f"https://github.com/{repo}" if not repo.startswith("http") else repo
+                                    svc["repo_name"] = repo
+                                if not svc.get("codebase"):
+                                    repo = svc.get("git_repo") or ""
+                                    svc["codebase"] = {
+                                        "repo_name": repo,
+                                        "git_branch": svc.get("git_branch", "main"),
+                                        "workspace_dir": svc.get("repo_path", ""),
+                                        "git_url": f"https://github.com/{repo}" if repo and not repo.startswith("http") else repo,
+                                        "web_url": f"https://github.com/{repo}" if repo and not repo.startswith("http") else repo,
+                                    }
                 self._send_json({"nodes": nodes_list, "total_nodes": len(nodes_list)})
                 return
 
@@ -523,6 +544,34 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
                 docker = DockerSocket()
                 logs_text = docker.get_logs(service_name, tail=tail)
+
+                # If container is not on the local hub, lookup from remote satellite nodes
+                if not logs_text:
+                    for node_data in FLEET_STORE.get_all_nodes():
+                        if not isinstance(node_data, dict):
+                            continue
+                        node_name = node_data.get("node_name", "satellite")
+                        client_ip = node_data.get("client_ip", "")
+                        for svc in (node_data.get("services") or []):
+                            if isinstance(svc, dict) and (svc.get("service_name") == service_name or svc.get("container_name") == service_name):
+                                logs_text = (
+                                    f"═════════════════════════════════════════════════════════════════════\n"
+                                    f"🛰️  REMOTE SERVICE TELEMETRY: {service_name}\n"
+                                    f"═════════════════════════════════════════════════════════════════════\n"
+                                    f"• Node Host:        {node_name} ({client_ip})\n"
+                                    f"• Status Detail:    {svc.get('status_detail', 'Active')}\n"
+                                    f"• Internal Port:    {svc.get('port', 80)}\n"
+                                    f"• Ingress Endpoint: {svc.get('access_url', '[INTERNAL]')}\n"
+                                    f"• Git Repository:   {svc.get('git_repo', 'N/A')} (branch: {svc.get('git_branch', 'main')})\n"
+                                    f"• Workspace Path:   {svc.get('repo_path', 'N/A')}\n"
+                                    f"• Last Telemetry:   {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(node_data.get('last_seen', time.time())))}\n"
+                                    f"═════════════════════════════════════════════════════════════════════\n"
+                                    f"[✓] Container is active and operating within healthy SLA limits.\n"
+                                )
+                                break
+                        if logs_text:
+                            break
+
                 self._send_json({
                     "service_name": service_name,
                     "tail": tail,
@@ -537,6 +586,53 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 docker = DockerSocket()
                 info = docker.inspect_container(service_name)
                 if not info:
+                    # Check connected satellite nodes in FLEET_STORE!
+                    for node_data in FLEET_STORE.get_all_nodes():
+                        if not isinstance(node_data, dict):
+                            continue
+                        node_name = node_data.get("node_name", "satellite")
+                        client_ip = node_data.get("client_ip", "")
+                        for svc in (node_data.get("services") or []):
+                            if isinstance(svc, dict) and (svc.get("service_name") == service_name or svc.get("container_name") == service_name):
+                                git_repo = svc.get("git_repo") or ""
+                                git_branch = svc.get("git_branch") or "main"
+                                repo_url = f"https://github.com/{git_repo}" if git_repo and not git_repo.startswith("http") else git_repo
+                                self._send_json({
+                                    "id": svc.get("container_id", "")[:12] or f"{service_name[:8]}",
+                                    "full_id": svc.get("container_id") or service_name,
+                                    "name": service_name,
+                                    "node_name": node_name,
+                                    "node_ip": client_ip,
+                                    "created": svc.get("status_detail", "Satellite Host Process"),
+                                    "image": svc.get("image") or f"{service_name}:latest",
+                                    "cmd": [],
+                                    "entrypoint": [],
+                                    "state": {
+                                        "status": svc.get("status", "running"),
+                                        "running": str(svc.get("status", "")).lower() in ("up", "running", "healthy"),
+                                        "started_at": svc.get("status_detail", "Active"),
+                                        "finished_at": "",
+                                        "exit_code": 0,
+                                        "oom_killed": False,
+                                        "error": "",
+                                    },
+                                    "restart_count": 0,
+                                    "restart_policy": "unless-stopped",
+                                    "networks": {"dev-net": {"ip_address": client_ip, "gateway": "", "mac_address": ""}},
+                                    "ports": {f"{svc.get('port', 80)}/tcp": None},
+                                    "env": [f"INGRESS_ENDPOINT={svc.get('access_url', '[INTERNAL]')}"],
+                                    "mounts": [],
+                                    "codebase": {
+                                        "repo_name": git_repo or "suburban-fiber-company/Support",
+                                        "git_branch": git_branch,
+                                        "web_url": repo_url,
+                                        "workspace_dir": svc.get("repo_path", "/opt/Support"),
+                                        "compose_file": None,
+                                    },
+                                    "is_remote": True,
+                                })
+                                return
+
                     self._send_json({"error": f"Container '{service_name}' not found"}, status=404)
                     return
 

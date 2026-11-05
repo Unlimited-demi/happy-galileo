@@ -46,10 +46,10 @@ export function ServiceDetailModal({ service, onClose, onCopy, onRestartSuccess,
   const [copiedLogs, setCopiedLogs] = useState(false);
 
   const codebase = inspectData?.codebase || {
-    web_url: service.git_url,
-    repo_name: service.repo_name,
-    git_branch: service.git_branch || 'master',
-    workspace_dir: null,
+    web_url: service.git_url || (service.git_repo ? (service.git_repo.startsWith('http') ? service.git_repo : `https://github.com/${service.git_repo}`) : null),
+    repo_name: service.repo_name || service.git_repo,
+    git_branch: service.git_branch || 'main',
+    workspace_dir: service.workspace_dir || service.repo_path || null,
     compose_file: null,
   };
 

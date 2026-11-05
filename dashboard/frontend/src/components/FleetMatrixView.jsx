@@ -55,19 +55,21 @@ export function FleetMatrixView({ nodes, onCopy, onSelectService }) {
 
             {/* Node Metrics Bar */}
             {(() => {
-              const sm = node.metrics?.server || {};
+              const rawMetrics = node.metrics || {};
+              const sm = rawMetrics.server || rawMetrics;
               const la = sm.load_average || {};
-              const cores = sm.cpu_cores || 0;
+              const cores = sm.cpu_cores || (sm.cpu_count || 0);
               const mem = sm.memory || {};
-              const memPct = mem.usage_percent || (mem.total_bytes ? ((mem.used_bytes / mem.total_bytes) * 100) : 0);
-              const memUsedGB = ((mem.used_bytes || 0) / 1073741824).toFixed(1);
-              const memTotalGB = ((mem.total_bytes || 0) / 1073741824).toFixed(1);
-              const loadPct = cores > 0 ? ((la['5min'] || 0) / cores) * 100 : 0;
+              const cpuPct = rawMetrics.cpu_percent !== undefined ? Number(rawMetrics.cpu_percent) : (sm.cpu_percent !== undefined ? Number(sm.cpu_percent) : (cores > 0 && la['5min'] !== undefined ? ((la['5min'] || 0) / cores) * 100 : null));
+              const memPct = rawMetrics.memory_percent !== undefined ? Number(rawMetrics.memory_percent) : (sm.memory_percent !== undefined ? Number(sm.memory_percent) : (mem.usage_percent || (mem.total_bytes ? ((mem.used_bytes / mem.total_bytes) * 100) : null)));
+              const memUsedGB = mem.used_bytes ? ((mem.used_bytes || 0) / 1073741824).toFixed(1) : null;
+              const memTotalGB = mem.total_bytes ? ((mem.total_bytes || 0) / 1073741824).toFixed(1) : null;
+              const loadPct = cpuPct !== null ? cpuPct : (cores > 0 ? ((la['5min'] || 0) / cores) * 100 : 0);
               const loadColor = loadPct > 90 ? 'text-rose-400' : loadPct > 70 ? 'text-amber-400' : 'text-slate-200';
               const net = sm.network || {};
-              const rx = net.rx_rate_human || (net.rx_kbps ? `${net.rx_kbps} kbps` : null);
-              const tx = net.tx_rate_human || (net.tx_kbps ? `${net.tx_kbps} kbps` : null);
-              const hasMetrics = la['5min'] !== undefined || mem.total_bytes > 0;
+              const rx = net.rx_rate_human || (net.rx_kbps ? `${net.rx_kbps} kbps` : (rawMetrics.net_rx_kbps ? `${rawMetrics.net_rx_kbps} kbps` : null));
+              const tx = net.tx_rate_human || (net.tx_kbps ? `${net.tx_kbps} kbps` : (rawMetrics.net_tx_kbps ? `${rawMetrics.net_tx_kbps} kbps` : null));
+              const hasMetrics = cpuPct !== null || memPct !== null || la['5min'] !== undefined;
               if (!hasMetrics) return null;
               return (
                 <div className="flex items-center gap-6 px-6 py-2.5 bg-muted/15 border-b border-border/40 text-xs font-mono flex-wrap">
@@ -138,11 +140,15 @@ export function FleetMatrixView({ nodes, onCopy, onSelectService }) {
                       </tr>
                     ) : (
                       services.map((svc) => {
-                        const isWeb = svc.container_type === 'web' || !!svc.url;
+                        const serviceUrl = svc.url || (svc.access_url && svc.access_url !== '[INTERNAL]' ? svc.access_url : null);
+                        const isWeb = svc.container_type === 'web' || svc.service_type === 'web' || !!serviceUrl;
                         const statusText = svc.container_status || svc.status || 'UNKNOWN';
                         const sLower = statusText.toLowerCase();
                         const isRunning = sLower.startsWith('up') || sLower.includes('running') || sLower === 'active';
                         const codebase = svc.codebase || {};
+                        const repoDir = codebase.workspace_dir || svc.workspace_dir || svc.repo_path || '[host container]';
+                        const gitUrl = codebase.git_url || (svc.git_repo ? (svc.git_repo.startsWith('http') ? svc.git_repo : `https://github.com/${svc.git_repo}`) : null);
+                        const gitBranch = codebase.git_branch || svc.git_branch || 'main';
                         return (
                           <tr
                             key={svc.service_name || svc.name}
@@ -154,7 +160,7 @@ export function FleetMatrixView({ nodes, onCopy, onSelectService }) {
                             </td>
                             <td className="py-3 px-6 font-sans">
                               <Badge variant="outline" className="text-[11px] uppercase font-mono">
-                                {svc.container_type || 'service'}
+                                {svc.container_type || svc.service_type || 'service'}
                               </Badge>
                             </td>
                             <td className="py-3 px-6 text-muted-foreground">{svc.port || '—'}</td>
@@ -172,27 +178,34 @@ export function FleetMatrixView({ nodes, onCopy, onSelectService }) {
                             </td>
                             <td className="py-3 px-6 text-muted-foreground truncate max-w-xs">
                               <div className="flex flex-col gap-0.5">
-                                <span className="text-slate-300 truncate" title={codebase.workspace_dir}>
-                                  {codebase.workspace_dir || svc.workspace_dir || '[host container]'}
+                                <span className="text-slate-300 truncate" title={repoDir}>
+                                  {repoDir}
                                 </span>
-                                {codebase.git_url && (
-                                  <span className="text-[10px] text-sky-500/80 truncate">
-                                    {codebase.git_url.replace('https://github.com/', 'gh:')}
-                                  </span>
+                                {gitUrl && (
+                                  <a
+                                    href={gitUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 transition-colors truncate"
+                                  >
+                                    <Github className="w-3 h-3 shrink-0" />
+                                    <span>{gitUrl.replace('https://github.com/', '')} ({gitBranch})</span>
+                                  </a>
                                 )}
                               </div>
                             </td>
                             <td className="py-3 px-6 text-right font-sans">
                               <div className="flex items-center justify-end gap-2">
-                                {isWeb && svc.url ? (
+                                {isWeb && serviceUrl ? (
                                   <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                                     <a
-                                      href={svc.url}
+                                      href={serviceUrl}
                                       target="_blank"
                                       rel="noreferrer"
                                       className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 font-mono text-xs underline underline-offset-2"
                                     >
-                                      {svc.url}
+                                      {serviceUrl}
                                       <ExternalLink className="w-3 h-3" />
                                     </a>
                                     <Button
@@ -201,7 +214,7 @@ export function FleetMatrixView({ nodes, onCopy, onSelectService }) {
                                       className="h-6 w-6 text-muted-foreground hover:text-slate-100"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        if (onCopy) onCopy(svc.url);
+                                        if (onCopy) onCopy(serviceUrl);
                                       }}
                                     >
                                       <Copy className="w-3 h-3" />
