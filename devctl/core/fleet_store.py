@@ -83,6 +83,12 @@ class FleetStore:
         """Record or update a node heartbeat payload."""
         node_name = payload.get("node_name", "unknown")
         now = time.time()
+        # Prefer payload-specified real server IP if client_ip is internal docker bridge
+        if client_ip.startswith("172.") or client_ip.startswith("127.") or client_ip == "localhost":
+            real_ip = payload.get("server_ip") or payload.get("node_ip") or payload.get("public_ip")
+            if real_ip:
+                client_ip = real_ip.strip()
+
         payload_copy = dict(payload)
         payload_copy["received_at"] = now
         payload_copy["client_ip"] = client_ip

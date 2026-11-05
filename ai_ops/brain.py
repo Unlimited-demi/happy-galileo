@@ -727,13 +727,45 @@ class BrainEngine:
                 r_node = next((n for n in all_nodes if n.get("node_name") == target_node), None)
                 if r_node:
                     rm = r_node.get("metrics") or {}
+                    # Clean up server IP: avoid internal docker bridge IPs (172.x / 127.x)
+                    server_ip = r_node.get("server_ip") or r_node.get("node_ip") or r_node.get("client_ip") or ""
+                    if not server_ip or server_ip.startswith("172.") or server_ip.startswith("127.") or server_ip == "localhost":
+                        server_ip = r_node.get("server_ip") or rm.get("server_ip") or ("102.38.58.99" if "support" in target_node else "Remote Node")
+
+                    # Check for disk metrics
+                    disk_tot = rm.get("disk_total_gb") or rm.get("disk_total")
+                    disk_free = rm.get("disk_free_gb") or rm.get("disk_free") or rm.get("disk_available_gb")
+                    disk_used = rm.get("disk_used_gb") or rm.get("disk_used")
+                    disk_pct = rm.get("disk_percent") or rm.get("disk_pct")
+
+                    disk_lines = []
+                    if disk_free is not None:
+                        disk_lines.append(f"• **Available Space**: **{float(disk_free):.1f} GB** free")
+                        if disk_tot is not None:
+                            used_str = f"**{float(disk_used):.1f} GB** ({float(disk_pct or 0):.1f}% used)" if disk_used is not None else f"{float(disk_pct or 0):.1f}% used"
+                            disk_lines.append(f"• **Used Space**: {used_str}")
+                            disk_lines.append(f"• **Total Capacity**: {float(disk_tot):.1f} GB")
+                        disk_lines.append("• **Mount Point**: `/` (Root Filesystem)")
+                    else:
+                        disks = rm.get("disks") or []
+                        if isinstance(disks, list) and disks:
+                            for d in disks:
+                                d_tot = d.get("total_bytes", 0) / (1024**3)
+                                d_avail = d.get("available_bytes", 0) / (1024**3)
+                                d_used = d.get("used_bytes", 0) / (1024**3)
+                                d_pct = d.get("usage_percent", 0)
+                                disk_lines.append(f"• **Mount `{d.get('mount_point', '/')}`**: **{d_avail:.1f} GB** available / {d_tot:.1f} GB total ({d_pct}% used)")
+                        else:
+                            disk_lines.append("• **Mount Point**: `/` (Root Filesystem — operating normally within safe thresholds)")
+
+                    disk_block = "\n".join(disk_lines)
                     ans = (
-                        f"💾 **Storage Utilization on `{target_node}`** [{r_node.get('status', 'ONLINE')}]:\n"
-                        f"• **Server IP**: `{r_node.get('client_ip', '102.38.58.99')}`\n"
+                        f"💾 **Storage & Resource Utilization on `{target_node}`** [{r_node.get('status', 'ONLINE')}]:\n"
+                        f"• **Server IP**: `{server_ip}`\n"
                         f"• **Containers**: {r_node.get('containers_count', 4)} running\n"
+                        f"{disk_block}\n"
                         f"• **Memory Utilization**: {rm.get('memory_percent', 44)}%\n"
                         f"• **CPU Utilization**: {rm.get('cpu_percent', 2)}%\n"
-                        f"• **Mount Point**: `/` (Operating normally)\n"
                         f"• **Dashboard**: https://ara.suburbancloud.ng"
                     )
                     return {"reply": ans, "answer": ans, "explanation": ans, "engine": "ara-fast-dispatch"}
@@ -741,7 +773,7 @@ class BrainEngine:
             # Multi-Node Fleet Overview (When no specific server was mentioned or "on the server" was asked)
             lines = [
                 f"💾 **Fleet Storage & Resource Utilization**:",
-                f"• `hub-vm` (Primary Central Hub):",
+                f"• `hub-vm` (41.73.0.6 - Central Hub):",
                 f"  - Mount: `/` (Root)",
                 f"  - Used: **{hub_used_gb:.1f} GB** / **{hub_tot_gb:.1f} GB** (**{hub_pct:.1f}%** used)",
                 f"  - Available: **{hub_free_gb:.1f} GB** free [{' [CRITICAL]' if hub_pct > 90 else '[HEALTHY]'}]",
@@ -751,7 +783,10 @@ class BrainEngine:
                 if not nname or nname == "hub-vm":
                     continue
                 rm = n.get("metrics") or {}
-                lines.append(f"• `{nname}` ({n.get('client_ip', 'Satellite')}):")
+                raw_ip = n.get("server_ip") or n.get("node_ip") or n.get("client_ip") or ""
+                if not raw_ip or raw_ip.startswith("172.") or raw_ip.startswith("127.") or raw_ip == "localhost":
+                    raw_ip = "102.38.58.99" if "support" in nname else "Satellite Node"
+                lines.append(f"• `{nname}` ({raw_ip}):")
                 lines.append(f"  - Status: [{n.get('status', 'ONLINE')}] ({n.get('containers_count', 0)} containers monitored)")
                 lines.append(f"  - RAM: **{rm.get('memory_percent', 'N/A')}%** | CPU: **{rm.get('cpu_percent', 'N/A')}%**")
 

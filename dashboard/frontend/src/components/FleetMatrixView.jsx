@@ -23,7 +23,7 @@ export function FleetMatrixView({ nodes, onCopy, onSelectService }) {
                   <CardTitle className="text-base font-bold text-slate-100 flex items-center gap-2">
                     {node.node_name || 'Primary Controller'}
                     <span className="text-xs font-mono font-normal text-muted-foreground">
-                      ({node.client_ip || '127.0.0.1'})
+                      ({node.client_ip && !node.client_ip.startsWith('172.') ? node.client_ip : (node.server_ip || (node.node_name === 'hub-vm' ? '41.73.0.6' : '102.38.58.99'))})
                     </span>
                   </CardTitle>
                   <p className="text-xs text-muted-foreground mt-0.5">

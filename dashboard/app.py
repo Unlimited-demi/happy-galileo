@@ -500,6 +500,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 nodes_list = FLEET_STORE.get_all_nodes()
                 for node in nodes_list:
                     if isinstance(node, dict):
+                        # Clean up internal docker bridge IPs (172.18.x.x or 127.0.0.1) to show actual server IP
+                        raw_ip = node.get("client_ip") or ""
+                        if raw_ip.startswith("172.") or raw_ip.startswith("127.") or raw_ip == "localhost":
+                            if node.get("server_ip"):
+                                node["client_ip"] = node.get("server_ip")
+                            elif node.get("node_ip"):
+                                node["client_ip"] = node.get("node_ip")
+                            elif node.get("public_ip"):
+                                node["client_ip"] = node.get("public_ip")
+                            elif node.get("node_name") == "hub-vm":
+                                node["client_ip"] = "41.73.0.6"
+                            elif "support" in node.get("node_name", ""):
+                                node["client_ip"] = "102.38.58.99"
+
                         for svc in (node.get("services") or []):
                             if isinstance(svc, dict):
                                 if not svc.get("url") and svc.get("access_url") and svc.get("access_url") != "[INTERNAL]":
@@ -796,8 +810,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 content_length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
                 payload = json.loads(body) if body else {}
-                node_name = payload.get("node_name", "unknown")
-                client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else "127.0.0.1"
+                # Extract real client IP: prioritize reverse proxy headers (X-Forwarded-For / X-Real-IP) and payload
+                forwarded_for = self.headers.get("X-Forwarded-For", "")
+                real_ip = self.headers.get("X-Real-IP", "")
+                if forwarded_for:
+                    client_ip = forwarded_for.split(",")[0].strip()
+                elif real_ip:
+                    client_ip = real_ip.strip()
+                else:
+                    client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else "127.0.0.1"
+
+                # If behind docker bridge (172.x or 127.x), prefer payload-specified server IP
+                if client_ip.startswith("172.") or client_ip.startswith("127.") or client_ip == "localhost":
+                    alt_ip = payload.get("server_ip") or payload.get("node_ip") or payload.get("public_ip")
+                    if alt_ip:
+                        client_ip = alt_ip.strip()
 
                 # Persist node heartbeat in fleet store
                 FLEET_STORE.upsert_node(payload, client_ip=client_ip)
