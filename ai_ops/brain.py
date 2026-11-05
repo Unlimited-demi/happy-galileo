@@ -159,7 +159,9 @@ class BrainEngine:
             )
 
         return {
+            "reply": answer,
             "answer": answer,
+            "explanation": answer,
             "context_data": context_data,
             "engine": "ara-brain-local",
         }

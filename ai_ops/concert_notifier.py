@@ -65,6 +65,7 @@ class ConcertNotifier:
             "occurrences": occurrences,
             "rollback_id": rollback_id,
             "pr_url": incident.get("pr_url"),
+            "recommended_action": incident.get("recommended_action") or "Automated remediation evaluated under Level 1 Playbook.",
         }
 
         # 3. Post to Concert incoming webhook
@@ -72,6 +73,7 @@ class ConcertNotifier:
         headers = {
             "Content-Type": "application/json",
             "User-Agent": "ARA-Fleet-Agent/2.0",
+            "X-Tenant-Id": os.environ.get("CONCERT_TENANT_ID", "suburban"),
         }
         if self.webhook_secret:
             headers["X-Webhook-Secret"] = self.webhook_secret
