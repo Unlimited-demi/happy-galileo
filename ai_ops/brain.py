@@ -115,7 +115,7 @@ class BrainEngine:
         q_lower = query.lower()
         context_data: Dict[str, Any] = {}
 
-        # 1. Tool dispatch based on query intent
+        # 1. Tool dispatch based on query intent (Action -> Observation)
         if any(w in q_lower for w in ["node", "fleet", "servers", "vm-"]):
             if fleet_store and hasattr(fleet_store, "get_all_nodes"):
                 nodes = fleet_store.get_all_nodes()
@@ -126,23 +126,91 @@ class BrainEngine:
             else:
                 context_data["nodes"] = [{"name": "Local Workstation", "status": "ONLINE"}]
 
+        if any(w in q_lower for w in ["memory", "cpu", "metric", "trend", "latency", "usage", "health"]):
+            try:
+                from ai_ops.metrics_store import MetricsStore
+                store = MetricsStore()
+                target_svc = (thread_context or {}).get("service_name") or ""
+                # Attempt to extract service from query if not in context
+                if not target_svc:
+                    for s in store.services():
+                        if s.lower() in q_lower:
+                            target_svc = s
+                            break
+                if target_svc:
+                    context_data["service_trends"] = store.detect_trends(target_svc, window_hours=2.0)
+                else:
+                    context_data["fleet_trends"] = store.trend_summary(window_hours=2.0)
+            except Exception:
+                pass
+
         if any(w in q_lower for w in ["rollback", "revert", "undo"]):
             from ai_ops.policy_engine import RollbackLedger
             ledger = RollbackLedger()
             recent_rb = ledger.list_recent_actions(limit=5)
             context_data["recent_rollbacks"] = recent_rb
 
-        if any(w in q_lower for w in ["incident", "error", "alert"]):
+        if any(w in q_lower for w in ["incident", "error", "alert", "why", "down", "fail"]):
             from devctl.core.incident_bus import IncidentBus
             bus = IncidentBus()
             open_inc = bus.list_incidents(only_open=True)
             context_data["open_incidents"] = [
-                {"id": i.get("id"), "service": i.get("service_name"), "severity": i.get("severity")}
+                {"id": i.get("id"), "service": i.get("service_name"), "severity": i.get("severity"), "title": i.get("title")}
                 for i in open_inc[:5]
             ]
 
-        # 2. Formulate response
-        if context_data.get("nodes"):
+        # 2. ReAct Synthesis: Let the Local CPU Model reason over observations if online
+        if self.is_available() and context_data:
+            try:
+                system_prompt = (
+                    "You are ARA, an autonomous site reliability engineer for Suburban & Legend. "
+                    "Analyze the user's question alongside the live system observations retrieved from telemetry. "
+                    "Reason over the observations and formulate a concise, professional, technical response (under 3 sentences). "
+                    "Never invent data. State exact metrics, node names, and operational statuses truthfully."
+                )
+                user_prompt = (
+                    f"Engineer Query: {query}\n"
+                    f"Live System Observations: {json.dumps(context_data)}\n\n"
+                    "Provide your SRE assessment and answer:"
+                )
+                payload = {
+                    "model": self.model,
+                    "prompt": f"{system_prompt}\n\n{user_prompt}",
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.1,
+                        "num_predict": 120,
+                        "num_thread": 2,
+                    }
+                }
+                data = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(
+                    f"{self.brain_url}/api/generate",
+                    data=data,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=8.0) as resp:
+                    if resp.status == 200:
+                        res_json = json.loads(resp.read().decode("utf-8"))
+                        llm_reply = res_json.get("response", "").strip()
+                        if llm_reply:
+                            return {
+                                "reply": llm_reply,
+                                "answer": llm_reply,
+                                "explanation": llm_reply,
+                                "context_data": context_data,
+                                "engine": f"ara-brain-react-{self.model}",
+                            }
+            except Exception:
+                pass  # Fall back to deterministic synthesis
+
+        # 3. Deterministic Fallback Synthesis (Fast, reliable, zero-latency)
+        if context_data.get("service_trends"):
+            st = context_data["service_trends"]
+            mem_trend = st.get("mem_growth_pct", 0)
+            answer = f"📊 Performance trends: Memory growth is {mem_trend:+.1f}%, latency drift: {st.get('latency_factor', 1.0):.2f}x. Status: {st.get('verdict', 'STABLE')}."
+        elif context_data.get("nodes"):
             node_summaries = ", ".join(f"{n['name']} ({n['status']})" for n in context_data["nodes"])
             answer = f"🌐 Fleet status: {node_summaries}."
         elif context_data.get("recent_rollbacks"):
@@ -155,7 +223,7 @@ class BrainEngine:
             answer = (
                 f"Hello! I am ARA, your autonomous SRE companion. "
                 f"All systems are currently being monitored. "
-                f"You can ask me about fleet nodes, active incidents, or recent rollbacks."
+                f"You can ask me about fleet nodes, active incidents, memory trends, or rollbacks."
             )
 
         return {
