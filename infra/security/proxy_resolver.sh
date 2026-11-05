@@ -61,45 +61,17 @@ fi
 # Check for Mailcow Dockerized Nginx
 MAILCOW_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i 'nginx.*mailcow\|mailcow.*nginx' | head -n 1 || true)
 
+# Detect Docker bridge IP (don't hardcode 172.17.0.1)
+DOCKER_BRIDGE_IP=$(ip -4 addr show docker0 2>/dev/null | grep -oP 'inet \K[\d.]+' || echo "172.17.0.1")
+SNIPPET_FILE="${PROJECT_DIR}/infra/upstream_proxy_${BASE_DOMAIN//./_}.conf"
+
 if [ -n "$MAILCOW_CONTAINER" ]; then
     echo "⚡ Detected active Mailcow Nginx container: ${MAILCOW_CONTAINER}"
-    echo "   Configuring Mailcow to forward *.${BASE_DOMAIN} to devctl Caddy..."
-
-    # Find Mailcow directory from docker inspect mounts
-    MAILCOW_NGINX_CONF_DIR=""
-    POSSIBLE_DIRS=(
-        "/opt/mailcow-dockerized/data/conf/nginx"
-        "/opt/mailcow/data/conf/nginx"
-        "/root/mailcow-dockerized/data/conf/nginx"
-    )
-    for d in "${POSSIBLE_DIRS[@]}"; do
-        if [ -d "$d" ]; then
-            MAILCOW_NGINX_CONF_DIR="$d"
-            break
-        fi
-    done
-
-    if [ -z "$MAILCOW_NGINX_CONF_DIR" ]; then
-        # Inspect container mount for /etc/nginx/conf.d
-        DETECTED_DIR=$(docker inspect "$MAILCOW_CONTAINER" 2>/dev/null | grep -B 2 -A 5 '"Destination": "/etc/nginx/conf.d"' | grep '"Source"' | head -n 1 | awk -F'"' '{print $4}' || true)
-        if [ -n "$DETECTED_DIR" ] && [ -d "$DETECTED_DIR" ]; then
-            MAILCOW_NGINX_CONF_DIR="$DETECTED_DIR"
-        fi
-    fi
-
-    if [ -n "$MAILCOW_NGINX_CONF_DIR" ]; then
-        CONF_FILE="${MAILCOW_NGINX_CONF_DIR}/devctl_wildcard.conf"
-
-        # Skip if this exact config already exists (idempotent)
-        if [ -f "$CONF_FILE" ] && grep -q "${BASE_DOMAIN}" "$CONF_FILE"; then
-            echo "[✓] Mailcow wildcard route for ${BASE_DOMAIN} already exists."
-        else
-            # Detect Docker bridge IP (don't hardcode 172.17.0.1)
-            DOCKER_BRIDGE_IP=$(ip -4 addr show docker0 2>/dev/null | grep -oP 'inet \K[\d.]+' || echo "172.17.0.1")
-
-            cat << EOF > "$CONF_FILE"
-# Auto-configured by devctl for wildcard development routing
-# Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ) — Domain: ${BASE_DOMAIN}
+    cat << EOF > "$SNIPPET_FILE"
+# ==============================================================================
+# Upstream routing snippet for Mailcow Nginx: *.${BASE_DOMAIN}
+# Place in: /opt/mailcow-dockerized/data/conf/nginx/devctl_wildcard.conf
+# ==============================================================================
 server {
     listen 80;
     server_name *.${BASE_DOMAIN} ${BASE_DOMAIN};
@@ -116,18 +88,12 @@ server {
     }
 }
 EOF
-            echo "[*] Wrote Mailcow Nginx route to: ${CONF_FILE}"
-            # Test config before reloading (don't restart blindly)
-            if docker exec "$MAILCOW_CONTAINER" nginx -t 2>/dev/null; then
-                docker exec "$MAILCOW_CONTAINER" nginx -s reload 2>/dev/null
-                echo "[✓] Mailcow Nginx reloaded successfully."
-            else
-                echo "[!] WARNING: Nginx config test failed. Removing devctl config to avoid breaking Mailcow."
-                rm -f "$CONF_FILE"
-                echo "    Please check ${CONF_FILE} manually."
-            fi
-        fi
-    fi
+    echo ""
+    echo "📋 [MANUAL INSTRUCTION] Generated Mailcow Nginx snippet: ${SNIPPET_FILE}"
+    echo "   To activate routing to internal Caddy (port ${INTERNAL_PORT}), run:"
+    echo "     cp ${SNIPPET_FILE} /opt/mailcow-dockerized/data/conf/nginx/devctl_wildcard.conf"
+    echo "     docker exec ${MAILCOW_CONTAINER} nginx -t && docker exec ${MAILCOW_CONTAINER} nginx -s reload"
+    echo ""
 fi
 
 # Check for existing third-party Caddy container (e.g. agentic-ccs-caddy)
@@ -151,46 +117,28 @@ if [ -n "$OTHER_CADDY_CONTAINER" ]; then
     fi
 
     if [ -n "$HOST_CADDYFILE" ] && [ -f "$HOST_CADDYFILE" ]; then
-        if ! grep -q "${BASE_DOMAIN}" "$HOST_CADDYFILE"; then
-            echo "" >> "$HOST_CADDYFILE"
-            cat << EOF >> "$HOST_CADDYFILE"
-
-# Auto-configured by devctl for wildcard development routing
+    cat << EOF > "$SNIPPET_FILE"
+# ==============================================================================
+# Upstream routing snippet for Caddy: *.${BASE_DOMAIN}
+# Add this block to your Caddyfile:
+# ==============================================================================
 *.${BASE_DOMAIN}, ${BASE_DOMAIN} {
     reverse_proxy 172.17.0.1:${INTERNAL_PORT}
 }
 EOF
-            echo "[*] Appended wildcard route to ${HOST_CADDYFILE}"
-            docker exec "$OTHER_CADDY_CONTAINER" caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || docker restart "$OTHER_CADDY_CONTAINER" 2>/dev/null || true
-            echo "[✓] ${OTHER_CADDY_CONTAINER} reloaded successfully."
-        else
-            echo "[✓] Wildcard route already present in ${HOST_CADDYFILE}"
-        fi
-    else
-        echo "[!] Notice: Please add '*.${BASE_DOMAIN} { reverse_proxy 172.17.0.1:${INTERNAL_PORT} }' to your ${OTHER_CADDY_CONTAINER} Caddyfile."
-    fi
+    echo ""
+    echo "📋 [MANUAL INSTRUCTION] Generated Caddy snippet: ${SNIPPET_FILE}"
+    echo "   Add the snippet contents to your Caddyfile (${OTHER_CADDYFILE:-/etc/caddy/Caddyfile})"
+    echo "   Then reload: docker exec ${OTHER_CADDY_CONTAINER} caddy reload --config /etc/caddy/Caddyfile"
+    echo ""
 
 elif [ "$HAS_NGINX" = true ]; then
     echo "⚡ Detected active Nginx on host."
-    echo "   Configuring Nginx reverse-proxy pass to Caddy on port ${INTERNAL_PORT}..."
-
-    NGINX_CONF_DIR="/etc/nginx/conf.d"
-    mkdir -p "$NGINX_CONF_DIR"
-    NGINX_CONF_FILE="${NGINX_CONF_DIR}/devctl_${BASE_DOMAIN//./_}.conf"
-
-    # Skip if this exact domain config already exists
-    if [ -f "$NGINX_CONF_FILE" ] && grep -q "${BASE_DOMAIN}" "$NGINX_CONF_FILE"; then
-        echo "[✓] Nginx wildcard route for ${BASE_DOMAIN} already exists."
-    else
-        # Back up any existing file before overwriting
-        if [ -f "$NGINX_CONF_FILE" ]; then
-            cp "$NGINX_CONF_FILE" "${NGINX_CONF_FILE}.bak.$(date +%s)"
-            echo "[*] Backed up existing config to ${NGINX_CONF_FILE}.bak.*"
-        fi
-
-        cat << EOF > "$NGINX_CONF_FILE"
-# Auto-generated by devctl for wildcard routing
-# Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ) — Domain: ${BASE_DOMAIN}
+    cat << EOF > "$SNIPPET_FILE"
+# ==============================================================================
+# Upstream routing snippet for Host Nginx: *.${BASE_DOMAIN}
+# Place in: /etc/nginx/conf.d/devctl_${BASE_DOMAIN//./_}.conf
+# ==============================================================================
 server {
     listen 80;
     server_name *.${BASE_DOMAIN} ${BASE_DOMAIN};
@@ -207,39 +155,30 @@ server {
     }
 }
 EOF
-        if nginx -t &>/dev/null; then
-            nginx -s reload
-            echo "[✓] Nginx reloaded. Routing *.${BASE_DOMAIN} -> 127.0.0.1:${INTERNAL_PORT}"
-        else
-            echo "[!] WARNING: Nginx config test failed. Removing devctl config to avoid breaking existing setup."
-            rm -f "$NGINX_CONF_FILE"
-            echo "    Please add the route manually to /etc/nginx/conf.d/."
-        fi
-    fi
+    echo ""
+    echo "📋 [MANUAL INSTRUCTION] Generated Nginx snippet: ${SNIPPET_FILE}"
+    echo "   To activate routing to internal Caddy (port ${INTERNAL_PORT}), run:"
+    echo "     cp ${SNIPPET_FILE} /etc/nginx/conf.d/devctl_${BASE_DOMAIN//./_}.conf"
+    echo "     nginx -t && systemctl reload nginx"
+    echo ""
 
 elif [ "$HAS_HOST_CADDY" = true ]; then
     echo "⚡ Detected active Caddy on host."
-    echo "   Configuring host Caddy to route *.${BASE_DOMAIN} to internal port ${INTERNAL_PORT}..."
-    if [ -d "/etc/caddy/conf.d" ]; then
-        cat << EOF > "/etc/caddy/conf.d/devctl_${BASE_DOMAIN//./_}.caddy"
+    cat << EOF > "$SNIPPET_FILE"
+# ==============================================================================
+# Upstream routing snippet for Host Caddy: *.${BASE_DOMAIN}
+# Add this block to /etc/caddy/Caddyfile:
+# ==============================================================================
 *.${BASE_DOMAIN}, ${BASE_DOMAIN} {
     reverse_proxy 127.0.0.1:${INTERNAL_PORT}
 }
 EOF
-        systemctl reload caddy 2>/dev/null || true
-        echo "[✓] Host Caddy reloaded successfully."
-    elif [ -f "/etc/caddy/Caddyfile" ]; then
-        if ! grep -q "${BASE_DOMAIN}" "/etc/caddy/Caddyfile"; then
-            cat << EOF >> "/etc/caddy/Caddyfile"
+    echo ""
+    echo "📋 [MANUAL INSTRUCTION] Generated Host Caddy snippet: ${SNIPPET_FILE}"
+    echo "   Add the snippet contents to /etc/caddy/Caddyfile"
+    echo "   Then reload: systemctl reload caddy"
+    echo ""
 
-# Auto-configured by devctl for wildcard routing
-*.${BASE_DOMAIN}, ${BASE_DOMAIN} {
-    reverse_proxy 127.0.0.1:${INTERNAL_PORT}
-}
-EOF
-            systemctl reload caddy 2>/dev/null || true
-            echo "[✓] Added wildcard route to /etc/caddy/Caddyfile and reloaded."
-        fi
-    fi
+fi
 
 fi
