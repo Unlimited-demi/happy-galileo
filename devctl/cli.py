@@ -224,13 +224,16 @@ def cmd_discover(args):
 def cmd_heartbeat(args):
     """Manually send and test telemetry heartbeat to Central Hub."""
     from ai_ops.telemetry import FleetTelemetryStreamer
-    hub_url = args.hub or os.environ.get("CENTRAL_HUB_URL", "https://status.dev-server.datakrib.com/api/telemetry/ingest")
-    node_name = args.name or os.environ.get("NODE_NAME", "vm-02")
+    from devctl.commands.node import NodeManager
+    saved = NodeManager.get_node_config()
+    hub_url = args.hub or saved.get("hub_url") or os.environ.get("CENTRAL_HUB_URL", "https://status.dev-server.datakrib.com/api/telemetry/ingest")
+    node_name = args.name or saved.get("node_name") or os.environ.get("NODE_NAME", "vm-02")
+    fleet_key = saved.get("fleet_key") or os.environ.get("FLEET_KEY", "default-fleet-key")
     
     print(f"[*] Sending telemetry heartbeat to: {hub_url}")
     print(f"    Node Name: {node_name}")
     
-    streamer = FleetTelemetryStreamer(hub_url=hub_url, node_name=node_name)
+    streamer = FleetTelemetryStreamer(hub_url=hub_url, node_name=node_name, fleet_key=fleet_key)
     success = streamer.send_heartbeat()
     
     if success:
@@ -976,9 +979,24 @@ def cmd_deploy(args):
     print()
 
 
+def cmd_node(args):
+    """Satellite node commands (enroll, status)."""
+    from devctl.commands.node import cmd_node_enroll, cmd_node_status
+
+    subcmd = getattr(args, "node_cmd", "status") or "status"
+    if subcmd == "enroll":
+        cmd_node_enroll(args)
+    elif subcmd == "status":
+        cmd_node_status(args)
+    else:
+        print(f"[✗] Unknown node command: {subcmd}")
+        sys.exit(1)
+
+
 def cmd_fleet(args):
-    """Fleet management commands (list, prune)."""
+    """Fleet management commands (list, prune, enroll)."""
     from devctl.commands.fleet import cmd_fleet_list, cmd_fleet_prune
+    from devctl.commands.node import cmd_node_enroll
 
     subcmd = args.fleet_cmd or "list"
 
@@ -986,6 +1004,8 @@ def cmd_fleet(args):
         cmd_fleet_list(args)
     elif subcmd == "prune":
         cmd_fleet_prune(args)
+    elif subcmd == "enroll":
+        cmd_node_enroll(args)
     else:
         print(f"[✗] Unknown fleet command: {subcmd}")
         sys.exit(1)
@@ -1107,9 +1127,28 @@ def main():
 
     # fleet
     p_fleet = subparsers.add_parser("fleet", help="Fleet management commands")
-    p_fleet.add_argument("fleet_cmd", nargs="?", choices=["list", "prune"], default="list")
+    p_fleet.add_argument("fleet_cmd", nargs="?", choices=["list", "prune", "enroll"], default="list")
+    p_fleet.add_argument("hub_url", nargs="?", help="Hub URL for fleet enroll")
+    p_fleet.add_argument("--token", "-t", help="Shared fleet key / token for enrollment")
+    p_fleet.add_argument("--name", "-n", help="Node name for enrollment")
+    p_fleet.add_argument("--insecure", action="store_true", help="Skip TLS verification during enrollment")
+    p_fleet.add_argument("--dry-run", action="store_true", help="Dry run enrollment handshake")
     p_fleet.add_argument("--max-age", type=int, help="Max age in minutes for pruning (default: 60)")
     p_fleet.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
+    # node
+    p_node = subparsers.add_parser("node", help="Satellite node management and fleet enrollment")
+    p_node_sub = p_node.add_subparsers(dest="node_cmd", help="Node subcommands")
+
+    p_node_enroll = p_node_sub.add_parser("enroll", help="Enroll this node into Central Fleet Hub")
+    p_node_enroll.add_argument("hub_url", help="Central Hub URL (e.g. https://status.dev-server.datakrib.com)")
+    p_node_enroll.add_argument("--token", "-t", help="Shared fleet authentication key / token")
+    p_node_enroll.add_argument("--name", "-n", help="Node name override (defaults to local hostname)")
+    p_node_enroll.add_argument("--insecure", action="store_true", help="Skip TLS certificate verification")
+    p_node_enroll.add_argument("--dry-run", action="store_true", help="Test handshake with hub without persisting credentials")
+
+    p_node_status = p_node_sub.add_parser("status", help="Inspect local node enrollment and live hub connection status")
+    p_node_status.add_argument("--no-ping", action="store_true", help="Skip live heartbeat ping to hub")
 
     # discover
     p_discover = subparsers.add_parser("discover", help="Auto-discover running Docker containers and index them into devctl")
@@ -1147,6 +1186,7 @@ def main():
         "merge": cmd_merge,
         "deploy": cmd_deploy,
         "fleet": cmd_fleet,
+        "node": cmd_node,
         "doctor": cmd_doctor,
     }
 
