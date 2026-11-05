@@ -127,6 +127,14 @@ class AIOpsDaemon:
         # Start telemetry streamer thread
         self.telemetry.start_background()
 
+        # Immediate container discovery if no services are currently indexed
+        if not self.registry.list_services():
+            try:
+                print("[*] Performing initial container discovery...")
+                self.registry.discover_and_index_containers(use_ai=False)
+            except Exception as e:
+                print(f"[!] Initial container discovery failed: {e}")
+
         while self.running:
             try:
                 # Periodically auto-discover new containers every 4 cycles

@@ -54,18 +54,35 @@ class DockerManager:
         if check["success"]:
             return True
         create = self._run_docker(["network", "create", self.network_name])
-        return create["success"]
+        if create["success"]:
+            return True
+        # Fallback to DockerSocket (e.g. inside python:3.11-slim container)
+        try:
+            from ai_ops.docker_socket import DockerSocket
+            ds = DockerSocket()
+            net = ds._request("GET", f"/networks/{self.network_name}")
+            if isinstance(net, dict) and "Id" in net:
+                return True
+            created = ds._request("POST", "/networks/create", body=json.dumps({"Name": self.network_name, "Driver": "bridge"}).encode())
+            return isinstance(created, dict) and "Id" in created
+        except Exception:
+            return False
 
     def inspect_container(self, container_name_or_id: str) -> Optional[Dict[str, Any]]:
         """Inspect a Docker container and return structured JSON."""
         res = self._run_docker(["inspect", container_name_or_id])
-        if not res["success"] or not res["stdout"]:
-            return None
+        if res["success"] and res["stdout"]:
+            try:
+                data = json.loads(res["stdout"])
+                if isinstance(data, list) and len(data) > 0:
+                    return data[0]
+            except Exception:
+                pass
+        # Fallback to DockerSocket if docker CLI is absent or failed
         try:
-            data = json.loads(res["stdout"])
-            if isinstance(data, list) and len(data) > 0:
-                return data[0]
-            return None
+            from ai_ops.docker_socket import DockerSocket
+            ds = DockerSocket()
+            return ds.inspect_container(container_name_or_id)
         except Exception:
             return None
 
@@ -81,7 +98,14 @@ class DockerManager:
             return True
 
         res = self._run_docker(["network", "connect", self.network_name, container_name])
-        return res["success"]
+        if res["success"]:
+            return True
+        # Fallback to DockerSocket
+        try:
+            from ai_ops.docker_socket import DockerSocket
+            return DockerSocket().connect_to_network(container_name, self.network_name)
+        except Exception:
+            return False
 
     def detect_ports(self, container_name: str) -> List[int]:
         """Detect open/exposed internal ports for a container."""
@@ -292,30 +316,61 @@ class DockerManager:
             args.append("-a")
 
         res = self._run_docker(args)
-        if not res["success"] or not res["stdout"]:
-            return []
+        if res["success"] and res["stdout"]:
+            containers = []
+            for line in res["stdout"].splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    c_data = json.loads(line)
+                    containers.append(c_data)
+                except Exception:
+                    pass
+            if containers:
+                return containers
 
-        containers = []
-        for line in res["stdout"].splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                c_data = json.loads(line)
-                containers.append(c_data)
-            except Exception:
-                pass
-        return containers
+        # Fallback to DockerSocket
+        try:
+            from ai_ops.docker_socket import DockerSocket
+            ds = DockerSocket()
+            raw_containers = ds.list_containers(all_containers=not only_running)
+            containers = []
+            for c in raw_containers:
+                names = [n.lstrip("/") for n in c.get("Names", [])]
+                name = names[0] if names else c.get("Id", "")[:12]
+                containers.append({
+                    "ID": c.get("Id", "")[:12],
+                    "Names": name,
+                    "Image": c.get("Image", ""),
+                    "Status": c.get("Status", ""),
+                    "State": c.get("State", ""),
+                })
+            return containers
+        except Exception:
+            return []
 
     def get_logs(self, container_name: str, tail: int = 100) -> str:
         """Fetch recent container logs."""
         res = self._run_docker(["logs", "--tail", str(tail), container_name])
-        return res["stdout"] or res["stderr"]
+        if res["success"] and (res["stdout"] or res["stderr"]):
+            return res["stdout"] or res["stderr"]
+        try:
+            from ai_ops.docker_socket import DockerSocket
+            return DockerSocket().get_logs(container_name, tail=tail)
+        except Exception:
+            return res.get("stderr", "")
 
     def restart_container(self, container_name: str) -> bool:
         """Restart a container safely."""
         res = self._run_docker(["restart", container_name])
-        return res["success"]
+        if res["success"]:
+            return True
+        try:
+            from ai_ops.docker_socket import DockerSocket
+            return DockerSocket().restart_container(container_name)
+        except Exception:
+            return False
 
     def is_running(self, container_name: str) -> bool:
         """Check if container is running."""

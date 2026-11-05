@@ -366,3 +366,54 @@ class TestAIContainerInference:
         assert DomainRegistry._is_valid_public_domain("127.0.0.1") is False
         assert DomainRegistry._is_valid_public_domain("redis.lan") is False
 
+    def test_docker_socket_fallback_when_cli_missing(self):
+        from devctl.core.docker_mgr import DockerManager
+        mgr = DockerManager()
+
+        # Mock _run_docker to simulate missing docker binary (FileNotFoundError in container)
+        mgr._run_docker = MagicMock(return_value={"success": False, "returncode": -1, "stdout": "", "stderr": "docker executable not found"})
+
+        mock_socket = MagicMock()
+        mock_socket.inspect_container.return_value = {
+            "State": {"Running": True},
+            "Config": {"Image": "my-app:1.0", "ExposedPorts": {"3000/tcp": {}}},
+            "NetworkSettings": {"Ports": {"3000/tcp": None}},
+        }
+        mock_socket.list_containers.return_value = [
+            {"Id": "abcdef123456", "Names": ["/my-app"], "Image": "my-app:1.0", "Status": "Up 2 hours", "State": "running"}
+        ]
+        mock_socket.get_logs.return_value = "Server listening on 3000"
+        mock_socket.restart_container.return_value = True
+
+        with patch("ai_ops.docker_socket.DockerSocket", return_value=mock_socket):
+            info = mgr.inspect_container("my-app")
+            assert info is not None
+            assert info["State"]["Running"] is True
+
+            containers = mgr.list_containers()
+            assert len(containers) == 1
+            assert containers[0]["Names"] == "my-app"
+
+            logs = mgr.get_logs("my-app")
+            assert logs == "Server listening on 3000"
+
+            restarted = mgr.restart_container("my-app")
+            assert restarted is True
+
+    def test_domain_registry_discovery_docker_socket_fallback(self):
+        from devctl.core.domains import DomainRegistry
+        reg = DomainRegistry()
+
+        mock_socket = MagicMock()
+        mock_socket.list_containers.return_value = [
+            {"Id": "111122223333", "Names": ["/devctl-dashboard"], "Image": "python:3.11-slim"},
+            {"Id": "444455556666", "Names": ["/caddy"], "Image": "caddy:2-alpine"},
+        ]
+
+        with patch("subprocess.run", side_effect=FileNotFoundError("docker not found")), \
+             patch("ai_ops.docker_socket.DockerSocket", return_value=mock_socket):
+            names = reg.get_running_container_names()
+            assert "devctl-dashboard" in names
+            assert "caddy" in names
+
+

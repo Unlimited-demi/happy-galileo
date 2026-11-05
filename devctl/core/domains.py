@@ -220,6 +220,34 @@ class DomainRegistry:
         match = re.match(r'^(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$', candidate)
         return bool(match)
 
+    def get_running_container_names(self) -> List[str]:
+        """Get running container names via Docker CLI or DockerSocket fallback."""
+        import subprocess
+        try:
+            cmd = ["docker", "ps", "--format", "{{.Names}}"]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=False)
+            if res.returncode == 0:
+                names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
+                if names:
+                    return names
+        except Exception:
+            pass
+
+        # Fallback to DockerSocket (for containers running python:3.11-slim)
+        try:
+            from ai_ops.docker_socket import DockerSocket
+            ds = DockerSocket()
+            containers = ds.list_containers(all_containers=False)
+            names = []
+            for c in containers:
+                for name in c.get("Names", []):
+                    clean_n = name.lstrip("/")
+                    if clean_n:
+                        names.append(clean_n)
+            return names
+        except Exception:
+            return []
+
     def detect_existing_domains(self) -> Dict[str, Dict[str, str]]:
         """
         Universal Heuristic Domain & Reverse Proxy Resolver.
@@ -367,14 +395,12 @@ class DomainRegistry:
 
         # ── 2. Universal Container Introspection ──
         try:
-            cmd = ["docker", "ps", "--format", "{{.Names}}"]
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=False)
-            if res.returncode != 0:
+            all_containers = self.get_running_container_names()
+            if not all_containers:
                 return domains
 
             from devctl.core.docker_mgr import DockerManager
             docker_mgr = DockerManager()
-            all_containers = [n.strip() for n in res.stdout.splitlines() if n.strip()]
 
             for c_name in all_containers:
                 info = docker_mgr.inspect_container(c_name)
@@ -601,13 +627,8 @@ class DomainRegistry:
         discovered = []
 
         # ── Step 0: Get all running container names ──
-        try:
-            cmd = ["docker", "ps", "--format", "{{.Names}}"]
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=False)
-            if res.returncode != 0:
-                return []
-            running_names = set(n.strip() for n in res.stdout.splitlines() if n.strip())
-        except Exception:
+        running_names = set(self.get_running_container_names())
+        if not running_names:
             return []
 
         # ── Step 1: Purge stale or force-refresh auto-discovered state entries ──

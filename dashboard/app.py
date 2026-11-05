@@ -179,6 +179,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
                 # Query Docker containers quickly via DockerSocket
                 containers = docker.list_containers(all_containers=True) or []
+
+                # Auto-discover containers if registry is currently empty but containers are running
+                if not services and containers:
+                    try:
+                        registry.discover_and_index_containers(use_ai=False)
+                        services = registry.list_services() or []
+                    except Exception as e:
+                        print(f"[!] Auto-discovery on /api/status error: {e}")
                 container_map = {}
                 for c in containers:
                     if not isinstance(c, dict):
@@ -356,23 +364,67 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
 
             elif path == "/api/fleet/nodes":
-                # Ensure local node is always populated
+                # Ensure local node is always kept fresh with live containers and services
                 local_node_name = os.environ.get("NODE_NAME", "vm-01 (Primary)")
-                if not FLEET_STORE.get_node(local_node_name):
-                    registry = DomainRegistry()
-                    docker = DockerSocket()
-                    bus = IncidentBus()
-                    services = registry.list_services() or []
-                    containers = docker.list_containers(all_containers=True) or []
-                    client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else "127.0.0.1"
-                    FLEET_STORE.upsert_node({
-                        "node_name": local_node_name,
-                        "base_domain": Config.BASE_DOMAIN,
-                        "containers_count": len(containers),
-                        "services_count": len(services),
-                        "services": services,
-                        "open_incidents_count": len(bus.list_incidents(only_open=True)),
-                    }, client_ip=client_ip)
+                registry = DomainRegistry()
+                docker = DockerSocket()
+                bus = IncidentBus()
+                services = registry.list_services() or []
+                containers = docker.list_containers(all_containers=True) or []
+
+                if not services and containers:
+                    try:
+                        registry.discover_and_index_containers(use_ai=False)
+                        services = registry.list_services() or []
+                    except Exception:
+                        pass
+
+                # Build container map for service versions and status
+                container_map = {}
+                for c in containers:
+                    if not isinstance(c, dict):
+                        continue
+                    c_img = c.get("Image", "unknown") or "unknown"
+                    v_tag = c_img.split(":")[-1] if ":" in c_img else "latest"
+                    for n in (c.get("Names") or []):
+                        clean_n = n.lstrip("/")
+                        container_map[clean_n] = {
+                            "image": c_img,
+                            "version": v_tag,
+                            "status": c.get("Status", "RUNNING") or "RUNNING",
+                            "state": c.get("State", "running") or "running",
+                            "id": str(c.get("Id", "") or "")[:12],
+                        }
+
+                merged_services = []
+                for svc in services:
+                    if not isinstance(svc, dict):
+                        continue
+                    name = svc.get("service_name", "app") or "app"
+                    c_name = svc.get("container_name", name) or name
+                    c_info = container_map.get(c_name, {})
+                    is_running = c_info.get("state") == "running"
+                    merged = {
+                        **svc,
+                        "healthy": is_running,
+                        "status_code": svc.get("status_code", None),
+                        "response_time_ms": svc.get("response_time_ms", None),
+                        "image": c_info.get("image", svc.get("image", "app:latest")),
+                        "version": c_info.get("version", "latest"),
+                        "container_status": c_info.get("status") or ("RUNNING" if is_running else "STOPPED"),
+                        "container_id": c_info.get("id", ""),
+                    }
+                    merged_services.append(merged)
+
+                client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else "127.0.0.1"
+                FLEET_STORE.upsert_node({
+                    "node_name": local_node_name,
+                    "base_domain": Config.BASE_DOMAIN,
+                    "containers_count": len(containers),
+                    "services_count": len(merged_services),
+                    "services": merged_services,
+                    "open_incidents_count": len(bus.list_incidents(only_open=True)),
+                }, client_ip=client_ip)
 
                 nodes_list = FLEET_STORE.get_all_nodes()
                 self._send_json({"nodes": nodes_list, "total_nodes": len(nodes_list)})
@@ -606,6 +658,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     fleet_store=FLEET_STORE
                 )
                 self._send_json(chatops_result)
+                return
+
+            elif path in ("/api/discover", "/api/fleet/discover"):
+                # Trigger manual discovery of all running containers on host
+                registry = DomainRegistry()
+                discovered = registry.discover_and_index_containers(use_ai=False, force=True)
+                self._send_json({
+                    "status": "discovered",
+                    "count": len(discovered),
+                    "services": discovered,
+                })
                 return
 
             elif path == "/api/incidents/purge":
