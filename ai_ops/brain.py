@@ -238,7 +238,11 @@ class BrainEngine:
                 system_prompt = (
                     "You are ARA, an autonomous site reliability engineer for Suburban & Legend. "
                     "Analyze the user's question alongside the live system observations retrieved from telemetry. "
-                    "Reason over the observations and formulate a concise, professional, technical response (under 3 sentences). "
+                    "Formulate a structured, professional, and visually soothing response in Markdown. "
+                    "Use bold section headers and clean bullet points for readability. "
+                    "Format statuses in uppercase brackets like [ONLINE], [STABLE], [CRITICAL], [HIGH], [WARN]. "
+                    "Format service names and IDs in backticks like `service-name`. "
+                    "Never dump long run-on sentences or pipe-separated lists. "
                     "Never invent data. State exact metrics, node names, and operational statuses truthfully."
                 )
                 user_prompt = (
@@ -291,36 +295,45 @@ class BrainEngine:
             lat_factor = st.get("latency_factor", 1.0)
             warnings = st.get("warnings", [])
 
-            lines = [f"📊 Diagnostics for `{svc}`:"]
+            lines = [f"📊 **Diagnostics for `{svc}`**:"]
             if warnings:
-                lines.append("  • " + " | ".join(f"[{w.get('type')}] {w.get('detail', '')}" for w in warnings))
+                for w in warnings:
+                    lines.append(f"• ⚠️ [{w.get('type')}] {w.get('detail', '')}")
             else:
-                lines.append(f"  • ✅ No anomalies detected across {st.get('samples', 0)} telemetry samples.")
-            lines.append(f"  • Memory Drift: {mem_trend:+.1f}% | Latency Drift: {lat_factor:.2f}x | Verdict: {st.get('verdict', 'STABLE')}")
+                lines.append(f"• ✅ No anomalies detected across {st.get('samples', 0)} telemetry samples.")
+            lines.append(f"• **Memory Drift**: `{mem_trend:+.1f}%` | **Latency Drift**: `{lat_factor:.2f}x` | **Status**: [{st.get('verdict', 'STABLE')}]")
 
             svc_incidents = [i for i in context_data.get("open_incidents", []) if i.get("service") == svc]
             if svc_incidents:
+                lines.append(f"\n🚨 **Correlated Incidents ({len(svc_incidents)})**:")
                 for inc in svc_incidents:
                     summary = inc.get("summary") or inc.get("title")
-                    lines.append(f"  • 🚨 Active Incident `{inc['id']}` [{inc.get('severity', 'HIGH')}]: {summary}")
+                    lines.append(f"• `{inc['id']}` [{inc.get('severity', 'HIGH')}]: {summary}")
             parts.append("\n".join(lines))
 
-        # Fleet / Nodes part
+        # Fleet / Nodes part (if general status or fleet asked)
         if context_data.get("nodes") and not target_svc:
-            node_summaries = ", ".join(f"{n['name']} ({n.get('status', 'ONLINE')})" for n in context_data["nodes"])
-            parts.append(f"🌐 Nodes: {node_summaries}")
+            nodes = context_data["nodes"]
+            online_count = sum(1 for n in nodes if n.get("status") == "ONLINE")
+            node_lines = [f"🌐 **Fleet Status** ({online_count}/{len(nodes)} Online):"]
+            for n in nodes:
+                st = n.get("status", "ONLINE")
+                svcs = n.get("services")
+                svc_suffix = f" — {svcs} services" if svcs else ""
+                node_lines.append(f"• `{n['name']}` [{st}]{svc_suffix}")
+            parts.append("\n".join(node_lines))
 
         # Open Incidents part (when general status or incident query)
         if "open_incidents" in context_data and not context_data.get("service_trends"):
             incidents = context_data["open_incidents"]
             if incidents:
-                inc_lines = [f"🚨 Active Incidents ({len(incidents)}):"]
+                inc_lines = [f"🚨 **Active Incidents ({len(incidents)})**:"]
                 for i in incidents:
                     summary = i.get("summary") or i.get("title") or "Under investigation"
                     inc_lines.append(f"• `{i['id']}` [{i.get('severity', 'HIGH')}] on `{i.get('service', 'unknown')}`: {summary}")
                 parts.append("\n".join(inc_lines))
             elif wants_incidents:
-                parts.append("✅ Incidents: Zero active incidents across fleet")
+                parts.append("✅ **Incidents**: Zero active incidents across fleet. All systems operational.")
 
         # Fleet-wide trends
         if context_data.get("fleet_trends"):
@@ -335,17 +348,17 @@ class BrainEngine:
                 else:
                     stable_svcs.append(svc)
 
-            trend_lines = ["📈 Fleet Telemetry & Memory Trends:"]
+            trend_lines = ["📈 **Fleet Telemetry & Resource Trends**:"]
             if warnings:
-                trend_lines.append("Detected Anomaly Warnings:\n" + "\n".join(warnings))
+                trend_lines.append("**Anomaly Warnings**:\n" + "\n".join(warnings))
             if stable_svcs:
-                trend_lines.append(f"Stable Services ({len(stable_svcs)}): {', '.join(f'`{s}`' for s in stable_svcs)}")
+                trend_lines.append(f"• **Nominal Services ({len(stable_svcs)})**: " + ", ".join(f"`{s}`" for s in stable_svcs))
             parts.append("\n".join(trend_lines))
 
         # Rollbacks part
         if context_data.get("recent_rollbacks"):
             last_rb = context_data["recent_rollbacks"][0]
-            parts.append(f"⏪ Last Rollback: `{last_rb.get('action')}` on `{last_rb.get('service_name')}` ({last_rb.get('status')})")
+            parts.append(f"⏪ **Automated Remediation**: `{last_rb.get('action')}` on `{last_rb.get('service_name')}` [{last_rb.get('status', 'EXECUTED')}]")
 
         if parts:
             answer = "\n\n".join(parts)

@@ -55,8 +55,8 @@ class TestBrainEngine:
             {"node_name": "vm-02", "status": "ONLINE", "services_count": 3},
         ]
         res = brain.handle_chatops_query("how are the fleet nodes doing?", fleet_store=mock_fleet_store)
-        assert "vm-01 (ONLINE)" in res["answer"]
-        assert "vm-02 (ONLINE)" in res["answer"]
+        assert "vm-01" in res["answer"] and "ONLINE" in res["answer"]
+        assert "vm-02" in res["answer"] and "ONLINE" in res["answer"]
 
         # Query incidents
         with patch("devctl.core.incident_bus.IncidentBus.list_incidents") as mock_list:
