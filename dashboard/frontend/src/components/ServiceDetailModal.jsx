@@ -70,7 +70,7 @@ export function ServiceDetailModal({ service, onClose, onCopy, onRestartSuccess,
       });
       if (res.ok) {
         const data = await res.json();
-        setInspectData(data.service || null);
+        setInspectData(data.service || (data.id ? data : null));
       }
     } catch (err) {
       console.error('Failed to inspect container:', err);

@@ -598,38 +598,45 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                 git_branch = svc.get("git_branch") or "main"
                                 repo_url = f"https://github.com/{git_repo}" if git_repo and not git_repo.startswith("http") else git_repo
                                 self._send_json({
-                                    "id": svc.get("container_id", "")[:12] or f"{service_name[:8]}",
-                                    "full_id": svc.get("container_id") or service_name,
-                                    "name": service_name,
-                                    "node_name": node_name,
-                                    "node_ip": client_ip,
-                                    "created": svc.get("status_detail", "Satellite Host Process"),
-                                    "image": svc.get("image") or f"{service_name}:latest",
-                                    "cmd": [],
-                                    "entrypoint": [],
-                                    "state": {
-                                        "status": svc.get("status", "running"),
-                                        "running": str(svc.get("status", "")).lower() in ("up", "running", "healthy"),
-                                        "started_at": svc.get("status_detail", "Active"),
-                                        "finished_at": "",
-                                        "exit_code": 0,
-                                        "oom_killed": False,
-                                        "error": "",
-                                    },
-                                    "restart_count": 0,
-                                    "restart_policy": "unless-stopped",
-                                    "networks": {"dev-net": {"ip_address": client_ip, "gateway": "", "mac_address": ""}},
-                                    "ports": {f"{svc.get('port', 80)}/tcp": None},
-                                    "env": [f"INGRESS_ENDPOINT={svc.get('access_url', '[INTERNAL]')}"],
-                                    "mounts": [],
-                                    "codebase": {
-                                        "repo_name": git_repo or "suburban-fiber-company/Support",
-                                        "git_branch": git_branch,
-                                        "web_url": repo_url,
-                                        "workspace_dir": svc.get("repo_path", "/opt/Support"),
-                                        "compose_file": None,
-                                    },
-                                    "is_remote": True,
+                                    "service": {
+                                        "id": (svc.get("container_id") or svc.get("full_id") or service_name)[:12],
+                                        "full_id": svc.get("full_id") or svc.get("container_id") or service_name,
+                                        "name": service_name,
+                                        "node_name": node_name,
+                                        "node_ip": client_ip,
+                                        "created": svc.get("created_at") or svc.get("status_detail", "Satellite Host Process"),
+                                        "image": svc.get("image") or f"{service_name}:latest",
+                                        "cmd": svc.get("cmd") or [],
+                                        "entrypoint": svc.get("entrypoint") or [],
+                                        "state": {
+                                            "status": svc.get("status", "running"),
+                                            "running": str(svc.get("status", "")).lower() in ("up", "running", "healthy"),
+                                            "started_at": svc.get("started_at") or svc.get("status_detail", "Active"),
+                                            "finished_at": "",
+                                            "exit_code": 0,
+                                            "oom_killed": False,
+                                            "error": "",
+                                        },
+                                        "restart_count": 0,
+                                        "restart_policy": "unless-stopped",
+                                        "networks": {"support_network": {"ip_address": client_ip, "gateway": "", "mac_address": ""}},
+                                        "ports": {f"{svc.get('port', 80)}/tcp": None},
+                                        "env": svc.get("env") or [
+                                            f"INGRESS_ENDPOINT={svc.get('access_url', '[INTERNAL]')}",
+                                            f"FLEET_NODE={node_name}",
+                                            "NETWORK=support_network",
+                                            "PROXY=Caddy (HTTPS/TLS)"
+                                        ],
+                                        "mounts": svc.get("mounts") or [],
+                                        "codebase": {
+                                            "repo_name": git_repo or "suburban-fiber-company/Support",
+                                            "git_branch": git_branch,
+                                            "web_url": repo_url,
+                                            "workspace_dir": svc.get("repo_path", "/opt/Support"),
+                                            "compose_file": None,
+                                        },
+                                        "is_remote": True,
+                                    }
                                 })
                                 return
 
