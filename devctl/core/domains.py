@@ -11,6 +11,7 @@ from .config import Config, BASE_DIR
 
 # Service type classification
 SERVICE_TYPE_WEB = "web"           # Gets public URL + full monitoring
+SERVICE_TYPE_API = "api"           # Backend API service
 SERVICE_TYPE_DATABASE = "database"  # Monitored only, no public URL
 SERVICE_TYPE_CACHE = "cache"        # Monitored only, no public URL
 SERVICE_TYPE_MAIL = "mail"          # Monitored only, no public URL
@@ -453,6 +454,10 @@ class DomainRegistry:
                     if any(term == k_upper or k_upper.endswith(f"_{term}") for term in ["BASE_DOMAIN", "DEFAULT_DOMAIN", "ROOT_DOMAIN"]):
                         continue
 
+                    # Ignore outbound destination / client / webhook URLs (these point outwards, not inwards)
+                    if any(outbound in k_upper for outbound in ["WEBHOOK", "CENTRAL_HUB", "BRAIN", "UPSTREAM", "REMOTE", "TARGET", "CLIENT", "BROKER"]):
+                        continue
+
                     # Domain / Hostname variables
                     if any(term in k_upper for term in ["HOSTNAME", "DOMAIN", "DOMAINS", "VIRTUAL_HOST", "SERVER_NAME", "APP_HOST"]):
                         for part in v_clean.replace(";", ",").replace(" ", ",").split(","):
@@ -461,7 +466,7 @@ class DomainRegistry:
                                 domains[c_name] = {"domain": part, "source": f"env:{k}"}
 
                     # URL variables (e.g. APP_URL=https://app.example.com)
-                    if any(term in k_upper for term in ["URL", "ORIGIN", "ENDPOINT", "SITE_URL", "BASE_URL", "PUBLIC_URL", "WEB_URL"]):
+                    if any(term in k_upper for term in ["APP_URL", "PUBLIC_URL", "SITE_URL", "BASE_URL", "WEB_URL", "ORIGIN"]):
                         try:
                             parsed_url = urlparse(v_clean)
                             if parsed_url.hostname and self._is_valid_public_domain(parsed_url.hostname):
@@ -557,7 +562,11 @@ class DomainRegistry:
                                     ck, cv = line_clean.split("=", 1)
                                     ck_upper = ck.upper().strip()
                                     cv_clean = cv.strip().strip("'\"")
-                                    if any(term in ck_upper for term in ["HOSTNAME", "DOMAIN", "URL", "SERVER_NAME", "VIRTUAL_HOST"]):
+                                    if any(outbound in ck_upper for outbound in ["WEBHOOK", "CENTRAL_HUB", "BRAIN", "UPSTREAM", "REMOTE", "TARGET", "CLIENT", "BROKER"]):
+                                        continue
+                                    if any(term in ck_upper for term in ["BASE_DOMAIN", "DEFAULT_DOMAIN", "ROOT_DOMAIN"]):
+                                        continue
+                                    if any(term in ck_upper for term in ["HOSTNAME", "DOMAIN", "SERVER_NAME", "VIRTUAL_HOST", "APP_URL", "PUBLIC_URL", "SITE_URL", "BASE_URL", "WEB_URL"]):
                                         extracted_domain = None
                                         if "://" in cv_clean:
                                             try:
@@ -569,12 +578,13 @@ class DomainRegistry:
                                         elif self._is_valid_public_domain(cv_clean):
                                             extracted_domain = cv_clean
 
-                                        # Map project domain to web/nginx/caddy/frontend/API entrypoints in this workspace
+                                        # Map project domain to web/nginx/frontend/API entrypoints in this workspace
                                         if extracted_domain:
                                             c_lower = c_name.lower()
-                                            is_web_candidate = any(kw in c_lower for kw in ["nginx", "caddy", "web", "frontend", "api", "sogo", "httpd", "apache", "proxy", "gateway", "server"])
-                                            is_strictly_internal = any(kw in c_lower for kw in ["redis", "mysql", "postgres", "memcached", "mongo", "db", "clamd", "rspamd", "watchdog", "acme", "netfilter", "unbound", "dovecot", "postfix", "ofelia"])
-                                            if is_web_candidate and not is_strictly_internal:
+                                            is_web_candidate = any(kw in c_lower for kw in ["nginx", "web", "frontend", "api", "sogo", "httpd", "apache", "server", "dashboard"])
+                                            is_proxy = any(kw in c_lower for kw in ["caddy", "nginx-proxy", "traefik", "envoy", "haproxy"])
+                                            is_strictly_internal = any(kw in c_lower for kw in ["redis", "mysql", "postgres", "memcached", "mongo", "db", "clamd", "rspamd", "watchdog", "acme", "netfilter", "unbound", "dovecot", "postfix", "ofelia", "ai-ops", "daemon"])
+                                            if is_web_candidate and not is_strictly_internal and not is_proxy:
                                                 domains[c_name] = {"domain": extracted_domain, "source": f"config:{conf_file.name}"}
                         except Exception:
                             continue
