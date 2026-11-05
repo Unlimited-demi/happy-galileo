@@ -335,6 +335,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     store.close()
                 return
 
+            elif path == "/api/approvals":
+                from ai_ops.policy_engine import ApprovalLedger
+                approvals = ApprovalLedger()
+                self._send_json({"approvals": approvals.list_requests()})
+                return
+
             elif path == "/api/fleet/commands":
                 history = FLEET_STORE.get_command_history(limit=50)
                 self._send_json({
@@ -549,6 +555,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     result = dispatcher.dispatch(inc_id, fleet_store=FLEET_STORE)
                     self._send_json(result, status=200 if result.get("success") else 400)
                     return
+
+            elif path.startswith("/api/approvals/") and path.endswith("/approve"):
+                if not self._require_role(ROLE_APPROVER):
+                    return
+                app_id = path[len("/api/approvals/"): -len("/approve")].strip("/")
+                from ai_ops.brain import BrainEngine
+                brain = BrainEngine()
+                res = brain._execute_tool("approve_remediation", {"approval_id": app_id})
+                self._send_json(res, status=200 if res.get("status") == "EXECUTED" else 400)
+                return
 
             elif path == "/api/chatops/query":
                 # ChatOps endpoint for Concert (@ARA mentions)

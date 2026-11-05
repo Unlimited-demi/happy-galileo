@@ -15,6 +15,7 @@ import os
 import json
 import time
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 from devctl.core.config import Config
@@ -178,3 +179,87 @@ class RollbackLedger:
         """List most recent actions in reverse chronological order."""
         ledger = self._load_ledger()
         return sorted(ledger, key=lambda x: x.get("executed_at", 0), reverse=True)[:limit]
+
+
+class ApprovalLedger:
+    """Maintains persistent human-in-the-loop approval requests for remediation actions."""
+
+    def __init__(self, ledger_file: Optional[Path] = None):
+        self.ledger_file = ledger_file or Config.DEVCTL_STATE_DIR / "pending_approvals.json"
+
+    def _load_approvals(self) -> List[Dict[str, Any]]:
+        if self.ledger_file.exists():
+            try:
+                with open(self.ledger_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return []
+
+    def _save_approvals(self, entries: List[Dict[str, Any]]):
+        self.ledger_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.ledger_file, "w", encoding="utf-8") as f:
+            json.dump(entries, f, indent=2, default=str)
+
+    def create_request(
+        self,
+        service_name: str,
+        action: str,
+        reason: str,
+        requester: str = "ARA-Brain",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Create a new pending approval request requiring human engineer confirmation."""
+        date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+        short_id = secrets.token_hex(3).upper()
+        approval_id = f"APP-{date_str}-{short_id}"
+        entry = {
+            "id": approval_id,
+            "service_name": service_name,
+            "action": action,
+            "reason": reason,
+            "requester": requester,
+            "status": "PENDING",  # PENDING, APPROVED, REJECTED, EXECUTED
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "metadata": metadata or {},
+        }
+        approvals = self._load_approvals()
+        approvals.append(entry)
+        self._save_approvals(approvals[-100:])
+        return entry
+
+    def get_request(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a specific approval request by ID."""
+        approvals = self._load_approvals()
+        for a in approvals:
+            if a.get("id") == approval_id:
+                return a
+        return None
+
+    def list_requests(self, only_pending: bool = False) -> List[Dict[str, Any]]:
+        """List approval requests."""
+        approvals = self._load_approvals()
+        if only_pending:
+            return [a for a in approvals if a.get("status") == "PENDING"]
+        return sorted(approvals, key=lambda x: x.get("created_at", 0), reverse=True)
+
+    def resolve_request(
+        self,
+        approval_id: str,
+        approved: bool,
+        approver: str = "human",
+        notes: str = ""
+    ) -> Optional[Dict[str, Any]]:
+        """Approve or reject a pending request."""
+        approvals = self._load_approvals()
+        for a in approvals:
+            if a.get("id") == approval_id:
+                a["status"] = "APPROVED" if approved else "REJECTED"
+                a["resolved_at"] = time.time()
+                a["approver"] = approver
+                a["notes"] = notes
+                self._save_approvals(approvals)
+                return a
+        return None
+

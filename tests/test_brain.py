@@ -139,3 +139,49 @@ class TestBrainEngine:
             assert "The flapping on devctl-dashboard" in res["answer"]
             assert res["engine"] == f"ara-brain-react-{brain.model}"
             assert len(res["context_data"]["executed_tools"]) == 1
+
+    def test_new_sre_tools_execution(self, tmp_path):
+        """Verify get_container_logs, get_service_routes, get_system_doctor, and remediation tools."""
+        brain = BrainEngine()
+
+        # 1. get_container_logs
+        with patch("ai_ops.docker_socket.DockerSocket.get_logs", return_value="Error: Connection pool exhausted\nStack trace: ..."):
+            logs_res = brain._execute_tool("get_container_logs", {"service_name": "billing-api", "tail": 20})
+            assert logs_res["service"] == "billing-api"
+            assert "Connection pool exhausted" in logs_res["logs"]
+
+        # 2. get_service_routes
+        with patch("devctl.core.domains.DomainRegistry.list_services", return_value=[
+            {"service_name": "billing-api", "url": "https://billing-api.dev-server.datakrib.com", "port": 8000, "env": "dev"}
+        ]):
+            routes_res = brain._execute_tool("get_service_routes", {})
+            assert len(routes_res) == 1
+            assert routes_res[0]["service"] == "billing-api"
+
+        # 3. get_system_doctor
+        with patch("ai_ops.docker_socket.DockerSocket.list_containers", return_value=[{"Names": ["/caddy"]}]), \
+             patch("devctl.core.caddy.CaddyManager.check_health", return_value=True):
+            doc_res = brain._execute_tool("get_system_doctor", {})
+            assert doc_res["docker_engine"] == "RUNNING"
+            assert doc_res["caddy_admin_api"] == "REACHABLE"
+            assert doc_res["overall_status"] == "HEALTHY"
+            assert "https://ara.suburbancloud.ng" in doc_res["dashboard_url"]
+
+        # 4. request_remediation (Approval Required for Stateful Database)
+        with patch("ai_ops.policy_engine.PolicyEngine.evaluate_action", return_value=(False, "Stateful service requires human approval")), \
+             patch("devctl.core.config.Config.DEVCTL_STATE_DIR", tmp_path):
+            rem_res = brain._execute_tool("request_remediation", {
+                "service_name": "postgres-db",
+                "action": "restart_container",
+                "reason": "OOM recovery"
+            })
+            assert rem_res["status"] == "APPROVAL_REQUIRED"
+            assert "APP-" in rem_res["approval_id"]
+            app_id = rem_res["approval_id"]
+
+            # 5. approve_remediation
+            with patch("ai_ops.docker_socket.DockerSocket.restart_container", return_value=True):
+                appr_res = brain._execute_tool("approve_remediation", {"approval_id": app_id})
+                assert appr_res["status"] == "EXECUTED"
+                assert "successfully executed" in appr_res["message"]
+
