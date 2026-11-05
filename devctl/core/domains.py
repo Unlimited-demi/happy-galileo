@@ -863,74 +863,79 @@ class DomainRegistry:
                     "security_audit": db_audit,
                 }
             else:
+                # Check if this container is the reverse proxy engine itself (e.g. Caddy, Traefik)
+                is_proxy_engine = any(proxy_kw in c_name.lower() for proxy_kw in ["caddy", "ingress", "traefik"]) or \
+                                  any(proxy_kw in image.lower() for proxy_kw in ["caddy", "traefik"])
+
                 # Check if this container has an existing real domain from reverse proxy detection
                 # Try multiple lookup strategies: container name, compose service, container:port, :port, fuzzy match, container IP
                 real_domain_info = None
                 real_domain = None
                 real_domain_source = None
 
-                # Strategy 1: Exact container name match
-                if c_name in existing_domains:
-                    real_domain_info = existing_domains[c_name]
+                if not is_proxy_engine:
+                    # Strategy 1: Exact container name match
+                    if c_name in existing_domains:
+                        real_domain_info = existing_domains[c_name]
 
-                # Strategy 1b: Docker Compose service name match (e.g., "dashboard" for "devctl-dashboard")
-                if not real_domain_info:
-                    compose_svc = labels.get("com.docker.compose.service")
-                    if compose_svc and compose_svc in existing_domains:
-                        real_domain_info = existing_domains[compose_svc]
-                    elif compose_svc and ports:
+                    # Strategy 1b: Docker Compose service name match (e.g., "dashboard" for "devctl-dashboard")
+                    if not real_domain_info:
+                        compose_svc = labels.get("com.docker.compose.service")
+                        if compose_svc and compose_svc in existing_domains:
+                            real_domain_info = existing_domains[compose_svc]
+                        elif compose_svc and ports:
+                            for p in ports:
+                                key = f"{compose_svc}:{p}"
+                                if key in existing_domains:
+                                    real_domain_info = existing_domains[key]
+                                    break
+
+                    # Strategy 2: Container name with port (e.g., "grafana:3000")
+                    if not real_domain_info and ports:
                         for p in ports:
-                            key = f"{compose_svc}:{p}"
+                            key = f"{c_name}:{p}"
                             if key in existing_domains:
                                 real_domain_info = existing_domains[key]
                                 break
 
-                # Strategy 2: Container name with port (e.g., "grafana:3000")
-                if not real_domain_info and ports:
-                    for p in ports:
-                        key = f"{c_name}:{p}"
-                        if key in existing_domains:
-                            real_domain_info = existing_domains[key]
-                            break
-
-                # Strategy 3: Port only (e.g., ":3000", ":8888")
-                if not real_domain_info and ports:
-                    for p in ports:
-                        key = f":{p}"
-                        if key in existing_domains:
-                            real_domain_info = existing_domains[key]
-                            break
-
-                # Strategy 4: Upstream substring or fuzzy match
-                if not real_domain_info:
-                    for up_k, dinfo in existing_domains.items():
-                        if not up_k.startswith(":") and len(up_k) >= 3:
-                            up_host = up_k.split(":")[0].lower()
-                            c_lower = c_name.lower()
-                            if up_host and (up_host in c_lower or c_lower in up_host):
-                                real_domain_info = dinfo
+                    # Strategy 3: Port only (e.g., ":3000", ":8888")
+                    if not real_domain_info and ports:
+                        for p in ports:
+                            key = f":{p}"
+                            if key in existing_domains:
+                                real_domain_info = existing_domains[key]
                                 break
 
-                # Strategy 5: Container IP address (inspect container network)
-                if not real_domain_info:
-                    try:
-                        net_info = info.get("NetworkSettings", {}).get("Networks", {})
-                        for net_name, net_data in net_info.items():
-                            ip_addr = net_data.get("IPAddress")
-                            if ip_addr and ip_addr in existing_domains:
-                                real_domain_info = existing_domains[ip_addr]
-                                break
-                            # Also try IP:port
-                            if ip_addr and ports:
-                                for p in ports:
-                                    key = f"{ip_addr}:{p}"
-                                    if key in existing_domains:
-                                        real_domain_info = existing_domains[key]
-                                        break
-                                if real_domain_info:
+                    # Strategy 4: Upstream substring or fuzzy match
+                    if not real_domain_info:
+                        for up_k, dinfo in existing_domains.items():
+                            if not up_k.startswith(":") and len(up_k) >= 3:
+                                up_host = up_k.split(":")[0].lower()
+                                c_lower = c_name.lower()
+                                if up_host and (up_host in c_lower or c_lower in up_host):
+                                    real_domain_info = dinfo
                                     break
-                    except Exception:
-                        pass
+
+                    # Strategy 5: Container IP address (inspect container network)
+                    if not real_domain_info:
+                        try:
+                            net_info = info.get("NetworkSettings", {}).get("Networks", {})
+                            for net_name, net_data in net_info.items():
+                                ip_addr = net_data.get("IPAddress")
+                                if ip_addr and ip_addr in existing_domains:
+                                    real_domain_info = existing_domains[ip_addr]
+                                    break
+                                # Also try IP:port
+                                if ip_addr and ports:
+                                    for p in ports:
+                                        key = f"{ip_addr}:{p}"
+                                        if key in existing_domains:
+                                            real_domain_info = existing_domains[key]
+                                            break
+                                    if real_domain_info:
+                                        break
+                        except Exception:
+                            pass
 
                 if real_domain_info:
                     real_domain = real_domain_info.get("domain")
@@ -939,10 +944,10 @@ class DomainRegistry:
                     print(f"  [DEBUG] {c_name}: {real_domain} (from {real_domain_source})")
 
                 # Classify container type
-                if real_domain and ("nginx" in c_name or "frontend" in c_name or "web" in c_name or "sogo" in c_name or "dashboard" in c_name):
-                    c_type = SERVICE_TYPE_WEB
-                elif any(proxy_kw in c_name.lower() for proxy_kw in ["caddy", "ingress", "traefik"]):
+                if is_proxy_engine:
                     c_type = SERVICE_TYPE_INFRA
+                elif real_domain and ("nginx" in c_name or "frontend" in c_name or "web" in c_name or "sogo" in c_name or "dashboard" in c_name):
+                    c_type = SERVICE_TYPE_WEB
                 elif any(daemon_kw in c_name.lower() for daemon_kw in ["ai-ops", "daemon"]):
                     c_type = SERVICE_TYPE_INFRA
                 elif any(brain_kw in c_name.lower() for brain_kw in ["brain", "ollama"]):
@@ -974,7 +979,7 @@ class DomainRegistry:
                 }
 
                 # If we detected a real domain from nginx/Caddy/Apache, use it!
-                if real_domain:
+                if real_domain and not is_proxy_engine:
                     meta["existing_domain"] = real_domain
                     meta["domain_source"] = real_domain_source
                     # Set the public URL and domain so users see what's actually exposed
