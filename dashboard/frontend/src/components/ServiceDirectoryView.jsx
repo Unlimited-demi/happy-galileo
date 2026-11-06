@@ -80,7 +80,7 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy, onSelec
                     const sLower = statusText.toLowerCase();
                     const isRunning = sLower.startsWith('up') || sLower.includes('running') || sLower === 'active';
                     const gitUrl = svc.git_url || (svc.git_repo ? (svc.git_repo.startsWith('http') ? svc.git_repo : `https://github.com/${svc.git_repo}`) : null);
-                    const gitRepoName = svc.repo_name || svc.git_repo || (gitUrl ? gitUrl.split('/').slice(-2).join('/') : null);
+                    const gitRepoName = svc.repo_name || svc.git_repo || (typeof gitUrl === 'string' ? gitUrl.split('/').slice(-2).join('/') : null);
                     const gitBranch = svc.git_branch || 'main';
                     return (
                       <tr

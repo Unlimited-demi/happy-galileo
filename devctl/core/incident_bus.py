@@ -75,6 +75,7 @@ class IncidentBus:
         recommendation: Optional[str] = None,
         fingerprint: Optional[str] = None,
         occurrences: int = 1,
+        source_node: str = "hub-vm",
     ) -> Dict[str, Any]:
         """Create and persist a new incident dossier."""
         date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -87,6 +88,7 @@ class IncidentBus:
         incident = {
             "id": incident_id,
             "service_name": service_name,
+            "source_node": source_node or "hub-vm",
             "title": title,
             "severity": severity,
             "level": level,

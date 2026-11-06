@@ -6,14 +6,14 @@
 # Usage:
 #   curl -sSL https://ara.suburbancloud.ng/install-agent.sh | sudo bash -s -- \
 #     --hub "https://ara.suburbancloud.ng" \
-#     --fleet-key "ara_fleet_305dc0e721b5f52d96be99d7b8ee8656e2befa3e" \
+#     --fleet-key "<FLEET_KEY>" \
 #     --node-name "suburban-support-prod"
 # ==============================================================================
 
 set -e
 
 HUB_URL="https://ara.suburbancloud.ng"
-FLEET_KEY="ara_fleet_305dc0e721b5f52d96be99d7b8ee8656e2befa3e"
+FLEET_KEY="${FLEET_KEY:-}"
 NODE_NAME="$(hostname -s 2>/dev/null || echo 'satellite-node')"
 BASE_DOMAIN="suburbancloud.ng"
 AGENT_DIR="/opt/ara-agent"
@@ -29,6 +29,18 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+
+if [ -z "${FLEET_KEY}" ]; then
+  if [ -t 0 ]; then
+    read -rp "Enter ARA Fleet Key: " FLEET_KEY
+  fi
+fi
+
+if [ -z "${FLEET_KEY}" ]; then
+  echo "❌ Error: --fleet-key is strictly required."
+  echo "Usage: curl -sSL ${HUB_URL}/install-agent.sh | sudo bash -s -- --hub \"${HUB_URL}\" --fleet-key \"<YOUR_FLEET_KEY>\" --node-name \"${NODE_NAME}\""
+  exit 1
+fi
 
 echo "========================================================"
 echo "🛰️  ARA Autonomous Fleet Agent Installation"

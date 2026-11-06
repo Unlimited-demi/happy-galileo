@@ -30,6 +30,29 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
+function formatTimestamp(val) {
+  if (!val) return '—';
+  try {
+    if (typeof val === 'number') {
+      const ms = val > 1e11 ? val : val * 1000;
+      return new Date(ms).toISOString().split('.')[0].replace('T', ' ');
+    }
+    if (typeof val === 'string') {
+      const trimmed = val.trim();
+      if (!trimmed || trimmed === '—' || trimmed === 'N/A') return trimmed || '—';
+      if (/^\d+(\.\d+)?$/.test(trimmed)) {
+        const num = parseFloat(trimmed);
+        const ms = num > 1e11 ? num : num * 1000;
+        return new Date(ms).toISOString().split('.')[0].replace('T', ' ');
+      }
+      return trimmed.split('.')[0].replace('T', ' ');
+    }
+    return String(val);
+  } catch (e) {
+    return String(val);
+  }
+}
+
 export function ServiceDetailModal({ service, onClose, onCopy, onRestartSuccess, showToast }) {
   if (!service) return null;
 
@@ -301,11 +324,11 @@ export function ServiceDetailModal({ service, onClose, onCopy, onRestartSuccess,
                 </div>
                 <div>
                   <span className="text-muted-foreground font-sans">Created At:</span>{' '}
-                  <span className="text-slate-200">{inspectData?.created ? inspectData.created.split('.')[0].replace('T', ' ') : '—'}</span>
+                  <span className="text-slate-200">{formatTimestamp(inspectData?.created)}</span>
                 </div>
                 <div>
                   <span className="text-muted-foreground font-sans">Started At:</span>{' '}
-                  <span className="text-slate-200">{inspectData?.state?.started_at ? inspectData.state.started_at.split('.')[0].replace('T', ' ') : '—'}</span>
+                  <span className="text-slate-200">{formatTimestamp(inspectData?.state?.started_at)}</span>
                 </div>
                 <div>
                   <span className="text-muted-foreground font-sans">Exit Code:</span>{' '}

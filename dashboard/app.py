@@ -7,7 +7,10 @@ Playwright screenshots, and Incident dossiers directly from your phone or browse
 import json
 import os
 import time
+import datetime
 import secrets
+import gzip
+import hashlib
 import subprocess
 import shutil
 from pathlib import Path
@@ -108,8 +111,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     auth_h = self.headers.get('Authorization', '')
                     if auth_h.startswith('Bearer '):
                         key = auth_h[7:].strip()
-                fleet_key_env = os.environ.get('FLEET_KEY', 'default-fleet-key')
-                if fleet_key_env and key and secrets.compare_digest(fleet_key_env, key):
+                if not key:
+                    return False
+                fleet_key_env = os.environ.get('FLEET_KEY', '').strip()
+                if fleet_key_env and secrets.compare_digest(fleet_key_env, key):
                     return True
                 return auth_mgr.validate_telemetry_key(key)
             else:
@@ -610,15 +615,27 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                         "name": service_name,
                                         "node_name": node_name,
                                         "node_ip": client_ip,
-                                        "created": svc.get("created_at") or "",
+                                        "created": (
+                                            datetime.datetime.fromtimestamp(svc["created_at"], tz=datetime.timezone.utc).isoformat()
+                                            if isinstance(svc.get("created_at"), (int, float)) and svc.get("created_at") > 0
+                                            else (str(svc.get("created_at")) if svc.get("created_at") is not None else "")
+                                        ),
                                         "image": svc.get("image") or "",
                                         "cmd": svc.get("cmd") or [],
                                         "entrypoint": svc.get("entrypoint") or [],
                                         "state": {
                                             "status": svc.get("status", ""),
                                             "running": str(svc.get("status", "")).lower() in ("up", "running", "healthy"),
-                                            "started_at": svc.get("started_at") or "",
-                                            "finished_at": svc.get("finished_at") or "",
+                                            "started_at": (
+                                                datetime.datetime.fromtimestamp(svc["started_at"], tz=datetime.timezone.utc).isoformat()
+                                                if isinstance(svc.get("started_at"), (int, float)) and svc.get("started_at") > 0
+                                                else (str(svc.get("started_at")) if svc.get("started_at") is not None else "")
+                                            ),
+                                            "finished_at": (
+                                                datetime.datetime.fromtimestamp(svc["finished_at"], tz=datetime.timezone.utc).isoformat()
+                                                if isinstance(svc.get("finished_at"), (int, float)) and svc.get("finished_at") > 0
+                                                else (str(svc.get("finished_at")) if svc.get("finished_at") is not None else "")
+                                            ),
                                             "exit_code": svc.get("exit_code"),
                                             "oom_killed": svc.get("oom_killed", False),
                                             "error": svc.get("error", ""),
@@ -795,9 +812,33 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
             if path in ["/api/telemetry/ingest", "/api/telemetry/heartbeat"]:
                 content_length = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
-                payload = json.loads(body) if body else {}
+                raw_bytes = self.rfile.read(content_length) if content_length > 0 else b""
+                content_encoding = self.headers.get("Content-Encoding", "").lower()
+                if "gzip" in content_encoding or (len(raw_bytes) > 2 and raw_bytes[:2] == b"\x1f\x8b"):
+                    try:
+                        raw_bytes = gzip.decompress(raw_bytes)
+                    except Exception as gz_err:
+                        self._send_json({"error": f"Failed to decompress gzip body: {gz_err}"}, status=400)
+                        return
+                body = raw_bytes.decode("utf-8") if raw_bytes else "{}"
+                try:
+                    payload = json.loads(body) if body else {}
+                except Exception as json_err:
+                    self._send_json({"error": f"Invalid JSON payload: {json_err}"}, status=400)
+                    return
+
                 node_name = payload.get("node_name", "unknown")
+
+                # Validate node identity against registered token or master fleet key
+                fleet_key = self.headers.get('X-Fleet-Key', '')
+                if not fleet_key:
+                    auth_h = self.headers.get('Authorization', '')
+                    if auth_h.startswith('Bearer '):
+                        fleet_key = auth_h[7:].strip()
+                if not FLEET_STORE.validate_node_key(node_name, fleet_key):
+                    self._send_json({"error": "Unauthorized node key for node"}, status=403)
+                    return
+
                 # Extract real client IP: prioritize reverse proxy headers (X-Forwarded-For / X-Real-IP) and payload
                 forwarded_for = self.headers.get("X-Forwarded-For", "")
                 real_ip = self.headers.get("X-Real-IP", "")
@@ -814,18 +855,84 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     if alt_ip:
                         client_ip = alt_ip.strip()
 
-                # Persist node heartbeat in fleet store
-                FLEET_STORE.upsert_node(payload, client_ip=client_ip)
+                # Persist node heartbeat in fleet store with token binding hash
+                token_hash = hashlib.sha256(fleet_key.encode("utf-8")).hexdigest() if fleet_key else None
+                FLEET_STORE.upsert_node(payload, client_ip=client_ip, token_hash=token_hash)
 
                 # Record command results reported back by the node
                 cmd_results = payload.get("command_results", [])
                 if cmd_results and isinstance(cmd_results, list):
                     FLEET_STORE.record_command_results(node_name, cmd_results)
 
+                # Automated Incident Detection for Satellite Node Containers
+                try:
+                    services = payload.get("services") or []
+                    bus = IncidentBus()
+                    for svc in services:
+                        if not isinstance(svc, dict):
+                            continue
+                        svc_name = svc.get("service_name") or svc.get("container_name") or "unknown"
+                        exit_code = svc.get("exit_code")
+                        oom_killed = svc.get("oom_killed", False)
+                        svc_status = str(svc.get("status") or "").lower()
+                        recent_logs = str(svc.get("recent_logs") or svc.get("logs") or "")
+
+                        issue_detected = False
+                        issue_summary = ""
+                        issue_type = ""
+                        severity = "HIGH"
+
+                        if oom_killed:
+                            issue_detected = True
+                            issue_type = "OOM_KILLED"
+                            severity = "CRITICAL"
+                            issue_summary = f"Container {svc_name} on node {node_name} killed by OOM (Out Of Memory)."
+                        elif exit_code is not None and exit_code not in (0, None) and svc_status in ("exited", "dead", "stopped"):
+                            issue_detected = True
+                            issue_type = "CONTAINER_CRASH"
+                            severity = "HIGH"
+                            issue_summary = f"Container {svc_name} on node {node_name} exited with status {exit_code}."
+                        elif "Traceback (most recent call last):" in recent_logs:
+                            issue_detected = True
+                            issue_type = "UNHANDLED_EXCEPTION"
+                            severity = "HIGH"
+                            tb_lines = [l.strip() for l in recent_logs.splitlines() if l.strip()]
+                            last_err = tb_lines[-1] if tb_lines else "Traceback detected"
+                            issue_summary = f"Unhandled Exception in {svc_name} on node {node_name}: {last_err}"
+                        elif "FATAL:" in recent_logs or "panic:" in recent_logs:
+                            issue_detected = True
+                            issue_type = "FATAL_ERROR"
+                            severity = "CRITICAL"
+                            issue_summary = f"Fatal panic/crash in {svc_name} on node {node_name}."
+
+                        if issue_detected:
+                            fingerprint = bus.compute_fingerprint(f"{node_name}:{svc_name}", issue_type, issue_summary)
+                            existing = bus.find_by_fingerprint(fingerprint, only_open=True)
+                            if existing:
+                                bus.record_occurrence(existing["id"])
+                            else:
+                                bus.create_incident(
+                                    service_name=svc_name,
+                                    title=issue_summary,
+                                    severity=severity,
+                                    source_node=node_name,
+                                    fingerprint=fingerprint,
+                                    evidence={
+                                        "issue_type": issue_type,
+                                        "exit_code": exit_code,
+                                        "oom_killed": oom_killed,
+                                        "logs": recent_logs[-3000:] if recent_logs else "",
+                                        "node_name": node_name,
+                                        "client_ip": client_ip,
+                                    }
+                                )
+                except Exception:
+                    pass
+
                 # Deliver (and drain) any pending commands queued for this node, cryptographically signed
                 pending = FLEET_STORE.drain_pending_commands(node_name)
-                fleet_key = os.environ.get("FLEET_KEY", "default-fleet-key")
-                signed_pending = [JobSigner.sign_command(cmd, fleet_key) for cmd in pending]
+                master_fleet_key = os.environ.get("FLEET_KEY", "").strip() or fleet_key
+                signed_pending = [JobSigner.sign_command(cmd, master_fleet_key) for cmd in pending]
                 self._send_json({
                     "status": "received",
                     "node": node_name,

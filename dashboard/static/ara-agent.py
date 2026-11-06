@@ -12,12 +12,14 @@ import os
 import sys
 import time
 import json
+import gzip
 import socket
 import http.client
 import urllib.request
 import urllib.error
 import subprocess
 import re
+import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -75,13 +77,17 @@ class DockerSocket:
         res = self._request("GET", f"/containers/{cid}/json")
         return res if isinstance(res, dict) else None
 
+    def restart_container(self, cid: str) -> bool:
+        res = self._request("POST", f"/containers/{cid}/restart")
+        return res is not None
+
     def get_logs(self, cid: str, tail: int = 100) -> str:
-        """Fetch and demultiplex Docker container stdout and stderr streams."""
-        raw_data = self._request("GET", f"/containers/{cid}/logs?stdout=true&stderr=true&tail={tail}", raw=True)
+        """Fetch, demultiplex, and line-slice Docker container stdout/stderr with timestamps."""
+        raw_data = self._request("GET", f"/containers/{cid}/logs?stdout=true&stderr=true&timestamps=true&tail={tail}", raw=True)
         if not raw_data:
             return ""
 
-        # Docker multiplexed frame: [stream_type(1 byte), 0, 0, 0, size(4 bytes big-endian)][payload]
+        lines = []
         is_multiplexed = (
             len(raw_data) > 8
             and raw_data[0] in (0, 1, 2)
@@ -90,7 +96,6 @@ class DockerSocket:
             and raw_data[3] == 0
         )
         if is_multiplexed:
-            lines = []
             offset = 0
             while offset + 8 <= len(raw_data):
                 frame_size = int.from_bytes(raw_data[offset + 4 : offset + 8], "big")
@@ -103,10 +108,18 @@ class DockerSocket:
                 for line in text.splitlines():
                     if line.strip():
                         lines.append(line.rstrip())
-            return "\n".join(lines[-tail:])
         else:
             text = raw_data.decode("utf-8", errors="replace")
-            return "\n".join(line.rstrip() for line in text.splitlines() if line.strip())[-tail:]
+            for line in text.splitlines():
+                if line.strip():
+                    lines.append(line.rstrip())
+
+        selected = "\n".join(lines[-tail:])
+        # Hard cap at 25 KB per container log payload to prevent network and DB bloat
+        max_bytes = 25 * 1024
+        if len(selected) > max_bytes:
+            selected = selected[-max_bytes:]
+        return selected
 
 
 class SystemMetricsCollector:
@@ -118,6 +131,8 @@ class SystemMetricsCollector:
         self._prev_rx_bytes = 0
         self._prev_tx_bytes = 0
         self._prev_net_time = 0.0
+        self._prev_cpu_idle = 0.0
+        self._prev_cpu_total = 0.0
 
     def get_public_ip(self) -> str:
         now = time.time()
@@ -157,15 +172,25 @@ class SystemMetricsCollector:
             with open("/proc/stat", "r") as f:
                 line = f.readline()
             fields = [float(x) for x in line.split()[1:8]]
-            idle1, total1 = fields[3], sum(fields)
-            time.sleep(0.1)
-            with open("/proc/stat", "r") as f:
-                line = f.readline()
-            fields = [float(x) for x in line.split()[1:8]]
-            idle2, total2 = fields[3], sum(fields)
-            diff_idle = idle2 - idle1
-            diff_total = total2 - total1
-            return round((1.0 - (diff_idle / diff_total)) * 100.0, 1) if diff_total > 0 else 0.0
+            idle = fields[3]
+            total = sum(fields)
+
+            if self._prev_cpu_total > 0:
+                diff_idle = idle - self._prev_cpu_idle
+                diff_total = total - self._prev_cpu_total
+                self._prev_cpu_idle = idle
+                self._prev_cpu_total = total
+                return round((1.0 - (diff_idle / diff_total)) * 100.0, 1) if diff_total > 0 else 0.0
+            else:
+                self._prev_cpu_idle = idle
+                self._prev_cpu_total = total
+                time.sleep(0.05)
+                with open("/proc/stat", "r") as f:
+                    line2 = f.readline()
+                fields2 = [float(x) for x in line2.split()[1:8]]
+                diff_idle = fields2[3] - idle
+                diff_total = sum(fields2) - total
+                return round((1.0 - (diff_idle / diff_total)) * 100.0, 1) if diff_total > 0 else 0.0
         except Exception:
             try:
                 avg = os.getloadavg()
@@ -363,7 +388,8 @@ class CodebaseDetector:
                             matches = re.findall(r"([a-zA-Z0-9\-\.]+\.[a-z]{2,12})\s*\{", content)
                             for domain in matches:
                                 if not any(x in domain for x in [".local", ".internal", "localhost", "caddy", "docker"]):
-                                    return f"https://{domain}"
+                                    if any(x in c_name.lower() for x in ["ui", "frontend", "web", "caddy", "ingress", "gateway", "proxy"]):
+                                        return f"https://{domain}"
                         except Exception:
                             pass
 
@@ -390,7 +416,7 @@ class CodebaseDetector:
 class AraAgent:
     """Core Telemetry & Log Streaming Daemon."""
 
-    def __init__(self, hub_url: str, fleet_key: str, node_name: str, base_domain: str = "suburbancloud.ng"):
+    def __init__(self, hub_url: str, fleet_key: str, node_name: str, base_domain: str = "suburbancloud.ng", insecure: bool = False):
         self.hub_url = hub_url.rstrip("/")
         if not self.hub_url.endswith("/api/telemetry/ingest"):
             self.ingest_url = f"{self.hub_url}/api/telemetry/ingest"
@@ -400,8 +426,10 @@ class AraAgent:
         self.fleet_key = fleet_key
         self.node_name = node_name
         self.base_domain = base_domain
+        self.insecure = insecure
         self.docker = DockerSocket()
         self.metrics = SystemMetricsCollector()
+        self._command_results: List[Dict[str, Any]] = []
 
     def classify_service(self, name: str, img: str, port: int) -> str:
         combined = f"{name.lower()} {img.lower()}"
@@ -462,13 +490,42 @@ class AraAgent:
             # REAL LIVE LOGS (100 lines)
             logs = self.docker.get_logs(cid, tail=100)
 
+            created_raw = inspect_data.get("Created") or c.get("Created", "")
+            if isinstance(created_raw, (int, float)) and created_raw > 0:
+                try:
+                    created_at_iso = datetime.datetime.fromtimestamp(created_raw, tz=datetime.timezone.utc).isoformat()
+                except Exception:
+                    created_at_iso = str(created_raw)
+            else:
+                created_at_iso = str(created_raw) if created_raw else ""
+
+            # Value-based secret scrubber for environment variables
+            sanitized_env = []
+            for e in env_vars[:30]:
+                if "=" in e:
+                    k, v = e.split("=", 1)
+                    k_up = k.upper()
+                    if any(s in k_up for s in ["PASS", "KEY", "SECRET", "TOKEN", "AUTH", "CREDENTIAL", "PRIVATE", "SALT"]):
+                        sanitized_env.append(f"{k}=***REDACTED***")
+                    elif re.search(r"://[^:]+:[^@]+@", v):
+                        masked_v = re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", v)
+                        sanitized_env.append(f"{k}={masked_v}")
+                    elif v.startswith("Bearer "):
+                        sanitized_env.append(f"{k}=Bearer ***REDACTED***")
+                    else:
+                        sanitized_env.append(e)
+                else:
+                    sanitized_env.append(e)
+
+            oom_killed = state.get("OOMKilled", False)
+
             services.append({
                 "service_name": c_name,
                 "container_name": c_name,
                 "container_id": cid,
                 "full_id": c.get("Id", ""),
                 "image": img,
-                "created_at": c.get("Created", ""),
+                "created_at": created_at_iso,
                 "started_at": state.get("StartedAt", ""),
                 "status": "up" if state.get("Running", False) else state.get("Status", "stopped"),
                 "status_detail": c.get("Status", ""),
@@ -479,11 +536,12 @@ class AraAgent:
                 "git_repo": git_repo if git_repo != "N/A" else "",
                 "git_branch": git_branch if git_branch != "N/A" else "",
                 "access_url": access_url,
-                "env": [e for e in env_vars if not any(s in e.upper() for s in ["PASS", "KEY", "SECRET", "TOKEN"])][:20],
+                "env": sanitized_env,
                 "networks": inspect_data.get("NetworkSettings", {}).get("Networks", {}),
                 "restart_policy": inspect_data.get("HostConfig", {}).get("RestartPolicy", {}).get("Name", ""),
                 "restart_count": inspect_data.get("RestartCount", 0),
                 "exit_code": state.get("ExitCode"),
+                "oom_killed": oom_killed,
                 "mounts": [{"source": m.get("Source", ""), "destination": m.get("Destination", ""), "type": m.get("Type", "")} for m in mounts if isinstance(m, dict)],
                 "logs": logs,
             })
@@ -514,13 +572,19 @@ class AraAgent:
 
     def send_heartbeat(self) -> bool:
         payload = self.collect_payload()
-        data = json.dumps(payload).encode("utf-8")
+        if self._command_results:
+            payload["command_results"] = list(self._command_results)
+            self._command_results.clear()
+
+        raw_json = json.dumps(payload).encode("utf-8")
+        compressed_data = gzip.compress(raw_json)
 
         req = urllib.request.Request(
             self.ingest_url,
-            data=data,
+            data=compressed_data,
             headers={
                 "Content-Type": "application/json",
+                "Content-Encoding": "gzip",
                 "X-Fleet-Key": self.fleet_key,
                 "X-Node-Name": self.node_name,
                 "User-Agent": f"ara-agent/{self.node_name}",
@@ -531,20 +595,59 @@ class AraAgent:
         try:
             import ssl
             ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
+            if self.insecure:
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
             with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
                 body = resp.read().decode("utf-8", errors="replace")
+                if resp.status == 200:
+                    try:
+                        data = json.loads(body)
+                        pending_commands = data.get("pending_commands", [])
+                        if pending_commands:
+                            self.handle_pending_commands(pending_commands)
+                    except Exception:
+                        pass
                 return resp.status == 200
         except Exception as e:
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Telemetry transmission error: {e}")
             return False
 
+    def handle_pending_commands(self, commands: List[Dict[str, Any]]):
+        import hmac
+        import hashlib
+        for cmd in commands:
+            cmd_id = cmd.get("id")
+            action = cmd.get("action")
+            target = cmd.get("target")
+            sig = cmd.get("signature")
+
+            payload_str = f"{cmd_id}:{self.node_name}:{action}:{target}"
+            expected_sig = hmac.new(self.fleet_key.encode(), payload_str.encode(), hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(expected_sig, sig or ""):
+                print(f"[!] Rejecting unsigned or tampered command {cmd_id}")
+                continue
+
+            success = False
+            msg = ""
+            if action == "restart":
+                success = self.docker.restart_container(target)
+                msg = f"Container {target} restart: {'SUCCESS' if success else 'FAILED'}"
+            else:
+                msg = f"Unsupported action '{action}'"
+
+            self._command_results.append({
+                "id": cmd_id,
+                "status": "SUCCESS" if success else "FAILED",
+                "result": {"message": msg, "success": success},
+            })
+
     def run_forever(self, interval_seconds: int = 15):
         print("=" * 65)
         print(f"🛰️  ARA Autonomous Agent Started for '{self.node_name}'")
         print(f"• Central Hub:    {self.ingest_url}")
-        print(f"• Ingest Cadence: Every {interval_seconds}s")
+        print(f"• Ingest Cadence: Every {interval_seconds}s (Gzip Compressed)")
+        print(f"• TLS Security:   {'INSECURE (Verification disabled)' if self.insecure else 'STRICT (Certificate verified)'}")
         print(f"• Public IP:      {self.metrics.get_public_ip()}")
         print(f"• Docker Socket:  {self.docker.SOCK_PATH} (available: {self.docker.is_available()})")
         print("=" * 65)
@@ -562,9 +665,10 @@ class AraAgent:
 
 def main():
     hub_url = os.environ.get("HUB_URL") or os.environ.get("CENTRAL_HUB_URL") or "https://ara.suburbancloud.ng"
-    fleet_key = os.environ.get("FLEET_KEY") or "ara_fleet_305dc0e721b5f52d96be99d7b8ee8656e2befa3e"
+    fleet_key = os.environ.get("FLEET_KEY") or ""
     node_name = os.environ.get("NODE_NAME") or socket.gethostname()
     base_domain = os.environ.get("BASE_DOMAIN") or "suburbancloud.ng"
+    insecure = "--insecure" in sys.argv or os.environ.get("INSECURE_TLS") == "1"
 
     # Command line args override
     args = sys.argv[1:]
@@ -582,15 +686,25 @@ def main():
         elif args[i] == "--domain" and i + 1 < len(args):
             base_domain = args[i + 1]
             i += 2
+        elif args[i] == "--insecure":
+            insecure = True
+            i += 1
         elif args[i] == "--once":
-            agent = AraAgent(hub_url, fleet_key, node_name, base_domain)
+            if not fleet_key:
+                print("FATAL: Fleet key required. Provide --fleet-key <KEY> or set FLEET_KEY.", file=sys.stderr)
+                sys.exit(1)
+            agent = AraAgent(hub_url, fleet_key, node_name, base_domain, insecure=insecure)
             success = agent.send_heartbeat()
             print("Single heartbeat test:", "SUCCESS" if success else "FAILED")
             sys.exit(0 if success else 1)
         else:
             i += 1
 
-    agent = AraAgent(hub_url, fleet_key, node_name, base_domain)
+    if not fleet_key:
+        print("FATAL: Fleet key required. Provide --fleet-key <KEY> or set FLEET_KEY env var.", file=sys.stderr)
+        sys.exit(1)
+
+    agent = AraAgent(hub_url, fleet_key, node_name, base_domain, insecure=insecure)
     agent.run_forever(interval_seconds=15)
 
 

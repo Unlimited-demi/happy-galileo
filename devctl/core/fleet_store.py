@@ -49,10 +49,15 @@ class FleetStore:
                         open_incidents_count  INTEGER DEFAULT 0,
                         last_seen             REAL NOT NULL,
                         registered_at         REAL NOT NULL,
-                        payload_json          TEXT NOT NULL
+                        payload_json          TEXT NOT NULL,
+                        node_token_hash       TEXT
                     )
                     """
                 )
+                try:
+                    conn.execute("ALTER TABLE fleet_nodes ADD COLUMN node_token_hash TEXT")
+                except sqlite3.OperationalError:
+                    pass
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_fleet_nodes_last_seen ON fleet_nodes(last_seen)")
 
                 conn.execute(
@@ -79,7 +84,7 @@ class FleetStore:
         conn.row_factory = sqlite3.Row
         return conn
 
-    def upsert_node(self, payload: Dict[str, Any], client_ip: str = "127.0.0.1") -> Dict[str, Any]:
+    def upsert_node(self, payload: Dict[str, Any], client_ip: str = "127.0.0.1", token_hash: Optional[str] = None) -> Dict[str, Any]:
         """Record or update a node heartbeat payload."""
         node_name = payload.get("node_name", "unknown")
         now = time.time()
@@ -106,8 +111,8 @@ class FleetStore:
                     """
                     INSERT INTO fleet_nodes (
                         node_name, client_ip, base_domain, containers_count, services_count,
-                        open_incidents_count, last_seen, registered_at, payload_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        open_incidents_count, last_seen, registered_at, payload_json, node_token_hash
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(node_name) DO UPDATE SET
                         client_ip = excluded.client_ip,
                         base_domain = excluded.base_domain,
@@ -115,11 +120,12 @@ class FleetStore:
                         services_count = excluded.services_count,
                         open_incidents_count = excluded.open_incidents_count,
                         last_seen = excluded.last_seen,
-                        payload_json = excluded.payload_json
+                        payload_json = excluded.payload_json,
+                        node_token_hash = COALESCE(excluded.node_token_hash, fleet_nodes.node_token_hash)
                     """,
                     (
                         node_name, client_ip, base_domain, containers_count, services_count,
-                        open_incidents_count, now, now, payload_json
+                        open_incidents_count, now, now, payload_json, token_hash
                     )
                 )
                 conn.commit()
@@ -127,6 +133,36 @@ class FleetStore:
                 conn.close()
 
         return payload_copy
+
+    def validate_node_key(self, node_name: str, key: str) -> bool:
+        """
+        Verify that the provided telemetry key matches the node's registered token hash,
+        or the master FLEET_KEY environment variable. Fails closed.
+        """
+        if not key or not node_name:
+            return False
+        import hashlib
+        import secrets
+        import os
+
+        # Master FLEET_KEY check
+        master_key = os.environ.get("FLEET_KEY", "").strip()
+        if master_key and secrets.compare_digest(master_key, key):
+            return True
+
+        key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                cur = conn.execute("SELECT node_token_hash FROM fleet_nodes WHERE node_name = ?", (node_name,))
+                row = cur.fetchone()
+                if not row or not row["node_token_hash"]:
+                    # Node not registered yet or has no token bound; allow if master key matches
+                    return bool(master_key and secrets.compare_digest(master_key, key))
+                return secrets.compare_digest(row["node_token_hash"], key_hash)
+            finally:
+                conn.close()
 
     def get_node(self, node_name: str) -> Optional[Dict[str, Any]]:
         """Retrieve a single node by name with current TTL status."""
