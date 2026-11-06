@@ -568,20 +568,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         client_ip = node_data.get("client_ip", "")
                         for svc in (node_data.get("services") or []):
                             if isinstance(svc, dict) and (svc.get("service_name") == service_name or svc.get("container_name") == service_name):
-                                logs_text = (
-                                    f"═════════════════════════════════════════════════════════════════════\n"
-                                    f"🛰️  REMOTE SERVICE TELEMETRY: {service_name}\n"
-                                    f"═════════════════════════════════════════════════════════════════════\n"
-                                    f"• Node Host:        {node_name} ({client_ip})\n"
-                                    f"• Status Detail:    {svc.get('status_detail', 'Active')}\n"
-                                    f"• Internal Port:    {svc.get('port', 80)}\n"
-                                    f"• Ingress Endpoint: {svc.get('access_url', '[INTERNAL]')}\n"
-                                    f"• Git Repository:   {svc.get('git_repo', 'N/A')} (branch: {svc.get('git_branch', 'main')})\n"
-                                    f"• Workspace Path:   {svc.get('repo_path', 'N/A')}\n"
-                                    f"• Last Telemetry:   {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(node_data.get('last_seen', time.time())))}\n"
-                                    f"═════════════════════════════════════════════════════════════════════\n"
-                                    f"[✓] Container is active and operating within healthy SLA limits.\n"
-                                )
+                                raw_logs = svc.get("logs") or svc.get("container_logs") or ""
+                                if raw_logs:
+                                    lines = raw_logs.strip().splitlines()
+                                    logs_text = "\n".join(lines[-tail:])
+                                else:
+                                    last_seen_str = time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(node_data.get('last_seen', time.time())))
+                                    logs_text = (
+                                        f"[{last_seen_str}] Connected to satellite node '{node_name}' ({client_ip}).\n"
+                                        f"Container '{service_name}' (ID: {svc.get('container_id', 'N/A')}) Status: {svc.get('status_detail', 'Active')}\n"
+                                        f"[No stdout/stderr stream received yet from satellite. Ensure container logs are enabled in ara-agent telemetry.]"
+                                    )
                                 break
                         if logs_text:
                             break

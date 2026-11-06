@@ -68,19 +68,62 @@ class FleetTelemetryStreamer:
                     "id": c.get("Id", "")[:12],
                 }
 
-        # Enrich registered services with container image & version
+        # Enrich registered services with container image, version & real live logs
         enriched_services = []
+        covered_names = set()
         for svc in services:
             c_name = svc.get("container_name", svc.get("service_name"))
+            covered_names.add(c_name)
             c_info = container_map.get(c_name, {})
+            cid = c_info.get("id") or c_name
+            c_logs = ""
+            try:
+                c_logs = self.docker.get_logs(cid, tail=100)
+            except Exception:
+                pass
+
             enriched = {
                 **svc,
                 "image": c_info.get("image", svc.get("image", "custom/app:latest")),
                 "version": c_info.get("version", "latest"),
                 "container_status": c_info.get("status", "RUNNING"),
                 "container_id": c_info.get("id", ""),
+                "logs": c_logs,
             }
             enriched_services.append(enriched)
+
+        # Include any running containers not explicitly registered
+        for c in containers:
+            names = [n.lstrip("/") for n in c.get("Names", [])]
+            if not names:
+                continue
+            primary_name = names[0]
+            if primary_name in covered_names:
+                continue
+            cid = c.get("Id", "")[:12]
+            c_logs = ""
+            try:
+                c_logs = self.docker.get_logs(cid, tail=100)
+            except Exception:
+                pass
+            c_image = c.get("Image", "unknown")
+            v_tag = c_image.split(":")[-1] if ":" in c_image else "latest"
+            detected_type = DomainRegistry.classify_container(primary_name, c_image, [])
+            enriched_services.append({
+                "service_name": primary_name,
+                "container_name": primary_name,
+                "container_id": cid,
+                "full_id": c.get("Id", ""),
+                "image": c_image,
+                "version": v_tag,
+                "status": "up" if c.get("State") == "running" else c.get("State", "stopped"),
+                "container_status": c.get("Status", "RUNNING"),
+                "status_detail": c.get("Status", "Running"),
+                "service_type": detected_type,
+                "access_url": "[INTERNAL]",
+                "logs": c_logs,
+            })
+            covered_names.add(primary_name)
 
         # Latest degradation-trend verdicts written by the AI-Ops daemon
         trends = {}
