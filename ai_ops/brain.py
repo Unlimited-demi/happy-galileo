@@ -116,7 +116,7 @@ class BrainEngine:
                     headers={"Content-Type": "application/json"},
                     method="POST",
                 )
-                with urllib.request.urlopen(req, timeout=8.0) as resp:
+                with urllib.request.urlopen(req, timeout=25.0) as resp:
                     if resp.status == 200:
                         res_json = json.loads(resp.read().decode("utf-8"))
                         explanation = res_json.get("response", "").strip()

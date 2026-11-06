@@ -94,6 +94,21 @@ class IncidentDispatcher:
         severity = incident.get("severity", "HIGH")
         evidence = incident.get("evidence", {}) or {}
 
+        # Enrich recommendation via Qwen if missing or generic
+        current_rec = incident.get("recommendation")
+        if not current_rec or current_rec == "Investigate container runtime logs and apply targeted patch.":
+            try:
+                from ai_ops.brain import BrainEngine
+                brain = BrainEngine()
+                logs = evidence.get("logs") or evidence.get("stack_trace") or ""
+                if logs:
+                    qwen_rec = brain.explain_incident(service_name, evidence.get("issue_type", "INCIDENT"), logs)
+                    if qwen_rec:
+                        incident["recommendation"] = qwen_rec
+                        self.bus.update_incident(incident_id, {"recommendation": qwen_rec})
+            except Exception:
+                pass
+
         # 1. Resolve host workspace directory & compose file
         svc_entry = self.registry.get_service(service_name) or {}
         svc_meta = svc_entry.get("metadata") or {}

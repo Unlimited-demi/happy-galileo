@@ -372,6 +372,24 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     self._send_json({"error": "Incident not found"}, status=404)
                     return
 
+                # Enrich with Qwen local AI root-cause diagnosis if missing or default generic text
+                current_rec = inc.get("recommendation")
+                if not current_rec or current_rec == "Investigate container runtime logs and apply targeted patch.":
+                    try:
+                        from ai_ops.brain import BrainEngine
+                        brain = BrainEngine()
+                        ev = inc.get("evidence", {}) or {}
+                        logs = ev.get("logs") or ev.get("stack_trace") or ""
+                        svc = inc.get("service_name", "service")
+                        cat = ev.get("issue_type", "INCIDENT")
+                        if logs:
+                            qwen_rec = brain.explain_incident(svc, cat, logs)
+                            if qwen_rec and qwen_rec != current_rec:
+                                inc["recommendation"] = qwen_rec
+                                bus.update_incident(inc_id, {"recommendation": qwen_rec})
+                    except Exception:
+                        pass
+
                 md_path = bus.incidents_dir / f"{inc_id}.md"
                 md_text = ""
                 if md_path.exists():
@@ -927,12 +945,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             if existing:
                                 bus.record_occurrence(existing["id"])
                             else:
+                                ai_recommendation = None
+                                try:
+                                    from ai_ops.brain import BrainEngine
+                                    brain = BrainEngine()
+                                    ai_recommendation = brain.explain_incident(svc_name, issue_type, recent_logs)
+                                except Exception:
+                                    pass
+
                                 bus.create_incident(
                                     service_name=svc_name,
                                     title=issue_summary,
                                     severity=severity,
                                     source_node=node_name,
                                     fingerprint=fingerprint,
+                                    recommendation=ai_recommendation,
                                     evidence={
                                         "issue_type": issue_type,
                                         "exit_code": exit_code,
