@@ -4,6 +4,7 @@ Stores satellite node telemetry, heartbeats, and queued infra commands in SQLite
 Enforces TTL expiration: ONLINE (<=45s), STALE (45-90s), OFFLINE (>90s).
 """
 
+import os
 import json
 import time
 import uuid
