@@ -314,10 +314,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 only_open = params.get("all", ["true"])[0] != "true"
                 local_incidents = bus.list_incidents(only_open=only_open) or []
 
-                # Tag local incidents with their source node
+                # Tag local incidents with their source node only if not already specified
                 local_node_name = os.environ.get("NODE_NAME", "vm-01 (Primary)")
                 for inc in local_incidents:
-                    if isinstance(inc, dict):
+                    if isinstance(inc, dict) and not inc.get("source_node"):
                         inc["source_node"] = local_node_name
 
                 # Merge incidents from all remote fleet nodes safely
@@ -342,6 +342,31 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 all_incidents.sort(key=lambda x: str(x.get("created_at", "") or ""), reverse=True)
                 self._send_json({"incidents": all_incidents})
                 return
+
+            elif path.startswith("/api/incidents/") and path.endswith("/flight-record"):
+                # Fetch structured flight recorder and replay timeline
+                inc_id = path[len("/api/incidents/"): -len("/flight-record")].strip("/")
+                if inc_id:
+                    bus = IncidentBus()
+                    inc = bus.get_incident(inc_id)
+                    if not inc:
+                        for node_data in FLEET_STORE.get_all_nodes():
+                            if isinstance(node_data, dict):
+                                for rinc in (node_data.get("all_incidents") or node_data.get("open_incidents") or []):
+                                    if isinstance(rinc, dict) and rinc.get("id") == inc_id:
+                                        inc = dict(rinc)
+                                        break
+                            if inc:
+                                break
+                    if not inc:
+                        self._send_json({"error": "Incident not found"}, status=404)
+                        return
+
+                    from ai_ops.flight_recorder import FlightRecorder
+                    fr = FlightRecorder()
+                    record = fr.get_or_generate_flight_record(inc)
+                    self._send_json({"flight_record": record})
+                    return
 
             elif path.startswith("/api/incidents/") and path.endswith("/worker-logs"):
                 # Extract inc_id: /api/incidents/<id>/worker-logs
@@ -916,6 +941,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         issue_type = ""
                         severity = "HIGH"
 
+                        recent_lines = [l.strip() for l in recent_logs.strip().splitlines() if l.strip()]
+                        recent_tail = "\n".join(recent_lines[-15:]) if recent_lines else ""
+
                         if oom_killed:
                             issue_detected = True
                             issue_type = "OOM_KILLED"
@@ -926,18 +954,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             issue_type = "CONTAINER_CRASH"
                             severity = "HIGH"
                             issue_summary = f"Container {svc_name} on node {node_name} exited with status {exit_code}."
-                        elif "Traceback (most recent call last):" in recent_logs:
+                        elif "Traceback (most recent call last):" in recent_tail:
                             issue_detected = True
                             issue_type = "UNHANDLED_EXCEPTION"
                             severity = "HIGH"
-                            tb_lines = [l.strip() for l in recent_logs.splitlines() if l.strip()]
+                            tb_lines = [l.strip() for l in recent_tail.splitlines() if l.strip()]
                             last_err = tb_lines[-1] if tb_lines else "Traceback detected"
                             issue_summary = f"Unhandled Exception in {svc_name} on node {node_name}: {last_err}"
-                        elif "FATAL:" in recent_logs or "panic:" in recent_logs:
+                        elif "panic:" in recent_tail or ("FATAL:" in recent_tail and "terminating connection" not in recent_tail):
                             issue_detected = True
                             issue_type = "FATAL_ERROR"
-                            severity = "CRITICAL"
-                            issue_summary = f"Fatal panic/crash in {svc_name} on node {node_name}."
+                            severity = "CRITICAL" if svc_status not in ("running", "up") else "HIGH"
+                            if "password authentication failed" in recent_tail:
+                                issue_summary = f"Database authentication failure in {svc_name} on node {node_name}."
+                            else:
+                                issue_summary = f"Fatal error in {svc_name} on node {node_name}."
 
                         if issue_detected:
                             fingerprint = bus.compute_fingerprint(f"{node_name}:{svc_name}", issue_type, issue_summary)

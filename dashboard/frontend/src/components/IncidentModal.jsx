@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { AlertTriangle, FileText, ScrollText, X, Copy, ShieldCheck, RefreshCw, Zap } from 'lucide-react';
+import { AlertTriangle, FileText, ScrollText, X, Copy, ShieldCheck, RefreshCw, Zap, Radio } from 'lucide-react';
+import { IncidentFlightRecorder } from './IncidentFlightRecorder';
 import {
   Dialog,
   DialogContent,
@@ -95,8 +96,8 @@ export function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
               </TabsTrigger>
             )}
             <TabsTrigger value="worker" className="gap-2 text-xs">
-              <ScrollText className="w-4 h-4" />
-              Worker Audit Log
+              <Radio className="w-3.5 h-3.5 text-sky-400" />
+              Flight Recorder & Replay
               {isClaimed && <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />}
             </TabsTrigger>
           </TabsList>
@@ -182,44 +183,13 @@ export function IncidentModal({ incident, onClose, onCopy, onDispatch }) {
             </TabsContent>
           )}
 
-          {/* Tab 3: Safe Read-Only Worker Audit Log */}
+          {/* Tab 3: Autonomous Agent Flight Recorder & Replay */}
           <TabsContent value="worker" className="space-y-3 pt-2">
-            <div className="flex items-center justify-between">
-              <div className="text-xs text-muted-foreground flex items-center gap-2">
-                <span>Worker Process: <strong className="font-mono text-slate-200">opencode-{incident.id}</strong></span>
-                {workerStatus?.state && (
-                  <Badge variant="outline" className="text-[10px] uppercase font-mono">
-                    {workerStatus.state}
-                  </Badge>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={fetchWorkerLogs}
-                  disabled={loadingLogs}
-                  className="h-7 text-xs gap-1"
-                >
-                  <RefreshCw className={`w-3 h-3 ${loadingLogs ? 'animate-spin' : ''}`} />
-                  Refresh
-                </Button>
-                {workerLogs && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onCopy && onCopy(workerLogs)}
-                    className="h-7 text-xs gap-1"
-                  >
-                    <Copy className="w-3 h-3" />
-                    Copy
-                  </Button>
-                )}
-              </div>
-            </div>
-            <div className="rounded-lg bg-zinc-950 border border-border/80 p-4 font-mono text-xs text-slate-200 max-h-80 overflow-y-auto whitespace-pre-wrap">
-              {workerLogs}
-            </div>
+            <IncidentFlightRecorder
+              incidentId={incident.id}
+              incident={incident}
+              onCopy={onCopy}
+            />
           </TabsContent>
         </Tabs>
       </DialogContent>
