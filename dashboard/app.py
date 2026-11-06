@@ -859,10 +859,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 token_hash = hashlib.sha256(fleet_key.encode("utf-8")).hexdigest() if fleet_key else None
                 FLEET_STORE.upsert_node(payload, client_ip=client_ip, token_hash=token_hash)
 
-                # Trigger asynchronous AI architectural description generation if new enrollment or description is missing
-                is_enrollment = bool(payload.get("enrollment"))
+                # Trigger asynchronous AI architectural description generation ONLY if description is missing
                 existing_desc = FLEET_STORE.get_node_description(node_name)
-                if is_enrollment or not existing_desc:
+                if not existing_desc:
                     def _async_gen_desc(n_name, n_payload):
                         try:
                             from ai_ops.brain import BrainEngine

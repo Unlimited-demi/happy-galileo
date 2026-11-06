@@ -124,17 +124,27 @@ class ConcertNotifier:
             or context.get("userId")
         )
 
+        import time
+        import secrets
+        inc_id = context.get("incident_id") or f"INC-{time.strftime('%Y%m%d')}-{secrets.token_hex(3).upper()}"
+
         payload = {
+            "incident_id": inc_id,
+            "fingerprint": "N/A",
+            "service_name": context.get("service_name") or "Core System",
+            "node_name": os.environ.get("NODE_NAME", "hub-vm"),
+            "severity": "INFO",
+            "title": "ARA Autonomous SRE Response",
+            "plain_english_summary": reply_text,
             "text": reply_text,
             "content": reply_text,
             "message": reply_text,
-            "plain_english_summary": reply_text,
-            "title": "ARA Autonomous SRE Response",
             "sender": "ARA (Autonomous SRE)",
             "query": query,
             "engine": engine,
-            "node_name": os.environ.get("NODE_NAME", "Primary Controller"),
             "status": "COMPLETED",
+            "occurrences": 1,
+            "recommended_action": "Reply with @ARA <question> to consult the AI assistant.",
         }
         if thread_id:
             payload["thread_id"] = thread_id
