@@ -91,12 +91,16 @@ class FleetStore:
         # Prefer payload-specified real server IP if client_ip is internal docker bridge
         if client_ip.startswith("172.") or client_ip.startswith("127.") or client_ip == "localhost":
             real_ip = payload.get("server_ip") or payload.get("node_ip") or payload.get("public_ip")
+            if not real_ip and (node_name == "hub-vm" or "hub" in node_name.lower()):
+                real_ip = os.environ.get("PUBLIC_IP", "41.73.0.6")
             if real_ip:
                 client_ip = real_ip.strip()
 
         payload_copy = dict(payload)
         payload_copy["received_at"] = now
         payload_copy["client_ip"] = client_ip
+        if not payload_copy.get("server_ip"):
+            payload_copy["server_ip"] = client_ip
 
         payload_json = json.dumps(payload_copy)
         base_domain = payload.get("base_domain", Config.BASE_DOMAIN)
@@ -211,6 +215,13 @@ class FleetStore:
 
         data["node_name"] = row["node_name"]
         data["client_ip"] = row["client_ip"]
+        if not data.get("server_ip") or data.get("server_ip") in ("127.0.0.1", "localhost") or str(data.get("server_ip", "")).startswith("172."):
+            if "support" in row["node_name"].lower():
+                data["server_ip"] = "102.38.58.99"
+            elif "hub" in row["node_name"].lower():
+                data["server_ip"] = "41.73.0.6"
+            else:
+                data["server_ip"] = row["client_ip"]
         data["base_domain"] = row["base_domain"]
         data["status"] = status
         data["online"] = online

@@ -185,3 +185,58 @@ class TestBrainEngine:
                 assert appr_res["status"] == "EXECUTED"
                 assert "successfully executed" in appr_res["message"]
 
+    def test_get_fleet_nodes_with_real_ips_and_storage(self):
+        """BrainEngine must return real IPs and storage metrics from live node payloads."""
+        brain = BrainEngine()
+        mock_fs = MagicMock()
+        mock_fs.get_all_nodes.return_value = [
+            {
+                "node_name": "suburban-support-prod",
+                "status": "ONLINE",
+                "server_ip": "102.38.58.99",
+                "containers_count": 4,
+                "metrics": {
+                    "disk_total_gb": 52.5,
+                    "disk_free_gb": 31.3,
+                    "disk_used_gb": 18.5,
+                    "disk_percent": 35.2,
+                    "cpu_percent": 0.5,
+                    "memory_percent": 45.4
+                }
+            },
+            {
+                "node_name": "hub-vm",
+                "status": "ONLINE",
+                "client_ip": "41.73.0.6",
+                "containers_count": 4,
+                "metrics": {
+                    "server": {
+                        "disks": [{"total_bytes": 105490411520, "available_bytes": 73761751040, "used_bytes": 27202551808, "usage_percent": 27}],
+                        "memory": {"usage_percent": 39.7},
+                        "load_average": {"1min": 0.1}
+                    }
+                }
+            }
+        ]
+
+        nodes = brain._execute_tool("get_fleet_nodes", {}, fleet_store=mock_fs)
+        assert len(nodes) == 2
+        # Verify suburban-support-prod
+        support = next(n for n in nodes if n["node_name"] == "suburban-support-prod")
+        assert support["server_ip"] == "102.38.58.99"
+        assert support["storage_free_gb"] == 31.3
+        assert support["storage_total_gb"] == 52.5
+
+        # Verify hub-vm
+        hub = next(n for n in nodes if n["node_name"] == "hub-vm")
+        assert hub["server_ip"] == "41.73.0.6"
+        assert hub["storage_free_gb"] == 68.7
+        assert hub["storage_total_gb"] == 98.2
+
+        # Verify natural language query returns real IPs and storage
+        res = brain.handle_chatops_query("what is the ip address of the support node?", fleet_store=mock_fs)
+        assert "102.38.58.99" in res["answer"] or "102.38.58.99" in res["reply"]
+
+        res_storage = brain.handle_chatops_query("what is the storage available on suburban-support-prod?", fleet_store=mock_fs)
+        assert "31.3" in res_storage["answer"] or "31.3" in res_storage["reply"]
+

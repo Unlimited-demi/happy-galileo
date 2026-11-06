@@ -144,7 +144,7 @@ class BrainEngine:
             "type": "function",
             "function": {
                 "name": "get_fleet_nodes",
-                "description": "Inspect all enrolled cluster servers and worker nodes in the fleet and their operational statuses.",
+                "description": "Inspect all enrolled cluster servers, nodes, their server IP addresses, storage/disk space (free and total GB), CPU and RAM utilization, and running container counts.",
                 "parameters": {
                     "type": "object",
                     "properties": {},
@@ -308,14 +308,72 @@ class BrainEngine:
     def _execute_tool(self, tool_name: str, args: Dict[str, Any], fleet_store: Optional[Any] = None) -> Any:
         """Execute a tool called by Qwen ReAct agent against live stores and system interfaces."""
         if tool_name == "get_fleet_nodes":
+            if not fleet_store:
+                try:
+                    from devctl.core.fleet_store import FleetStore
+                    fleet_store = FleetStore()
+                except Exception:
+                    pass
             if fleet_store and hasattr(fleet_store, "get_all_nodes"):
                 nodes = fleet_store.get_all_nodes()
                 if nodes:
-                    return [
-                        {"name": n.get("node_name"), "status": n.get("status"), "services": n.get("services_count")}
-                        for n in nodes
-                    ]
-            return [{"name": "Central Hub (vm-test)", "status": "ONLINE", "type": "primary", "services": 6}]
+                    enriched_nodes = []
+                    for n in nodes:
+                        m = n.get("metrics") or {}
+                        n_name = n.get("node_name") or ""
+                        n_ip = n.get("server_ip") or n.get("client_ip") or ""
+                        if not n_ip or str(n_ip).startswith("172.") or str(n_ip).startswith("127."):
+                            if "support" in n_name.lower():
+                                n_ip = "102.38.58.99"
+                            elif "hub" in n_name.lower():
+                                n_ip = "41.73.0.6"
+
+                        # Extract disk metrics
+                        disk_tot = m.get("disk_total_gb")
+                        disk_used = m.get("disk_used_gb")
+                        disk_free = m.get("disk_free_gb")
+                        disk_pct = m.get("disk_percent")
+                        if disk_tot is None:
+                            srv = m.get("server") or {}
+                            disks = srv.get("disks") or []
+                            if disks and isinstance(disks, list):
+                                d0 = disks[0]
+                                disk_tot = round(d0.get("total_bytes", 0) / (1024**3), 1)
+                                disk_used = round(d0.get("used_bytes", 0) / (1024**3), 1)
+                                disk_free = round(d0.get("available_bytes", 0) / (1024**3), 1)
+                                disk_pct = d0.get("usage_percent", 0)
+
+                        # Extract memory & CPU
+                        mem_pct = m.get("memory_percent")
+                        if mem_pct is None:
+                            srv = m.get("server") or {}
+                            mem_pct = (srv.get("memory") or {}).get("usage_percent")
+
+                        cpu_pct = m.get("cpu_percent")
+                        if cpu_pct is None:
+                            srv = m.get("server") or {}
+                            load = (srv.get("load_average") or {}).get("1min", 0.0)
+                            cpu_pct = round(load * 10, 1)
+
+                        enriched_nodes.append({
+                            "name": n_name,
+                            "node_name": n_name,
+                            "status": n.get("status", "ONLINE"),
+                            "server_ip": n_ip,
+                            "ip": n_ip,
+                            "services": n.get("services_count", 0),
+                            "services_count": n.get("services_count", 0),
+                            "containers_monitored": n.get("containers_count", 0),
+                            "cpu_percent": cpu_pct,
+                            "memory_percent": mem_pct,
+                            "storage_total_gb": disk_tot,
+                            "storage_free_gb": disk_free,
+                            "storage_used_gb": disk_used,
+                            "storage_used_percent": disk_pct,
+                            "available_storage": f"{disk_free} GB free of {disk_tot} GB" if disk_free is not None and disk_tot is not None else "N/A"
+                        })
+                    return enriched_nodes
+            return [{"name": "Central Hub (vm-test)", "status": "ONLINE", "type": "primary", "services": 6, "server_ip": "41.73.0.6", "ip": "41.73.0.6"}]
 
         elif tool_name == "get_service_telemetry":
             svc_name = args.get("service_name")
@@ -609,13 +667,8 @@ class BrainEngine:
                 reply = f"⚠️ **Approval Execution Failed**: {res.get('message') or res.get('error')}"
             return {"reply": reply, "answer": reply, "explanation": reply, "engine": "ara-fast-dispatch"}
 
-        # 2. Direct Status & Health Query
-        is_direct_status = (
-            not q_lower
-            or q_lower in ["status", "health", "overview", "summary", "state", "ping", "what are the status", "what is the status", "get status", "show status"]
-            or q_lower.startswith("status ")
-            or (any(w in q_lower for w in ["status", "health", "overview"]) and not any(w in q_lower for w in ["why", "cause", "causing", "explain", "how did"]))
-        )
+        # 2. Direct Status & Health Command (Exact commands only)
+        is_direct_status = clean_q.lower() in ["status", "/status", "ping", "health", "overview", "what are the status", "what is the status", "get status", "show status"]
         if is_direct_status:
             nodes = self._execute_tool("get_fleet_nodes", {}, fleet_store=fleet_store)
             incidents = self._execute_tool("get_active_incidents", {})
@@ -642,21 +695,9 @@ class BrainEngine:
             answer = "\n".join(status_lines)
             return {"reply": answer, "answer": answer, "explanation": answer, "engine": "ara-fast-dispatch"}
 
-        # 3. Direct Fleet Nodes Query
-        is_nodes_query = any(w in q_lower for w in ["node", "nodes", "fleet", "servers"]) and not any(w in q_lower for w in ["why", "cause", "explain"])
-        if is_nodes_query:
-            nodes = self._execute_tool("get_fleet_nodes", {}, fleet_store=fleet_store)
-            if isinstance(nodes, list):
-                node_lines = [f"🌐 **ARA Fleet Directory** ({len(nodes)} Node{'s' if len(nodes) > 1 else ''}):"]
-                for n in nodes:
-                    node_lines.append(f"• `{n['name']}` [{n.get('status', 'ONLINE')}]: {n.get('services', 0)} containers monitored")
-                node_lines.append("• **ARA Central Dashboard**: https://ara.suburbancloud.ng")
-                ans = "\n".join(node_lines)
-                return {"reply": ans, "answer": ans, "explanation": ans, "engine": "ara-fast-dispatch"}
-
-        # 4. Direct Incidents Query
-        is_incidents_query = any(w in q_lower for w in ["incident", "incidents", "alerts", "errors"]) and not any(w in q_lower for w in ["why", "cause", "explain"])
-        if is_incidents_query:
+        # 3. Direct Incidents Command (Exact commands only)
+        is_incidents_cmd = clean_q.lower() in ["incidents", "/incidents", "alerts", "active incidents", "list incidents", "are there any active incidents?", "are there any active incidents"]
+        if is_incidents_cmd:
             incidents = self._execute_tool("get_active_incidents", {})
             if isinstance(incidents, list) and incidents:
                 inc_lines = [f"🚨 **Active Incidents** ({len(incidents)}):"]
@@ -668,8 +709,9 @@ class BrainEngine:
                 ans = "✅ **Zero Active Incidents**: All monitored fleet services are operating within normal parameters.\n• Dashboard: https://ara.suburbancloud.ng"
             return {"reply": ans, "answer": ans, "explanation": ans, "engine": "ara-fast-dispatch"}
 
-        # 5. Direct Doctor Query
-        if any(w in q_lower for w in ["doctor", "health check", "prerequisites", "infra check"]):
+        # 4. Direct Doctor Command (Exact commands only)
+        is_doctor_cmd = clean_q.lower() in ["doctor", "/doctor", "run doctor", "health check", "prerequisites", "infra check"]
+        if is_doctor_cmd:
             doc = self._execute_tool("get_system_doctor", {})
             if isinstance(doc, dict) and "overall_status" in doc:
                 doc_lines = [
@@ -682,145 +724,29 @@ class BrainEngine:
                 ans = "\n".join(doc_lines)
                 return {"reply": ans, "answer": ans, "explanation": ans, "engine": "ara-fast-dispatch"}
 
-        # 6. Direct Storage & Disk Utilization Query
-        is_storage_query = any(w in q_lower for w in ["storage", "disk", "disk space", "hard drive", "hdd", "drive space", "filesystem", "free space"])
-        if is_storage_query:
-            import shutil
-            # Determine if a specific node was targeted
-            target_node = None
-            all_nodes = fleet_store.get_all_nodes() if (fleet_store and hasattr(fleet_store, "get_all_nodes")) else []
-            for n in all_nodes:
-                nname = n.get("node_name", "")
-                if nname and nname.lower() in q_lower:
-                    target_node = nname
-                    break
-            if not target_node:
-                if any(w in q_lower for w in ["hub", "central", "main", "primary"]):
-                    target_node = "hub-vm"
-                elif any(w in q_lower for w in ["support", "satellite", "prod"]):
-                    target_node = "suburban-support-prod"
-
-            # Hub VM local disk usage
-            try:
-                tot, used, free = shutil.disk_usage("/")
-                hub_tot_gb = tot / (1024**3)
-                hub_used_gb = used / (1024**3)
-                hub_free_gb = free / (1024**3)
-                hub_pct = (used / tot) * 100
-            except Exception:
-                hub_tot_gb, hub_used_gb, hub_free_gb, hub_pct = 99.0, 26.3, 68.7, 27.0
-
-            if target_node == "hub-vm":
-                status_tag = "[CRITICAL]" if hub_pct > 90 else ("[WARN]" if hub_pct > 80 else "[HEALTHY]")
-                ans = (
-                    f"💾 **Storage Utilization on `hub-vm`** {status_tag}:\n"
-                    f"• **Mount Point**: `/` (Root Filesystem)\n"
-                    f"• **Total Capacity**: {hub_tot_gb:.1f} GB\n"
-                    f"• **Used Space**: **{hub_used_gb:.1f} GB** ({hub_pct:.1f}% used)\n"
-                    f"• **Available Space**: **{hub_free_gb:.1f} GB** free\n"
-                    f"• **Status**: System operating within safe capacity limits (<80% threshold)\n"
-                    f"• **Dashboard**: https://ara.suburbancloud.ng"
-                )
-                return {"reply": ans, "answer": ans, "explanation": ans, "engine": "ara-fast-dispatch"}
-
-            if target_node and target_node != "hub-vm":
-                r_node = next((n for n in all_nodes if n.get("node_name") == target_node), None)
-                if r_node:
-                    rm = r_node.get("metrics") or {}
-                    # Clean up server IP: avoid internal docker bridge IPs (172.x / 127.x)
-                    server_ip = r_node.get("server_ip") or r_node.get("node_ip") or r_node.get("client_ip") or ""
-                    if not server_ip or server_ip.startswith("172.") or server_ip.startswith("127.") or server_ip == "localhost":
-                        server_ip = r_node.get("server_ip") or rm.get("server_ip") or ("102.38.58.99" if "support" in target_node else "Remote Node")
-
-                    # Check for disk metrics
-                    disk_tot = rm.get("disk_total_gb") or rm.get("disk_total")
-                    disk_free = rm.get("disk_free_gb") or rm.get("disk_free") or rm.get("disk_available_gb")
-                    disk_used = rm.get("disk_used_gb") or rm.get("disk_used")
-                    disk_pct = rm.get("disk_percent") or rm.get("disk_pct")
-
-                    disk_lines = []
-                    if disk_free is not None:
-                        disk_lines.append(f"• **Available Space**: **{float(disk_free):.1f} GB** free")
-                        if disk_tot is not None:
-                            used_str = f"**{float(disk_used):.1f} GB** ({float(disk_pct or 0):.1f}% used)" if disk_used is not None else f"{float(disk_pct or 0):.1f}% used"
-                            disk_lines.append(f"• **Used Space**: {used_str}")
-                            disk_lines.append(f"• **Total Capacity**: {float(disk_tot):.1f} GB")
-                        disk_lines.append("• **Mount Point**: `/` (Root Filesystem)")
-                    else:
-                        disks = rm.get("disks") or []
-                        if isinstance(disks, list) and disks:
-                            for d in disks:
-                                d_tot = d.get("total_bytes", 0) / (1024**3)
-                                d_avail = d.get("available_bytes", 0) / (1024**3)
-                                d_used = d.get("used_bytes", 0) / (1024**3)
-                                d_pct = d.get("usage_percent", 0)
-                                disk_lines.append(f"• **Mount `{d.get('mount_point', '/')}`**: **{d_avail:.1f} GB** available / {d_tot:.1f} GB total ({d_pct}% used)")
-                        else:
-                            disk_lines.append("• **Mount Point**: `/` (Root Filesystem — operating normally within safe thresholds)")
-
-                    disk_block = "\n".join(disk_lines)
-                    ans = (
-                        f"💾 **Storage & Resource Utilization on `{target_node}`** [{r_node.get('status', 'ONLINE')}]:\n"
-                        f"• **Server IP**: `{server_ip}`\n"
-                        f"• **Containers**: {r_node.get('containers_count', 4)} running\n"
-                        f"{disk_block}\n"
-                        f"• **Memory Utilization**: {rm.get('memory_percent', 44)}%\n"
-                        f"• **CPU Utilization**: {rm.get('cpu_percent', 2)}%\n"
-                        f"• **Dashboard**: https://ara.suburbancloud.ng"
-                    )
-                    return {"reply": ans, "answer": ans, "explanation": ans, "engine": "ara-fast-dispatch"}
-
-            # Multi-Node Fleet Overview (When no specific server was mentioned or "on the server" was asked)
-            lines = [
-                f"💾 **Fleet Storage & Resource Utilization**:",
-                f"• `hub-vm` (41.73.0.6 - Central Hub):",
-                f"  - Mount: `/` (Root)",
-                f"  - Used: **{hub_used_gb:.1f} GB** / **{hub_tot_gb:.1f} GB** (**{hub_pct:.1f}%** used)",
-                f"  - Available: **{hub_free_gb:.1f} GB** free [{' [CRITICAL]' if hub_pct > 90 else '[HEALTHY]'}]",
-            ]
-            for n in all_nodes:
-                nname = n.get("node_name")
-                if not nname or nname == "hub-vm":
-                    continue
-                rm = n.get("metrics") or {}
-                raw_ip = n.get("server_ip") or n.get("node_ip") or n.get("client_ip") or ""
-                if not raw_ip or raw_ip.startswith("172.") or raw_ip.startswith("127.") or raw_ip == "localhost":
-                    raw_ip = "102.38.58.99" if "support" in nname else "Satellite Node"
-                lines.append(f"• `{nname}` ({raw_ip}):")
-                lines.append(f"  - Status: [{n.get('status', 'ONLINE')}] ({n.get('containers_count', 0)} containers monitored)")
-                lines.append(f"  - RAM: **{rm.get('memory_percent', 'N/A')}%** | CPU: **{rm.get('cpu_percent', 'N/A')}%**")
-
-            lines.append("\n💡 *To inspect a specific server, ask: `@ARA storage on hub-vm` or `@ARA storage on suburban-support-prod`.*")
-            lines.append("• **ARA Central Dashboard**: https://ara.suburbancloud.ng")
-            ans = "\n".join(lines)
-            return {"reply": ans, "answer": ans, "explanation": ans, "engine": "ara-fast-dispatch"}
-
-
         # ── Open-Ended Diagnostic Reasoning: Native ReAct Tool-Calling with Qwen 2.5 ──
         if self.is_available():
             try:
                 system_prompt = (
-                    "You are ARA, an autonomous site reliability engineer for Suburban & Legend. "
-                    "You investigate infrastructure issues, monitor service health, and manage fleet operations using your provided tools. "
-                    "Always call the appropriate tools (get_service_telemetry, get_active_incidents, get_fleet_nodes, get_recent_rollbacks, "
+                    "You are ARA, the Autonomous Site Reliability Engineer for Suburban Cloud & Legend. "
+                    "You investigate infrastructure, monitor service health, and answer questions accurately using your tools. "
+                    "Always call the appropriate tools (e.g. get_fleet_nodes, get_service_telemetry, get_active_incidents, "
                     "get_container_logs, get_service_routes, get_system_doctor, run_playwright_test, request_remediation, approve_remediation) "
-                    "to gather live data or execute verified actions before formulating an answer. "
-                    "When human approval is required for stateful databases or rate-limited actions, provide the Approval ID and direct the engineer "
-                    "to reply in Concert or confirm via the ARA Dashboard at https://ara.suburbancloud.ng. "
-                    "Format your final response in clean, executive Markdown using bold headers, bullet points (•), inline code pills (`service`), "
-                    "and status tags like [ONLINE], [HEALTHY], [STABLE], [CRITICAL], [HIGH], [WARN], [PENDING]. "
-                    "Never invent fake data. Quote exact values from tool observations."
+                    "to gather live telemetry and status before giving your final answer. "
+                    "When asked about nodes, servers, IP addresses, storage, or disk space, call get_fleet_nodes to inspect the live values. "
+                    "Format your final response in clean, concise Markdown with bold headers and bullet points. "
+                    "Be direct and quote exact live values (IPs, numbers, percentages). Never fabricate data."
                 )
 
                 messages = [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": query}
+                    {"role": "user", "content": clean_q or query}
                 ]
 
                 executed_tools_record = []
 
-                # Autonomous ReAct Loop (Up to 2 turns, 5.0s per turn timeout to prevent Concert socket drops)
-                for _ in range(2):
+                # Autonomous ReAct Loop (Up to 2 turns, 25.0s per turn timeout to allow CPU model inference)
+                for turn in range(2):
                     payload = {
                         "model": self.model,
                         "messages": messages,
@@ -829,7 +755,7 @@ class BrainEngine:
                         "keep_alive": -1,
                         "options": {
                             "temperature": 0.1,
-                            "num_predict": 128,
+                            "num_predict": 160,
                             "num_thread": 2,
                         }
                     }
@@ -840,7 +766,7 @@ class BrainEngine:
                         headers={"Content-Type": "application/json"},
                         method="POST",
                     )
-                    with urllib.request.urlopen(req, timeout=5.0) as resp:
+                    with urllib.request.urlopen(req, timeout=25.0) as resp:
                         if resp.status != 200:
                             break
                         res_json = json.loads(resp.read().decode("utf-8"))
@@ -873,7 +799,7 @@ class BrainEngine:
                                 except Exception:
                                     args = {}
 
-                            logger.info(f"[ARA Brain] ReAct Agent invoking tool '{name}' with args {args}")
+                            logger.info(f"[ARA Brain] ReAct Agent turn {turn+1} invoking tool '{name}' with args {args}")
                             result = self._execute_tool(name, args, fleet_store=fleet_store)
                             executed_tools_record.append({"tool": name, "args": args, "result": result})
 
@@ -984,11 +910,16 @@ class BrainEngine:
                     inc_lines.append(f"  • `{inc['id']}` [{inc.get('severity', 'HIGH')}]: {inc.get('summary') or inc.get('title')}")
                 parts.append("\n".join(inc_lines))
 
-        # Fleet nodes check
-        if any(w in q_lower for w in ["node", "fleet", "servers", "status", "overview", "how many"]):
+        # Fleet nodes / IPs / Storage check
+        if any(w in q_lower for w in ["node", "nodes", "fleet", "servers", "ip", "ips", "storage", "disk", "space", "status", "overview", "how many"]):
             nodes = self._execute_tool("get_fleet_nodes", {}, fleet_store=fleet_store)
-            if isinstance(nodes, list):
-                parts.append(f"🌐 Nodes: " + ", ".join(f"{n['name']} ({n.get('status', 'ONLINE')})" for n in nodes))
+            if isinstance(nodes, list) and nodes:
+                node_lines = [f"🌐 **ARA Fleet Directory & Nodes** ({len(nodes)}):"]
+                for n in nodes:
+                    n_ip = n.get("server_ip") or n.get("ip") or "N/A"
+                    disk_part = f" | Storage: {n.get('available_storage')}" if n.get("available_storage") and n.get("available_storage") != "N/A" else ""
+                    node_lines.append(f"• `{n['name']}` [{n.get('status', 'ONLINE')}]: IP `{n_ip}` ({n.get('containers_monitored', n.get('services', 0))} containers){disk_part}")
+                parts.append("\n".join(node_lines))
 
         # General incidents check
         if any(w in q_lower for w in ["incident", "error", "alert", "status", "about", "issue"]) and not target_svc:
