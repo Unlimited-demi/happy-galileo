@@ -259,15 +259,34 @@ class CodebaseDetector:
     """Discovers git repos, branches, and domains from bind mounts & configs."""
 
     @staticmethod
-    def resolve_git_info(mounts: List[Dict[str, Any]]) -> Tuple[str, str, str]:
+    def resolve_git_info(mounts: List[Dict[str, Any]], labels: Dict[str, Any] = None) -> Tuple[str, str, str]:
         """Returns (git_repo, git_branch, repo_path)."""
         candidate_paths = []
+
+        # 1. Inspect Docker Compose Labels
+        if labels and isinstance(labels, dict):
+            compose_dir = labels.get("com.docker.compose.project.working_dir")
+            if compose_dir and os.path.exists(compose_dir):
+                candidate_paths.append(Path(compose_dir))
+            compose_cfg = labels.get("com.docker.compose.project.config_files")
+            if compose_cfg and os.path.exists(compose_cfg):
+                candidate_paths.append(Path(compose_cfg).parent)
+
+        # 2. Inspect Mounts (both file binds and directory binds)
         for m in mounts:
             if m.get("Type") == "bind":
                 src = m.get("Source", "")
-                if src and os.path.isdir(src):
+                if src:
                     p = Path(src)
-                    candidate_paths.extend([p, p.parent, p.parent.parent])
+                    if p.is_dir():
+                        candidate_paths.extend([p, p.parent, p.parent.parent])
+                    elif p.is_file():
+                        candidate_paths.extend([p.parent, p.parent.parent])
+
+        # 3. Fallback well-known application roots
+        for common in ["/opt/Support", "/opt/happy-galileo", "/home/maccs/Support"]:
+            if os.path.isdir(common):
+                candidate_paths.append(Path(common))
 
         for p in candidate_paths:
             git_dir = p / ".git"
@@ -309,7 +328,7 @@ class CodebaseDetector:
         return "N/A", "N/A", "N/A"
 
     @staticmethod
-    def resolve_ingress_url(c_name: str, env_vars: List[str], mounts: List[Dict[str, Any]], server_ip: str) -> str:
+    def resolve_ingress_url(c_name: str, env_vars: List[str], mounts: List[Dict[str, Any]], server_ip: str, labels: Dict[str, Any] = None) -> str:
         """Auto-detects ingress URL from environment variables, mounted Caddyfiles, or Nginx."""
         # 1. Inspect Environment Variables
         for env in env_vars:
@@ -347,6 +366,23 @@ class CodebaseDetector:
                                     return f"https://{domain}"
                         except Exception:
                             pass
+
+        # 3. Inspect Caddyfile from Docker Compose working directory
+        if labels and isinstance(labels, dict):
+            compose_dir = labels.get("com.docker.compose.project.working_dir")
+            if compose_dir and os.path.isdir(compose_dir):
+                caddy_path = os.path.join(compose_dir, "Caddyfile")
+                if os.path.isfile(caddy_path):
+                    try:
+                        with open(caddy_path, "r", encoding="utf-8", errors="ignore") as f:
+                            content = f.read()
+                        matches = re.findall(r"([a-zA-Z0-9\-\.]+\.[a-z]{2,12})\s*\{", content)
+                        for domain in matches:
+                            if not any(x in domain for x in [".local", ".internal", "localhost", "caddy", "docker"]):
+                                if any(x in c_name.lower() for x in ["ui", "frontend", "web", "caddy"]):
+                                    return f"https://{domain}"
+                    except Exception:
+                        pass
 
         return "[INTERNAL]"
 
@@ -400,10 +436,11 @@ class AraAgent:
             c_name = names[0] if names else cid
             img = c.get("Image", "")
 
-            # Deep inspect for mounts, ports, env
+            # Deep inspect for mounts, ports, env, labels
             inspect_data = self.docker.inspect_container(cid) or {}
             config = inspect_data.get("Config", {})
             env_vars = config.get("Env", [])
+            labels = config.get("Labels", {})
             mounts = inspect_data.get("Mounts", [])
             state = inspect_data.get("State", {})
 
@@ -419,8 +456,8 @@ class AraAgent:
             main_port = ports[0] if ports else 0
 
             service_type = self.classify_service(c_name, img, main_port)
-            git_repo, git_branch, repo_path = CodebaseDetector.resolve_git_info(mounts)
-            access_url = CodebaseDetector.resolve_ingress_url(c_name, env_vars, mounts, server_ip)
+            git_repo, git_branch, repo_path = CodebaseDetector.resolve_git_info(mounts, labels)
+            access_url = CodebaseDetector.resolve_ingress_url(c_name, env_vars, mounts, server_ip, labels)
 
             # REAL LIVE LOGS (100 lines)
             logs = self.docker.get_logs(cid, tail=100)
