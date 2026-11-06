@@ -859,6 +859,23 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 token_hash = hashlib.sha256(fleet_key.encode("utf-8")).hexdigest() if fleet_key else None
                 FLEET_STORE.upsert_node(payload, client_ip=client_ip, token_hash=token_hash)
 
+                # Trigger asynchronous AI architectural description generation if new enrollment or description is missing
+                is_enrollment = bool(payload.get("enrollment"))
+                existing_desc = FLEET_STORE.get_node_description(node_name)
+                if is_enrollment or not existing_desc:
+                    def _async_gen_desc(n_name, n_payload):
+                        try:
+                            from ai_ops.brain import BrainEngine
+                            brain = BrainEngine()
+                            desc = brain.generate_node_description(n_name, n_payload)
+                            if desc:
+                                FLEET_STORE.update_node_description(n_name, desc)
+                                print(f"[ARA Fleet] Generated and saved AI description for node '{n_name}'", flush=True)
+                        except Exception as e:
+                            print(f"[ARA Fleet] Error generating AI node description for '{n_name}': {e}", flush=True)
+
+                    threading.Thread(target=_async_gen_desc, args=(node_name, payload), daemon=True).start()
+
                 # Record command results reported back by the node
                 cmd_results = payload.get("command_results", [])
                 if cmd_results and isinstance(cmd_results, list):
@@ -975,6 +992,35 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 max_age = float(payload.get("max_age_seconds", 3600))
                 deleted = FLEET_STORE.prune_offline_nodes(max_age_seconds=max_age)
                 self._send_json({"status": "pruned", "deleted_nodes": deleted})
+                return
+
+            elif path.startswith("/api/fleet/nodes/") and path.endswith("/describe"):
+                # Manual trigger to generate/refresh AI architectural description of a node
+                node_name = path[len("/api/fleet/nodes/"): -len("/describe")].strip("/")
+                if not node_name:
+                    self._send_json({"error": "Missing node name"}, status=400)
+                    return
+
+                target_node = None
+                for n in FLEET_STORE.get_all_nodes():
+                    if n.get("node_name") == node_name:
+                        target_node = n
+                        break
+
+                if not target_node:
+                    self._send_json({"error": f"Node '{node_name}' not found in fleet store"}, status=404)
+                    return
+
+                from ai_ops.brain import BrainEngine
+                brain = BrainEngine()
+                desc = brain.generate_node_description(node_name, target_node)
+                if desc:
+                    FLEET_STORE.update_node_description(node_name, desc)
+                self._send_json({
+                    "node_name": node_name,
+                    "ai_description": desc,
+                    "status": "updated"
+                })
                 return
 
             elif path.startswith("/api/incidents/") and path.endswith("/dispatch"):

@@ -58,6 +58,14 @@ class FleetStore:
                     conn.execute("ALTER TABLE fleet_nodes ADD COLUMN node_token_hash TEXT")
                 except sqlite3.OperationalError:
                     pass
+                try:
+                    conn.execute("ALTER TABLE fleet_nodes ADD COLUMN ai_description TEXT")
+                except sqlite3.OperationalError:
+                    pass
+                try:
+                    conn.execute("ALTER TABLE fleet_nodes ADD COLUMN ai_description_updated_at REAL")
+                except sqlite3.OperationalError:
+                    pass
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_fleet_nodes_last_seen ON fleet_nodes(last_seen)")
 
                 conn.execute(
@@ -231,7 +239,65 @@ class FleetStore:
         data["containers_count"] = row["containers_count"]
         data["services_count"] = row["services_count"]
         data["open_incidents_count"] = row["open_incidents_count"]
+        desc = None
+        try:
+            desc = row["ai_description"]
+        except (IndexError, KeyError):
+            pass
+        if not desc:
+            desc = data.get("ai_description")
+        data["ai_description"] = desc
         return data
+
+    def update_node_description(self, node_name: str, description: str) -> None:
+        """Persist the AI-synthesized architectural description of an enrolled node."""
+        now = time.time()
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                cur = conn.execute("SELECT payload_json FROM fleet_nodes WHERE node_name = ?", (node_name,))
+                row = cur.fetchone()
+                if row:
+                    try:
+                        p = json.loads(row["payload_json"])
+                    except Exception:
+                        p = {}
+                    p["ai_description"] = description
+                    p["ai_description_updated_at"] = now
+                    conn.execute(
+                        "UPDATE fleet_nodes SET ai_description = ?, ai_description_updated_at = ?, payload_json = ? WHERE node_name = ?",
+                        (description, now, json.dumps(p), node_name)
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE fleet_nodes SET ai_description = ?, ai_description_updated_at = ? WHERE node_name = ?",
+                        (description, now, node_name)
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def get_node_description(self, node_name: str) -> Optional[str]:
+        """Fetch the stored AI architectural description of a node."""
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                cur = conn.execute("SELECT ai_description, payload_json FROM fleet_nodes WHERE node_name = ?", (node_name,))
+                row = cur.fetchone()
+                if row:
+                    try:
+                        if row["ai_description"]:
+                            return row["ai_description"]
+                    except (IndexError, KeyError):
+                        pass
+                    try:
+                        p = json.loads(row["payload_json"])
+                        return p.get("ai_description")
+                    except Exception:
+                        pass
+                return None
+            finally:
+                conn.close()
 
     def queue_command(self, node_name: str, action: str, target: str) -> Dict[str, Any]:
         """Queue an infra command for a satellite node."""

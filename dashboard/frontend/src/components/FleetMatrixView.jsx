@@ -29,6 +29,14 @@ export function FleetMatrixView({ nodes, onCopy, onSelectService }) {
                   <p className="text-xs text-muted-foreground mt-0.5">
                     Scope: *.{node.base_domain || 'suburbancloud.ng'}
                   </p>
+                  {node.ai_description && (
+                    <div className="mt-2 text-xs text-slate-300 bg-indigo-950/40 border border-indigo-500/25 rounded-md px-3 py-1.5 flex items-start gap-2 max-w-2xl leading-relaxed">
+                      <span className="text-indigo-400 font-bold font-mono text-[10px] uppercase tracking-wider shrink-0 mt-0.5">
+                        🤖 AI Profile:
+                      </span>
+                      <span>{node.ai_description}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
