@@ -368,141 +368,447 @@ class CodebaseDetector:
 
         return "N/A", "N/A", "N/A"
 
+class ProxyRule:
+    """Represents a discovered routing directive from Caddy, Nginx, Apache, or Traefik."""
+    def __init__(self, domain: str, upstream_host: str, upstream_port: int = 0, path: str = "", scheme: str = "https", proxy_type: str = "caddy"):
+        self.domain = domain.strip().lower()
+        self.upstream_host = upstream_host.strip().lower()
+        self.upstream_port = upstream_port
+        self.path = path.strip()
+        self.scheme = scheme.lower()
+        self.proxy_type = proxy_type
+
+    def __repr__(self):
+        return f"<ProxyRule {self.scheme}://{self.domain}{self.path} -> {self.upstream_host}:{self.upstream_port} ({self.proxy_type})>"
+
+
+class NodeReverseProxyEngine:
+    """
+    Host-wide reverse proxy inspection engine.
+    Scans host filesystem (/etc/caddy, /etc/nginx, /etc/apache2, /etc/httpd, etc.),
+    container bind-mounts, and compose directories to reconstruct the complete
+    ingress routing table for the node without relying on container .env variables.
+    """
+
     @staticmethod
-    def extract_reverse_proxy_mappings(mounts: List[Dict[str, Any]], labels: Dict[str, Any] = None) -> Tuple[Dict[str, str], List[str]]:
-        """
-        Parses mounted or discoverable Caddy, Nginx, or Apache configuration files.
-        Returns:
-            (upstream_to_domain_map, list_of_public_domains)
-            e.g. ({'fileserver-api': 'https://files.suburban.ng', '3000': 'https://files.suburban.ng'}, ['files.suburban.ng'])
-        """
-        upstream_map: Dict[str, str] = {}
-        all_domains: List[str] = []
-        target_files: List[str] = []
+    def _split_blocks_re(text: str, keyword: str) -> List[Tuple[str, str]]:
+        """Splits nested configuration blocks (like Nginx server/location) using brace depth."""
+        blocks = []
+        pattern = re.compile(r'\b' + re.escape(keyword) + r'\b')
+        for m in pattern.finditer(text):
+            idx = m.start()
+            line_start = text.rfind('\n', 0, idx)
+            line_prefix = text[line_start+1:idx] if line_start != -1 else text[:idx]
+            if '#' in line_prefix:
+                continue
+            brace_start = text.find('{', idx)
+            if brace_start == -1:
+                continue
+            intermediate = text[idx:brace_start]
+            if ';' in intermediate:
+                continue
+            depth = 1
+            pos = brace_start + 1
+            while pos < len(text) and depth > 0:
+                if text[pos] == '{':
+                    depth += 1
+                elif text[pos] == '}':
+                    depth -= 1
+                pos += 1
+            body = text[brace_start + 1:pos - 1]
+            blocks.append((intermediate.strip(), body))
+        return blocks
 
-        # 1. Search container bind mounts
-        for m in mounts:
-            if m.get("Type") == "bind":
-                src = m.get("Source", "")
-                if src and os.path.exists(src):
-                    if os.path.isfile(src) and any(x in src.lower() for x in ["caddyfile", ".conf", "nginx", "httpd", "apache"]):
-                        target_files.append(src)
-                    elif os.path.isdir(src):
-                        for root, _, files in os.walk(src):
-                            for f in files:
-                                fl = f.lower()
-                                if fl in ["caddyfile", "nginx.conf", "default.conf", "httpd.conf"] or fl.endswith(".conf"):
-                                    target_files.append(os.path.join(root, f))
+    @staticmethod
+    def parse_caddy(content: str) -> List[ProxyRule]:
+        rules = []
+        text = content
+        # 1. Block-based Caddyfile: domain { ... }
+        if '{' in text:
+            pos = 0
+            while pos < len(text):
+                brace_start = text.find('{', pos)
+                if brace_start == -1:
+                    break
+                line_start = text.rfind('\n', 0, brace_start)
+                header = text[line_start+1:brace_start].strip() if line_start != -1 else text[:brace_start].strip()
+                depth = 1
+                curr = brace_start + 1
+                while curr < len(text) and depth > 0:
+                    if text[curr] == '{':
+                        depth += 1
+                    elif text[curr] == '}':
+                        depth -= 1
+                    curr += 1
+                body = text[brace_start + 1:curr - 1]
+                pos = curr
 
-        # 2. Search Compose directory
-        if labels and isinstance(labels, dict):
-            compose_dir = labels.get("com.docker.compose.project.working_dir")
-            if compose_dir and os.path.isdir(compose_dir):
-                for f in ["Caddyfile", "caddy/Caddyfile", "nginx.conf", "nginx/nginx.conf"]:
-                    cand = os.path.join(compose_dir, f)
-                    if os.path.isfile(cand) and cand not in target_files:
-                        target_files.append(cand)
+                if '#' in header or header.startswith('('):
+                    continue
+                domains = []
+                for token in re.split(r'[,\s]+', header):
+                    token = re.sub(r'^https?://', '', token.strip()).split(':')[0]
+                    if '.' in token and not any(x in token.lower() for x in ['.local', '.internal', 'localhost', '127.', 'caddy', 'docker']):
+                        domains.append(token)
+                if not domains:
+                    continue
 
-        for tf in target_files[:10]:
+                for line in body.splitlines():
+                    line_s = line.strip()
+                    if not line_s or line_s.startswith('#'):
+                        continue
+                    if 'reverse_proxy' in line_s or line_s.startswith('to '):
+                        path_match = re.search(r'reverse_proxy\s+(/[^\s*]+(?:\*)?)', line_s)
+                        path = ''
+                        line_targets = line_s
+                        if path_match:
+                            raw_path = path_match.group(1).rstrip('*').rstrip('/')
+                            path = raw_path
+                            line_targets = line_s.replace(path_match.group(0), 'reverse_proxy ')
+
+                        targets = re.findall(r'(?:https?:\/\/)?([a-zA-Z0-9\.\-_]+)(?::(\d+))?', line_targets)
+                        for tgt, port in targets:
+                            t_lower = tgt.lower()
+                            if t_lower in ['reverse_proxy', 'to', 'http', 'https', 'header_up', 'lb_policy', 'transport', 'health_path']:
+                                continue
+                            if t_lower in domains:
+                                continue
+                            is_ws = 'livekit' in t_lower or 'livekit' in path.lower() or 'ws' in line_s.lower()
+                            scheme = 'wss' if is_ws else 'https'
+                            for d in domains:
+                                rules.append(ProxyRule(d, t_lower, int(port) if port else 0, path, scheme, 'caddy'))
+        else:
+            # 2. Shorthand single-site Caddyfile without braces
+            lines = [l.strip() for l in text.splitlines() if l.strip() and not l.strip().startswith('#')]
+            if lines:
+                first_line = lines[0]
+                first_token = re.sub(r'^https?://', '', first_line).split(':')[0]
+                if '.' in first_token and not any(x in first_token.lower() for x in ['.local', 'localhost', '127.']):
+                    domain = first_token
+                    for line_s in lines[1:]:
+                        if 'reverse_proxy' in line_s or line_s.startswith('to '):
+                            targets = re.findall(r'(?:https?:\/\/)?([a-zA-Z0-9\.\-_]+)(?::(\d+))?', line_s)
+                            for tgt, port in targets:
+                                t_lower = tgt.lower()
+                                if t_lower not in ['reverse_proxy', 'to', 'http', 'https']:
+                                    is_ws = 'livekit' in t_lower or 'ws' in line_s.lower()
+                                    scheme = 'wss' if is_ws else 'https'
+                                    rules.append(ProxyRule(domain, t_lower, int(port) if port else 0, "", scheme, 'caddy'))
+        return rules
+
+    @staticmethod
+    def parse_nginx(content: str) -> List[ProxyRule]:
+        rules = []
+        upstreams = {}
+        for header, body in NodeReverseProxyEngine._split_blocks_re(content, 'upstream'):
+            u_name = header.split()[-1] if header.split() else ''
+            if not u_name:
+                continue
+            servers = re.findall(r'server\s+([a-zA-Z0-9\.\-_]+)(?::(\d+))?', body)
+            upstreams[u_name] = [(s[0], int(s[1]) if s[1] else 0) for s in servers]
+
+        for s_header, s_body in NodeReverseProxyEngine._split_blocks_re(content, 'server'):
+            server_names = re.findall(r'server_name\s+([^;]+);', s_body)
+            domains = []
+            for sn in server_names:
+                for part in sn.split():
+                    part = part.strip()
+                    if '.' in part and not any(x in part.lower() for x in ['.local', 'localhost', '127.', 'caddy', 'docker']):
+                        domains.append(part)
+            if not domains:
+                continue
+
+            loc_blocks = NodeReverseProxyEngine._split_blocks_re(s_body, 'location')
+            if not loc_blocks:
+                loc_blocks = [('', s_body)]
+
+            for l_header, l_body in loc_blocks:
+                l_parts = l_header.split()
+                path = l_parts[1].rstrip('*').rstrip('/') if len(l_parts) > 1 and l_parts[1].startswith('/') else ''
+                if path in ['/', '/*']:
+                    path = ''
+
+                pp_match = re.search(r'proxy_pass\s+https?:\/\/([a-zA-Z0-9\.\-_]+)(?::(\d+))?', l_body)
+                if pp_match:
+                    tgt = pp_match.group(1)
+                    port = int(pp_match.group(2)) if pp_match.group(2) else 0
+                    is_ws = 'Upgrade' in l_body or 'upgrade' in l_body or 'livekit' in tgt.lower() or 'livekit' in path.lower()
+                    scheme = 'wss' if is_ws else 'https'
+
+                    if tgt in upstreams:
+                        for u_host, u_port in upstreams[tgt]:
+                            for d in domains:
+                                rules.append(ProxyRule(d, u_host, u_port or port, path, scheme, 'nginx'))
+                    else:
+                        for d in domains:
+                            rules.append(ProxyRule(d, tgt, port, path, scheme, 'nginx'))
+        return rules
+
+    @staticmethod
+    def parse_apache(content: str) -> List[ProxyRule]:
+        rules = []
+        vhosts = re.findall(r'<VirtualHost[^>]*>(.*?)</VirtualHost>', content, re.DOTALL | re.IGNORECASE)
+        for vh in vhosts:
+            sn_match = re.search(r'ServerName\s+([a-zA-Z0-9\.\-]+)', vh, re.IGNORECASE)
+            if not sn_match:
+                continue
+            domain = sn_match.group(1).strip()
+            if not ('.' in domain and not any(x in domain.lower() for x in ['.local', 'localhost', '127.'])):
+                continue
+            domains = [domain]
+            sa_match = re.search(r'ServerAlias\s+([^\n]+)', vh, re.IGNORECASE)
+            if sa_match:
+                for part in sa_match.group(1).split():
+                    part = part.strip()
+                    if '.' in part and not any(x in part.lower() for x in ['.local', 'localhost', '127.']):
+                        domains.append(part)
+
+            proxies = re.findall(r'ProxyPass\s+(\S+)\s+(https?|wss?|balancer):\/\/([a-zA-Z0-9\.\-_]+)(?::(\d+))?', vh, re.IGNORECASE)
+            for path, proto, tgt, port in proxies:
+                scheme = 'wss' if proto.startswith('ws') or 'livekit' in tgt.lower() or 'livekit' in path.lower() else 'https'
+                clean_path = '' if path in ['/', '/*'] else path.rstrip('*').rstrip('/')
+                for d in domains:
+                    rules.append(ProxyRule(d, tgt, int(port) if port else 0, clean_path, scheme, 'apache'))
+        return rules
+
+    @classmethod
+    def discover_all_configs(cls, container_inspections: List[Dict[str, Any]] = None) -> List[str]:
+        """Discovers host reverse proxy configs across system paths, mounts, and compose dirs."""
+        files = []
+
+        # 1. Standard host system paths
+        system_files = [
+            "/etc/caddy/Caddyfile",
+            "/etc/caddy/caddy.conf",
+            "/etc/nginx/nginx.conf",
+            "/etc/apache2/apache2.conf",
+            "/etc/apache2/httpd.conf",
+            "/etc/httpd/conf/httpd.conf",
+            "/usr/local/nginx/conf/nginx.conf",
+        ]
+        for sf in system_files:
+            if os.path.isfile(sf) and sf not in files:
+                files.append(sf)
+
+        system_dirs = [
+            "/etc/caddy/conf.d",
+            "/etc/nginx/conf.d",
+            "/etc/nginx/sites-enabled",
+            "/etc/nginx/sites-available",
+            "/etc/apache2/sites-enabled",
+            "/etc/apache2/sites-available",
+            "/etc/apache2/conf-enabled",
+            "/etc/httpd/conf.d",
+            "/etc/httpd/sites-enabled",
+        ]
+        for sd in system_dirs:
+            if os.path.isdir(sd):
+                try:
+                    for root, _, fs in os.walk(sd):
+                        for f in fs:
+                            fl = f.lower()
+                            if fl.endswith(".conf") or "caddy" in fl:
+                                full_p = os.path.join(root, f)
+                                if full_p not in files:
+                                    files.append(full_p)
+                except Exception:
+                    pass
+
+        # 2. Container mounts & compose directories
+        if container_inspections:
+            for insp in container_inspections:
+                for m in insp.get("Mounts", []):
+                    if isinstance(m, dict) and m.get("Type") == "bind":
+                        src = m.get("Source", "")
+                        if src and os.path.exists(src):
+                            if os.path.isfile(src) and any(x in src.lower() for x in ["caddyfile", ".conf", "nginx", "httpd", "apache"]):
+                                if src not in files:
+                                    files.append(src)
+                            elif os.path.isdir(src):
+                                try:
+                                    for root, _, fs in os.walk(src):
+                                        for f in fs:
+                                            fl = f.lower()
+                                            if fl in ["caddyfile", "nginx.conf", "default.conf", "httpd.conf"] or fl.endswith(".conf"):
+                                                full_p = os.path.join(root, f)
+                                                if full_p not in files:
+                                                    files.append(full_p)
+                                except Exception:
+                                    pass
+
+                labels = insp.get("Config", {}).get("Labels", {}) or {}
+                compose_dir = labels.get("com.docker.compose.project.working_dir")
+                if compose_dir and os.path.isdir(compose_dir):
+                    for cand_rel in ["Caddyfile", "caddy/Caddyfile", "nginx.conf", "nginx/nginx.conf", "conf/nginx.conf", "proxy/Caddyfile"]:
+                        cand_p = os.path.join(compose_dir, cand_rel)
+                        if os.path.isfile(cand_p) and cand_p not in files:
+                            files.append(cand_p)
+
+        return files
+
+    @classmethod
+    def scan_node(cls, container_inspections: List[Dict[str, Any]] = None) -> List[ProxyRule]:
+        """Scans the entire node for reverse proxies and returns all routing rules."""
+        config_files = cls.discover_all_configs(container_inspections)
+        all_rules: List[ProxyRule] = []
+
+        for cf in config_files[:25]:
             try:
-                with open(tf, "r", encoding="utf-8", errors="ignore") as f:
+                with open(cf, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
 
-                # --- A. CADDYFILE PARSING ---
-                caddy_blocks = re.findall(r"([a-zA-Z0-9\-\.]+\.[a-z]{2,12})(?::\d+)?\s*\{([^}]+)\}", content, re.MULTILINE)
-                for domain, block in caddy_blocks:
-                    if any(x in domain.lower() for x in [".local", ".internal", "localhost", "caddy", "docker"]):
-                        continue
-                    if domain not in all_domains:
-                        all_domains.append(domain)
-                    proxy_matches = re.findall(r"(?:reverse_proxy|to)\s+(?:https?:\/\/)?([a-zA-Z0-9\-_]+)(?::(\d+))?", block)
-                    for target, port in proxy_matches:
-                        t_lower = target.lower()
-                        if t_lower not in ["http", "https", "unix", "localhost", "127.0.0.1"]:
-                            upstream_map[t_lower] = f"https://{domain}"
-                            if port:
-                                upstream_map[f"{t_lower}:{port}"] = f"https://{domain}"
-                                upstream_map[port] = f"https://{domain}"
-
-                # --- B. NGINX CONFIG PARSING ---
-                nginx_servers = re.findall(r"server\s*\{([^}]+)\}", content, re.MULTILINE | re.DOTALL)
-                for s_block in nginx_servers:
-                    server_names = re.findall(r"server_name\s+([^;]+);", s_block)
-                    proxy_passes = re.findall(r"proxy_pass\s+https?:\/\/([a-zA-Z0-9\-_]+)(?::(\d+))?", s_block)
-                    domains_in_server = []
-                    for sn in server_names:
-                        for part in sn.split():
-                            part = part.strip()
-                            if "." in part and not any(x in part.lower() for x in [".local", "localhost", "127.", "172."]):
-                                domains_in_server.append(part)
-                                if part not in all_domains:
-                                    all_domains.append(part)
-                    for domain in domains_in_server:
-                        for target, port in proxy_passes:
-                            t_lower = target.lower()
-                            if t_lower not in ["http", "https", "unix", "localhost", "127.0.0.1"]:
-                                upstream_map[t_lower] = f"https://{domain}"
-                                if port:
-                                    upstream_map[f"{t_lower}:{port}"] = f"https://{domain}"
-                                    upstream_map[port] = f"https://{domain}"
-
-                # --- C. APACHE CONFIG PARSING ---
-                apache_vhosts = re.findall(r"<VirtualHost[^>]*>(.*?)</VirtualHost>", content, re.MULTILINE | re.DOTALL | re.IGNORECASE)
-                for v_block in apache_vhosts:
-                    s_name = re.search(r"ServerName\s+([a-zA-Z0-9\-\.]+\.[a-z]{2,12})", v_block, re.IGNORECASE)
-                    proxy_passes = re.findall(r"ProxyPass(?:Reverse)?\s+\S+\s+https?:\/\/([a-zA-Z0-9\-_]+)(?::(\d+))?", v_block, re.IGNORECASE)
-                    if s_name:
-                        domain = s_name.group(1).strip()
-                        if domain not in all_domains:
-                            all_domains.append(domain)
-                        for target, port in proxy_passes:
-                            t_lower = target.lower()
-                            if t_lower not in ["http", "https", "unix", "localhost", "127.0.0.1"]:
-                                upstream_map[t_lower] = f"https://{domain}"
-                                if port:
-                                    upstream_map[f"{t_lower}:{port}"] = f"https://{domain}"
-                                    upstream_map[port] = f"https://{domain}"
-
+                fl = os.path.basename(cf).lower()
+                rules = []
+                if "caddy" in fl or "reverse_proxy" in content:
+                    rules = cls.parse_caddy(content)
+                elif "nginx" in fl or "proxy_pass" in content:
+                    rules = cls.parse_nginx(content)
+                elif "httpd" in fl or "apache" in fl or "proxypass" in content.lower():
+                    rules = cls.parse_apache(content)
+                all_rules.extend(rules)
             except Exception:
                 continue
 
-        return upstream_map, all_domains
+        return all_rules
+
+    @classmethod
+    def get_legacy_mapping(cls, rules: List[ProxyRule]) -> Tuple[Dict[str, str], List[str]]:
+        up_map = {}
+        all_doms = []
+        for r in rules:
+            if r.domain not in all_doms:
+                all_doms.append(r.domain)
+            url = f"{r.scheme}://{r.domain}{r.path.rstrip('*').rstrip('/')}"
+            up_map[r.upstream_host] = url
+            if r.upstream_port:
+                up_map[f"{r.upstream_host}:{r.upstream_port}"] = url
+                up_map[str(r.upstream_port)] = url
+        return up_map, all_doms
+
+    @classmethod
+    def match_container(
+        cls,
+        c_name: str,
+        img: str,
+        main_port: int,
+        ports: List[int],
+        labels: Dict[str, Any],
+        inspect_data: Dict[str, Any],
+        rules: List[ProxyRule],
+        server_ip: str = ""
+    ) -> str:
+        """Determines container ingress URL strictly from discovered reverse proxy rules. NO .env checking."""
+        c_lower = c_name.lstrip("/").lower()
+        img_lower = img.lower()
+
+        # 1. Reverse proxy containers themselves are Ingress Gateways, not destination apps
+        if any(x in c_lower for x in ["caddy", "nginx", "apache", "httpd", "traefik", "reverse-proxy", "ingress-controller"]) or \
+           any(x in img_lower for x in ["caddy", "nginx", "httpd", "apache2", "traefik"]):
+            return "[Reverse Proxy Ingress]"
+
+        is_data_service = any(x in c_lower for x in ["postgres", "redis", "mysql", "mariadb", "mongo", "db", "cache"]) or \
+                          any(x in img_lower for x in ["postgres", "redis", "mysql", "mariadb", "mongo"])
+
+        aliases = {c_lower}
+        svc = (labels.get("com.docker.compose.service") or "").lower()
+        if svc:
+            aliases.add(svc)
+        proj = (labels.get("com.docker.compose.project") or "").lower()
+
+        nets = inspect_data.get("NetworkSettings", {}).get("Networks", {}) if inspect_data else {}
+        if isinstance(nets, dict):
+            for net_val in nets.values():
+                if isinstance(net_val, dict):
+                    for al in net_val.get("Aliases", []) or []:
+                        if al:
+                            aliases.add(al.lower())
+
+        all_ports = set(ports)
+        if main_port:
+            all_ports.add(main_port)
+
+        loopback_hosts = {"localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal"}
+        if server_ip:
+            loopback_hosts.add(server_ip)
+
+        # Priority 1: Exact Name / Network Alias / Compose Service Match
+        for r in rules:
+            if r.upstream_host in aliases:
+                path = r.path.rstrip("*").rstrip("/")
+                return f"{r.scheme}://{r.domain}{path}"
+
+        # Priority 2: Compose Project + Service Match (e.g. project fileserver + service api = fileserver-api)
+        if proj:
+            for r in rules:
+                if r.upstream_host == f"{proj}-{svc}" or r.upstream_host == f"{proj}_{svc}" or c_lower == f"{proj}-{r.upstream_host}":
+                    path = r.path.rstrip("*").rstrip("/")
+                    return f"{r.scheme}://{r.domain}{path}"
+
+        # Priority 3: Localhost / Loopback Port Match (proxy forwards to host port)
+        for r in rules:
+            if r.upstream_host in loopback_hosts and r.upstream_port in all_ports:
+                if not is_data_service:
+                    path = r.path.rstrip("*").rstrip("/")
+                    return f"{r.scheme}://{r.domain}{path}"
+
+        # Priority 4: Distinct Substring Match (ignoring worker/egress suffixes)
+        if not c_lower.endswith("-egress") and not c_lower.endswith("_egress") and not is_data_service:
+            for r in rules:
+                if r.upstream_host not in loopback_hosts and len(r.upstream_host) >= 4:
+                    if r.upstream_host in c_lower or c_lower in r.upstream_host:
+                        path = r.path.rstrip("*").rstrip("/")
+                        return f"{r.scheme}://{r.domain}{path}"
+
+        # Priority 5: Unique Port Match on non-database/cache services
+        for r in rules:
+            if r.upstream_port in all_ports and not is_data_service:
+                if any(x in c_lower for x in ["api", "web", "ui", "feed", "worker", "app", "srv", "service"]):
+                    path = r.path.rstrip("*").rstrip("/")
+                    return f"{r.scheme}://{r.domain}{path}"
+
+        return "[INTERNAL]"
+
+
+    @staticmethod
+    def extract_reverse_proxy_mappings(mounts: List[Dict[str, Any]], labels: Dict[str, Any] = None) -> Tuple[Dict[str, str], List[str]]:
+        """Parses discoverable Caddy, Nginx, or Apache configuration files across node."""
+        insp_mock = [{"Mounts": mounts, "Config": {"Labels": labels or {}}}]
+        rules = NodeReverseProxyEngine.scan_node(insp_mock)
+        return NodeReverseProxyEngine.get_legacy_mapping(rules)
 
     @staticmethod
     def resolve_ingress_url(
         c_name: str,
-        env_vars: List[str],
-        mounts: List[Dict[str, Any]],
-        server_ip: str,
+        env_vars: List[str] = None,
+        mounts: List[Dict[str, Any]] = None,
+        server_ip: str = "",
         labels: Dict[str, Any] = None,
         global_upstream_map: Dict[str, str] = None,
         all_discovered_domains: List[str] = None,
-        main_port: int = 0
+        main_port: int = 0,
+        rules: List[ProxyRule] = None,
+        ports: List[int] = None,
+        img: str = "",
+        inspect_data: Dict[str, Any] = None,
     ) -> str:
-        """Auto-detects ingress URL from environment variables, mounted Caddyfiles, Nginx, or Apache."""
-        c_lower = c_name.lower()
-        is_proxy = any(x in c_lower for x in ["caddy", "nginx", "apache", "httpd", "traefik", "reverse-proxy"])
+        """Determines ingress URL strictly from reverse proxy rules. NEVER checks container .env."""
+        c_lower = c_name.lstrip("/").lower()
+        if any(x in c_lower for x in ["caddy", "nginx", "apache", "httpd", "traefik", "reverse-proxy", "ingress-controller"]) or \
+           any(x in (img or "").lower() for x in ["caddy", "nginx", "httpd", "apache2", "traefik"]):
+            return "[Reverse Proxy Ingress]"
 
-        # 1. Inspect Environment Variables
-        checked_keys = [
-            "APP_URL", "SITE_URL", "PUBLIC_URL", "BASE_URL", "WEB_BASE_URL",
-            "DOMAIN", "VIRTUAL_HOST", "PUBLIC_HOST", "SERVER_URL", "API_URL",
-            "FRONTEND_URL", "LIVEKIT_PUBLIC_URL", "HOST_URL", "APPLICATION_URL",
-            "EXTERNAL_URL", "CADDY_DOMAIN"
-        ]
-        for env in env_vars:
-            if "=" in env:
-                k, v = env.split("=", 1)
-                k_up = k.upper().strip()
-                v_val = v.strip()
-                if any(x in k_up for x in checked_keys):
-                    if "://" in v_val:
-                        if not any(x in v_val for x in ["127.0.0.1", "localhost", "172."]):
-                            return v_val
-                    elif "." in v_val and not v_val.startswith("172.") and not v_val.startswith("127."):
-                        return f"https://{v_val}"
+        if rules is not None:
+            return NodeReverseProxyEngine.match_container(
+                c_name=c_name,
+                img=img,
+                main_port=main_port,
+                ports=ports or ([main_port] if main_port else []),
+                labels=labels or {},
+                inspect_data=inspect_data or {},
+                rules=rules,
+                server_ip=server_ip
+            )
 
-        # 2. Check global / node-wide proxy upstream mapping
         if global_upstream_map:
             if c_lower in global_upstream_map:
                 return global_upstream_map[c_lower]
@@ -510,27 +816,13 @@ class CodebaseDetector:
                 if up_key in c_lower or c_lower in up_key:
                     return up_domain
             if main_port and str(main_port) in global_upstream_map:
-                if any(x in c_lower for x in ["api", "web", "ui", "feed", "worker", "app", "srv", "service"]):
-                    return global_upstream_map[str(main_port)]
-
-        # 3. If container IS the reverse proxy itself
-        if is_proxy:
-            local_map, local_domains = CodebaseDetector.extract_reverse_proxy_mappings(mounts, labels)
-            domains = local_domains or all_discovered_domains or []
-            if domains:
-                return f"https://{domains[0]} (Ingress Proxy)"
-            return "[Reverse Proxy Ingress]"
-
-        # 4. Check container's own bind mounts for Caddy/Nginx/Apache files
-        local_map, local_domains = CodebaseDetector.extract_reverse_proxy_mappings(mounts, labels)
-        if local_map:
-            if c_lower in local_map:
-                return local_map[c_lower]
-            for up_key, up_domain in local_map.items():
-                if up_key in c_lower or c_lower in up_key:
-                    return up_domain
+                return global_upstream_map[str(main_port)]
 
         return "[INTERNAL]"
+
+
+CodebaseDetector.extract_reverse_proxy_mappings = staticmethod(NodeReverseProxyEngine.extract_reverse_proxy_mappings)
+CodebaseDetector.resolve_ingress_url = staticmethod(NodeReverseProxyEngine.resolve_ingress_url)
 
 
 class AraAgent:
@@ -581,22 +873,17 @@ class AraAgent:
         containers = self.docker.list_containers()
         services = []
 
-        # Pre-pass: Scan all container mounts & compose labels to build host-wide reverse proxy mapping
-        global_upstream_map: Dict[str, str] = {}
-        all_discovered_domains: List[str] = []
+        # 1. Pre-pass: Deep inspect all containers
         container_inspections: Dict[str, Dict[str, Any]] = {}
-
         for c in containers:
             cid = c.get("Id", "")[:12]
             insp = self.docker.inspect_container(cid) or {}
             container_inspections[cid] = insp
-            c_mounts = insp.get("Mounts", [])
-            c_labels = insp.get("Config", {}).get("Labels", {})
-            up_map, doms = CodebaseDetector.extract_reverse_proxy_mappings(c_mounts, c_labels)
-            global_upstream_map.update(up_map)
-            for d in doms:
-                if d not in all_discovered_domains:
-                    all_discovered_domains.append(d)
+
+        # 2. Host-wide Reverse Proxy Discovery:
+        # Scans system paths (/etc/caddy, /etc/nginx, /etc/apache2, /etc/httpd) + mounts + compose dirs
+        rules = NodeReverseProxyEngine.scan_node(list(container_inspections.values()))
+        global_upstream_map, all_discovered_domains = NodeReverseProxyEngine.get_legacy_mapping(rules)
 
         for c in containers:
             cid = c.get("Id", "")[:12]
@@ -625,11 +912,15 @@ class AraAgent:
 
             service_type = self.classify_service(c_name, img, main_port)
             git_repo, git_branch, repo_path = CodebaseDetector.resolve_git_info(mounts, labels)
-            access_url = CodebaseDetector.resolve_ingress_url(
-                c_name, env_vars, mounts, server_ip, labels,
-                global_upstream_map=global_upstream_map,
-                all_discovered_domains=all_discovered_domains,
-                main_port=main_port
+            access_url = NodeReverseProxyEngine.match_container(
+                c_name=c_name,
+                img=img,
+                main_port=main_port,
+                ports=ports,
+                labels=labels,
+                inspect_data=inspect_data,
+                rules=rules,
+                server_ip=server_ip
             )
 
             # REAL LIVE LOGS (100 lines)

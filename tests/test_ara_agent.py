@@ -87,24 +87,106 @@ def test_git_info_resolution(tmp_path):
 
 
 def test_ingress_url_resolution(tmp_path):
-    """Verify ingress URLs are extracted from environment variables and Caddyfiles."""
-    # From ENV
-    url1 = agent_mod.CodebaseDetector.resolve_ingress_url(
+    """Verify ingress URLs are resolved strictly from reverse proxy configurations (NO .env checking)."""
+    # 1. Container with only .env (no reverse proxy rule) must be [INTERNAL]
+    url_env_only = agent_mod.CodebaseDetector.resolve_ingress_url(
         "web-ui",
         ["APP_URL=https://support.ccs.legend.ng", "NODE_ENV=production"],
         [],
         "102.38.58.99"
     )
-    assert url1 == "https://support.ccs.legend.ng"
+    assert url_env_only == "[INTERNAL]"
 
-    # From mounted Caddyfile (caddy is the ingress proxy)
+    # 2. Reverse proxy container itself is identified as [Reverse Proxy Ingress]
     caddyfile = tmp_path / "Caddyfile"
     caddyfile.write_text("support.ccs.legend.ng {\n    reverse_proxy ui:80\n}\n")
     mounts = [{"Type": "bind", "Source": str(caddyfile)}]
-    url2 = agent_mod.CodebaseDetector.resolve_ingress_url("caddy", [], mounts, "102.38.58.99")
-    assert "https://support.ccs.legend.ng" in url2
+    url_caddy = agent_mod.CodebaseDetector.resolve_ingress_url("caddy", [], mounts, "102.38.58.99")
+    assert url_caddy == "[Reverse Proxy Ingress]"
 
-    # The actual proxied upstream container ("ui") gets the target domain
+    # 3. The actual proxied upstream container ("ui") gets the target domain from reverse proxy
     up_map, _ = agent_mod.CodebaseDetector.extract_reverse_proxy_mappings(mounts)
-    url3 = agent_mod.CodebaseDetector.resolve_ingress_url("ui", [], [], "102.38.58.99", global_upstream_map=up_map)
-    assert url3 == "https://support.ccs.legend.ng"
+    url_ui = agent_mod.CodebaseDetector.resolve_ingress_url("ui", [], [], "102.38.58.99", global_upstream_map=up_map)
+    assert url_ui == "https://support.ccs.legend.ng"
+
+
+def test_reverse_proxy_caddy_and_nginx_matching(tmp_path):
+    """Verify NodeReverseProxyEngine handles Caddy, Nginx, and LiveKit WebSockets."""
+    # Test Caddy parsing
+    caddy_content = """
+    files.suburban.ng {
+        reverse_proxy fileserver-api:3000
+    }
+    api-collab.suburban.ng {
+        reverse_proxy /livekit/* suburban-livekit:7880
+        reverse_proxy suburban-collab-api:8080
+    }
+    """
+    c_rules = agent_mod.NodeReverseProxyEngine.parse_caddy(caddy_content)
+    assert len(c_rules) == 3
+
+    # Match fileserver-api
+    url_api = agent_mod.NodeReverseProxyEngine.match_container(
+        c_name="fileserver-api",
+        img="fileserver-api:latest",
+        main_port=3000,
+        ports=[3000],
+        labels={"com.docker.compose.project": "fileserver", "com.docker.compose.service": "api"},
+        inspect_data={},
+        rules=c_rules
+    )
+    assert url_api == "https://files.suburban.ng"
+
+    # Match suburban-livekit (WebSocket)
+    url_lk = agent_mod.NodeReverseProxyEngine.match_container(
+        c_name="suburban-livekit",
+        img="livekit/livekit-server",
+        main_port=7880,
+        ports=[7880],
+        labels={},
+        inspect_data={},
+        rules=c_rules
+    )
+    assert url_lk == "wss://api-collab.suburban.ng/livekit"
+
+    # Fileserver Caddy container is [Reverse Proxy Ingress]
+    url_proxy = agent_mod.NodeReverseProxyEngine.match_container(
+        c_name="fileserver-caddy",
+        img="caddy:alpine",
+        main_port=2019,
+        ports=[2019, 80, 443],
+        labels={},
+        inspect_data={},
+        rules=c_rules
+    )
+    assert url_proxy == "[Reverse Proxy Ingress]"
+
+    # Unproxied database is [INTERNAL]
+    url_db = agent_mod.NodeReverseProxyEngine.match_container(
+        c_name="fileserver-postgres",
+        img="postgres:15",
+        main_port=5432,
+        ports=[5432],
+        labels={},
+        inspect_data={},
+        rules=c_rules
+    )
+    assert url_db == "[INTERNAL]"
+
+    # Test Nginx parsing
+    nginx_content = """
+    upstream app_srv {
+        server 127.0.0.1:8000;
+    }
+    server {
+        listen 80;
+        server_name portal.suburbancloud.ng;
+        location / {
+            proxy_pass http://app_srv;
+        }
+    }
+    """
+    n_rules = agent_mod.NodeReverseProxyEngine.parse_nginx(nginx_content)
+    assert len(n_rules) == 1
+    assert n_rules[0].domain == "portal.suburbancloud.ng"
+    assert n_rules[0].upstream_port == 8000

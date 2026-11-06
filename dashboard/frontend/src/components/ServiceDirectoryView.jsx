@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { ExternalLink, Copy, Lock, Github, GitBranch } from 'lucide-react';
+import { ExternalLink, Copy, Lock, Shield, Github, GitBranch } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -74,7 +74,8 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy, onSelec
                   </tr>
                 ) : (
                   filteredServices.map((svc, i) => {
-                    const serviceUrl = svc.url || (svc.access_url && svc.access_url !== '[INTERNAL]' ? svc.access_url : null);
+                    const isProxyIngress = svc.access_url && svc.access_url.includes('Reverse Proxy Ingress');
+                    const serviceUrl = svc.url || (svc.access_url && !svc.access_url.startsWith('[') ? svc.access_url : null);
                     const isWeb = svc.container_type === 'web' || svc.service_type === 'web' || !!serviceUrl;
                     const statusText = svc.container_status || svc.status || 'UNKNOWN';
                     const sLower = statusText.toLowerCase();
@@ -132,7 +133,12 @@ export function ServiceDirectoryView({ nodes, filter, setFilter, onCopy, onSelec
                         </td>
                         <td className="py-3 px-6 text-right font-sans">
                           <div className="flex items-center justify-end gap-2">
-                            {isWeb && serviceUrl ? (
+                            {isProxyIngress ? (
+                              <span className="inline-flex items-center gap-1 text-sky-400/90 bg-sky-500/10 border border-sky-500/25 px-2 py-0.5 rounded text-[11px] font-mono mr-2">
+                                <Shield className="w-3 h-3 text-sky-400" />
+                                [INGRESS GATEWAY]
+                              </span>
+                            ) : isWeb && serviceUrl ? (
                               <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                                 <a
                                   href={serviceUrl}
