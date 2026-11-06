@@ -164,6 +164,9 @@ export function App() {
       if (res.success) {
         showToast(`⚡ OpenCode dispatched for ${res.fix_branch || incId}!`);
         fetchData();
+      } else if (res.status === 'PREPARED_NOT_DISPATCHED') {
+        showToast(`📋 Dossier prepared! Launch via host terminal: devctl dispatch ${incId}`);
+        fetchData();
       } else {
         if (res.error && res.error.toLowerCase().includes('permission')) {
           setAuthModalOpen(true);

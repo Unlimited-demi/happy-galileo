@@ -1031,7 +1031,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     from ai_ops.dispatcher import IncidentDispatcher
                     dispatcher = IncidentDispatcher()
                     result = dispatcher.dispatch(inc_id, fleet_store=FLEET_STORE)
-                    self._send_json(result, status=200 if result.get("success") else 400)
+                    is_ok = result.get("success") or result.get("status") == "PREPARED_NOT_DISPATCHED"
+                    self._send_json(result, status=200 if is_ok else 400)
                     return
 
             elif path.startswith("/api/approvals/") and path.endswith("/approve"):
