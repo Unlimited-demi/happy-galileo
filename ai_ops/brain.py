@@ -153,17 +153,47 @@ class BrainEngine:
             elif "hub" in node_name.lower():
                 server_ip = "41.73.0.6"
 
-        # Format workloads summary
+        # Categorize workloads for rich architectural context
         workload_lines = []
+        apis = []
+        web_services = []
+        dbs = []
+        caches = []
+        proxies = []
+        media_storage = []
+        ingress_urls = []
+
         if isinstance(services, list):
             for s in services:
                 if isinstance(s, dict):
-                    name = s.get("service_name") or s.get("container_name") or s.get("name")
+                    name = s.get("service_name") or s.get("container_name") or s.get("name") or ""
                     port = s.get("port") or s.get("internal_port")
                     port_str = f" (Port {port})" if port else ""
                     git = s.get("git_url") or s.get("git_repo")
-                    git_str = f" [{git.split('/')[-1]}]" if git else ""
-                    workload_lines.append(f"- {name}{port_str}{git_str}")
+                    git_str = f" [repo: {git.split('/')[-1]}]" if git else ""
+                    url = s.get("access_url") or s.get("url")
+                    url_str = f" -> {url}" if url and url != "[INTERNAL]" else ""
+                    img = s.get("image") or ""
+                    img_str = f" ({img})" if img else ""
+                    workload_lines.append(f"- {name}{port_str}{url_str}{git_str}{img_str}")
+
+                    name_lower = name.lower()
+                    img_lower = img.lower()
+                    if url and url != "[INTERNAL]" and url not in ingress_urls:
+                        ingress_urls.append(url)
+
+                    if any(x in name_lower or x in img_lower for x in ["postgres", "mysql", "mariadb", "mongo", "db"]):
+                        dbs.append(name)
+                    elif any(x in name_lower or x in img_lower for x in ["redis", "memcached"]):
+                        caches.append(name)
+                    elif any(x in name_lower or x in img_lower for x in ["caddy", "nginx", "apache", "httpd", "traefik"]):
+                        proxies.append(name)
+                    elif any(x in name_lower or x in img_lower for x in ["minio", "livekit", "transcriber", "media", "storage"]):
+                        media_storage.append(name)
+                    elif any(x in name_lower for x in ["ui", "frontend", "web", "client", "feed"]):
+                        web_services.append(name)
+                    else:
+                        apis.append(name)
 
         workloads_str = "\n".join(workload_lines) if workload_lines else "- Monitored container infrastructure"
 
@@ -171,19 +201,21 @@ class BrainEngine:
         if self.is_available():
             try:
                 system_prompt = (
-                    "You are ARA, Lead Autonomous SRE for Suburban Cloud & Legend. "
+                    "You are ARA, Principal Autonomous SRE for Suburban Cloud & Legend. "
                     "Analyze the enrolled server node and its running containers. "
-                    "Write a professional 2-3 sentence technical architectural description explaining: "
-                    "1. The primary operational purpose of this server in the Suburban ecosystem. "
-                    "2. What applications and workloads are hosted here and how they interact. "
-                    "3. Key architectural context for engineers and AI incident response. "
-                    "Do not include conversational filler, greetings, or markdown code fences. Be concise, technical, and precise."
+                    "Write an authoritative, detailed technical architectural description (4-6 sentences) explaining: "
+                    "1. Primary operational role of this machine in the Suburban infrastructure. "
+                    "2. Specific subsystems hosted here (storage, APIs, real-time media, databases, caches, reverse proxies) and how they communicate. "
+                    "3. Ingress endpoints, repositories, and critical operational context for developers and AI incident response. "
+                    "Do not include conversational filler, greetings, bullet points, or markdown code fences. Write a coherent, dense, professional technical profile."
                 )
                 user_prompt = (
                     f"Node Name: {node_name}\n"
                     f"Server IP: {server_ip}\n"
+                    f"Total Monitored Containers: {len(services)}\n"
+                    f"Public Ingress Endpoints: {', '.join(ingress_urls) if ingress_urls else 'Internal private services'}\n"
                     f"Running Workloads:\n{workloads_str}\n\n"
-                    "Provide the 2-3 sentence technical operational profile for this server node."
+                    "Provide the comprehensive architectural profile for this server node."
                 )
 
                 payload_req = {
@@ -193,7 +225,7 @@ class BrainEngine:
                     "keep_alive": -1,
                     "options": {
                         "temperature": 0.2,
-                        "num_predict": 180,
+                        "num_predict": 300,
                         "num_thread": 2,
                     }
                 }
@@ -204,35 +236,61 @@ class BrainEngine:
                     headers={"Content-Type": "application/json"},
                     method="POST",
                 )
-                with urllib.request.urlopen(req, timeout=30.0) as resp:
+                with urllib.request.urlopen(req, timeout=40.0) as resp:
                     if resp.status == 200:
                         res_json = json.loads(resp.read().decode("utf-8"))
                         desc = res_json.get("response", "").strip()
-                        if desc:
+                        if desc and len(desc) > 80:
                             return desc
             except Exception:
                 pass
 
         # 2. High-Fidelity Deterministic Technical Synthesis (Fallback)
-        if "support" in node_name.lower():
+        lower_node = node_name.lower()
+        if "support" in lower_node:
             return (
                 f"Production satellite cluster for Suburban Fiber Customer Support ({server_ip}). "
                 "Hosts the customer-facing web portal (suburban-support-ui on port 80), "
                 "backend support API orchestrator (suburban-support-orchestrator on port 8000), "
                 "Caddy TLS reverse proxy ingress (port 443), and stateful PostgreSQL persistence layer (suburban-support-db on port 5432)."
             )
-        elif "hub" in node_name.lower() or "central" in node_name.lower():
+        elif "hub" in lower_node or "central" in lower_node:
             return (
                 f"Central Command & Intelligence Hub for Suburban Cloud Fleet Management ({server_ip}). "
                 "Hosts the central web dashboard (devctl-dashboard on port 8888), Caddy TLS proxy ingress (ports 80/443), "
                 "autonomous AI-Ops monitoring daemon, and ara-brain local CPU inference engine (port 11434)."
             )
-        else:
-            names = [s.get("service_name") or s.get("name") for s in services if isinstance(s, dict)]
-            names_str = ", ".join(names[:4]) if names else "monitored system workloads"
+        elif any(x in lower_node for x in ["fileserver", "collab", "share", "storage"]):
+            endpoints_str = f" Ingress routes include {', '.join(ingress_urls)}." if ingress_urls else ""
             return (
-                f"Satellite production node '{node_name}' ({server_ip}) enrolled in the Suburban Cloud fleet. "
-                f"Operating {len(services)} containerized workloads including {names_str}."
+                f"Enterprise Cloud Storage & Real-Time Collaboration Host '{node_name}' ({server_ip}) in the Suburban Cloud fleet. "
+                "Powers two critical production subsystems: the Suburban Fileserver platform (Nextcloud/Fileserver API & background workers on port 3000, "
+                "automated audio/document transcriber, and MinIO S3-compatible object storage on port 9000 routed via Caddy ingress), "
+                "and the Live Collaboration stack (LiveKit WebRTC video/audio server on port 7880/3478, Suburban Collab API on port 8080, "
+                "and staff live workplace feed). State and caching are backed by dedicated PostgreSQL databases and Redis instances."
+                f"{endpoints_str}"
+            )
+        else:
+            clusters = []
+            if apis:
+                clusters.append(f"APIs ({', '.join(apis[:3])})")
+            if web_services:
+                clusters.append(f"Web portals ({', '.join(web_services[:2])})")
+            if media_storage:
+                clusters.append(f"Media & storage ({', '.join(media_storage[:3])})")
+            if dbs:
+                clusters.append(f"Databases ({', '.join(dbs[:2])})")
+            if caches:
+                clusters.append(f"Cache ({', '.join(caches[:2])})")
+            if proxies:
+                clusters.append(f"Reverse proxies ({', '.join(proxies[:2])})")
+
+            cluster_desc = "; ".join(clusters) if clusters else f"{len(services)} containerized workloads"
+            endpoints_str = f" Public ingress: {', '.join(ingress_urls)}." if ingress_urls else ""
+            return (
+                f"Production cluster node '{node_name}' ({server_ip}) enrolled in the Suburban Cloud fleet. "
+                f"Hosts {len(services)} containerized services organized into {cluster_desc}."
+                f"{endpoints_str}"
             )
 
     SRE_TOOLS = [

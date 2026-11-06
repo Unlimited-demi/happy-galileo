@@ -83,7 +83,17 @@ export function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const nodes = fleet.nodes || [];
+  const nodes = useMemo(() => {
+    const list = [...(fleet.nodes || [])];
+    list.sort((a, b) => {
+      const aName = a.node_name || '';
+      const bName = b.node_name || '';
+      if (aName === 'hub-vm') return -1;
+      if (bName === 'hub-vm') return 1;
+      return aName.localeCompare(bName);
+    });
+    return list;
+  }, [fleet.nodes]);
   const totalContainers = useMemo(() => {
     if (nodes.length > 0) return nodes.reduce((acc, n) => acc + (n.containers_count || 0), 0);
     return status.total_containers || 0;
@@ -102,19 +112,29 @@ export function App() {
   // Aggregate metrics from all nodes (use hub node's metrics as primary display)
   const aggregatedMetrics = useMemo(() => {
     if (nodes.length > 0) {
-      // Sum load averages and cores across all nodes
       let total1min = 0, total5min = 0, total15min = 0, totalCores = 0;
       let totalMemUsed = 0, totalMemTotal = 0;
       nodes.forEach(n => {
-        const sm = n.metrics?.server || {};
-        const la = sm.load_average || {};
+        const raw = n.metrics || {};
+        const sm = raw.server || raw;
+        let la = sm.load_average || raw.load_average;
+        if (!la || typeof la !== 'object' || (la['1min'] === undefined && la['5min'] === undefined)) {
+          if (typeof raw.load_avg === 'string' && raw.load_avg.trim() && raw.load_avg !== 'N/A') {
+            const parts = raw.load_avg.trim().split(/\s+/).map(Number);
+            la = { '1min': parts[0] || 0, '5min': parts[1] || 0, '15min': parts[2] || 0 };
+          } else {
+            la = { '1min': 0, '5min': 0, '15min': 0 };
+          }
+        }
         total1min += la['1min'] || 0;
         total5min += la['5min'] || 0;
         total15min += la['15min'] || 0;
-        totalCores += sm.cpu_cores || 0;
-        const mem = sm.memory || {};
-        totalMemUsed += mem.used_bytes || 0;
-        totalMemTotal += mem.total_bytes || 0;
+        totalCores += sm.cpu_cores || sm.cpu_count || raw.cpu_cores || 0;
+        const mem = sm.memory || raw.memory || {};
+        const memTot = mem.total_bytes || (raw.memory_total_mb ? raw.memory_total_mb * 1048576 : 0);
+        const memUsed = mem.used_bytes || (raw.memory_used_mb ? raw.memory_used_mb * 1048576 : 0);
+        totalMemUsed += memUsed;
+        totalMemTotal += memTot;
       });
       if (totalCores > 0 || totalMemTotal > 0) {
         return {

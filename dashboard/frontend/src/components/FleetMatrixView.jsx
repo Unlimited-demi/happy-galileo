@@ -65,19 +65,29 @@ export function FleetMatrixView({ nodes, onCopy, onSelectService }) {
             {(() => {
               const rawMetrics = node.metrics || {};
               const sm = rawMetrics.server || rawMetrics;
-              const la = sm.load_average || {};
-              const cores = sm.cpu_cores || (sm.cpu_count || 0);
-              const mem = sm.memory || {};
+              let la = sm.load_average || rawMetrics.load_average;
+              if (!la || typeof la !== 'object' || (la['1min'] === undefined && la['5min'] === undefined)) {
+                if (typeof rawMetrics.load_avg === 'string' && rawMetrics.load_avg.trim() && rawMetrics.load_avg !== 'N/A') {
+                  const parts = rawMetrics.load_avg.trim().split(/\s+/).map(Number);
+                  la = { '1min': parts[0] || 0, '5min': parts[1] || 0, '15min': parts[2] || 0 };
+                } else {
+                  la = { '1min': 0, '5min': 0, '15min': 0 };
+                }
+              }
+              const cores = sm.cpu_cores || sm.cpu_count || rawMetrics.cpu_cores || rawMetrics.cpu_count || 0;
+              const mem = sm.memory || rawMetrics.memory || {};
+              const memTotalBytes = mem.total_bytes || (rawMetrics.memory_total_mb ? rawMetrics.memory_total_mb * 1048576 : 0);
+              const memUsedBytes = mem.used_bytes || (rawMetrics.memory_used_mb ? rawMetrics.memory_used_mb * 1048576 : 0);
               const cpuPct = rawMetrics.cpu_percent !== undefined ? Number(rawMetrics.cpu_percent) : (sm.cpu_percent !== undefined ? Number(sm.cpu_percent) : (cores > 0 && la['5min'] !== undefined ? ((la['5min'] || 0) / cores) * 100 : null));
-              const memPct = rawMetrics.memory_percent !== undefined ? Number(rawMetrics.memory_percent) : (sm.memory_percent !== undefined ? Number(sm.memory_percent) : (mem.usage_percent || (mem.total_bytes ? ((mem.used_bytes / mem.total_bytes) * 100) : null)));
-              const memUsedGB = mem.used_bytes ? ((mem.used_bytes || 0) / 1073741824).toFixed(1) : null;
-              const memTotalGB = mem.total_bytes ? ((mem.total_bytes || 0) / 1073741824).toFixed(1) : null;
+              const memPct = rawMetrics.memory_percent !== undefined ? Number(rawMetrics.memory_percent) : (sm.memory_percent !== undefined ? Number(sm.memory_percent) : (mem.usage_percent || (memTotalBytes ? ((memUsedBytes / memTotalBytes) * 100) : null)));
+              const memUsedGB = memUsedBytes ? (memUsedBytes / 1073741824).toFixed(1) : (rawMetrics.memory_used_mb ? (rawMetrics.memory_used_mb / 1024).toFixed(1) : null);
+              const memTotalGB = memTotalBytes ? (memTotalBytes / 1073741824).toFixed(1) : (rawMetrics.memory_total_mb ? (rawMetrics.memory_total_mb / 1024).toFixed(1) : null);
               const loadPct = cpuPct !== null ? cpuPct : (cores > 0 ? ((la['5min'] || 0) / cores) * 100 : 0);
               const loadColor = loadPct > 90 ? 'text-rose-400' : loadPct > 70 ? 'text-amber-400' : 'text-slate-200';
-              const net = sm.network || {};
+              const net = sm.network || rawMetrics.network || {};
               const rx = net.rx_rate_human || (net.rx_kbps ? `${net.rx_kbps} kbps` : (rawMetrics.net_rx_kbps ? `${rawMetrics.net_rx_kbps} kbps` : null));
               const tx = net.tx_rate_human || (net.tx_kbps ? `${net.tx_kbps} kbps` : (rawMetrics.net_tx_kbps ? `${rawMetrics.net_tx_kbps} kbps` : null));
-              const hasMetrics = cpuPct !== null || memPct !== null || la['5min'] !== undefined;
+              const hasMetrics = cpuPct !== null || memPct !== null || la['5min'] > 0 || (rawMetrics.disk_total_gb > 0);
               if (!hasMetrics) return null;
               return (
                 <div className="flex items-center gap-6 px-6 py-2.5 bg-muted/15 border-b border-border/40 text-xs font-mono flex-wrap">
@@ -98,20 +108,34 @@ export function FleetMatrixView({ nodes, onCopy, onSelectService }) {
                       </div>
                     )}
                   </div>
-                  {mem.total_bytes > 0 && (
+                  {(memTotalBytes > 0 || memUsedGB) && (
                     <div className="flex items-center gap-2">
                       <HardDrive className="w-3.5 h-3.5 text-amber-400" />
                       <span className="text-muted-foreground">Memory</span>
                       <span className={`font-semibold ${memPct > 80 ? 'text-rose-400' : memPct > 60 ? 'text-amber-400' : 'text-slate-200'}`}>
-                        {memPct.toFixed(0)}%
+                        {memPct !== null ? memPct.toFixed(0) : '—'}%
                       </span>
-                      <span className="text-muted-foreground text-[10px]">({memUsedGB}G / {memTotalGB}G)</span>
+                      {memUsedGB && memTotalGB && (
+                        <span className="text-muted-foreground text-[10px]">({memUsedGB}G / {memTotalGB}G)</span>
+                      )}
                       <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden ml-1">
                         <div
                           className={`h-full rounded-full transition-all ${memPct > 80 ? 'bg-rose-500' : memPct > 60 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                          style={{ width: `${Math.min(memPct, 100)}%` }}
+                          style={{ width: `${Math.min(memPct || 0, 100)}%` }}
                         />
                       </div>
+                    </div>
+                  )}
+                  {rawMetrics.disk_total_gb > 0 && (
+                    <div className="flex items-center gap-2">
+                      <MemoryStick className="w-3.5 h-3.5 text-indigo-400" />
+                      <span className="text-muted-foreground">Disk</span>
+                      <span className={`font-semibold ${(rawMetrics.disk_percent || 0) > 85 ? 'text-rose-400' : 'text-slate-200'}`}>
+                        {rawMetrics.disk_percent ? Number(rawMetrics.disk_percent).toFixed(0) : '—'}%
+                      </span>
+                      <span className="text-muted-foreground text-[10px]">
+                        ({rawMetrics.disk_used_gb}G / {rawMetrics.disk_total_gb}G)
+                      </span>
                     </div>
                   )}
                   {(rx || tx) && (

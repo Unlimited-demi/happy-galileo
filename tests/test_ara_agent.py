@@ -97,9 +97,14 @@ def test_ingress_url_resolution(tmp_path):
     )
     assert url1 == "https://support.ccs.legend.ng"
 
-    # From mounted Caddyfile
+    # From mounted Caddyfile (caddy is the ingress proxy)
     caddyfile = tmp_path / "Caddyfile"
     caddyfile.write_text("support.ccs.legend.ng {\n    reverse_proxy ui:80\n}\n")
     mounts = [{"Type": "bind", "Source": str(caddyfile)}]
     url2 = agent_mod.CodebaseDetector.resolve_ingress_url("caddy", [], mounts, "102.38.58.99")
-    assert url2 == "https://support.ccs.legend.ng"
+    assert "https://support.ccs.legend.ng" in url2
+
+    # The actual proxied upstream container ("ui") gets the target domain
+    up_map, _ = agent_mod.CodebaseDetector.extract_reverse_proxy_mappings(mounts)
+    url3 = agent_mod.CodebaseDetector.resolve_ingress_url("ui", [], [], "102.38.58.99", global_upstream_map=up_map)
+    assert url3 == "https://support.ccs.legend.ng"

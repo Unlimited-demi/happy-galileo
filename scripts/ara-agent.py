@@ -239,12 +239,28 @@ class SystemMetricsCollector:
             }
 
     def get_load_avg(self) -> str:
+        s, _ = self.get_load_avg_data()
+        return s
+
+    def get_load_avg_data(self) -> Tuple[str, Dict[str, float]]:
         try:
             with open("/proc/loadavg", "r") as f:
-                parts = f.read().split()[:3]
-                return f"{parts[0]} {parts[1]} {parts[2]}"
+                parts = [float(x) for x in f.read().split()[:3]]
+                return f"{parts[0]:.2f} {parts[1]:.2f} {parts[2]:.2f}", {
+                    "1min": round(parts[0], 2),
+                    "5min": round(parts[1], 2),
+                    "15min": round(parts[2], 2),
+                }
         except Exception:
-            return "N/A"
+            try:
+                avg = os.getloadavg()
+                return f"{avg[0]:.2f} {avg[1]:.2f} {avg[2]:.2f}", {
+                    "1min": round(avg[0], 2),
+                    "5min": round(avg[1], 2),
+                    "15min": round(avg[2], 2),
+                }
+            except Exception:
+                return "0.00 0.00 0.00", {"1min": 0.0, "5min": 0.0, "15min": 0.0}
 
     def get_network_rates(self) -> Tuple[float, float]:
         """Returns (rx_kbps, tx_kbps)."""
@@ -353,62 +369,166 @@ class CodebaseDetector:
         return "N/A", "N/A", "N/A"
 
     @staticmethod
-    def resolve_ingress_url(c_name: str, env_vars: List[str], mounts: List[Dict[str, Any]], server_ip: str, labels: Dict[str, Any] = None) -> str:
-        """Auto-detects ingress URL from environment variables, mounted Caddyfiles, or Nginx."""
+    def extract_reverse_proxy_mappings(mounts: List[Dict[str, Any]], labels: Dict[str, Any] = None) -> Tuple[Dict[str, str], List[str]]:
+        """
+        Parses mounted or discoverable Caddy, Nginx, or Apache configuration files.
+        Returns:
+            (upstream_to_domain_map, list_of_public_domains)
+            e.g. ({'fileserver-api': 'https://files.suburban.ng', '3000': 'https://files.suburban.ng'}, ['files.suburban.ng'])
+        """
+        upstream_map: Dict[str, str] = {}
+        all_domains: List[str] = []
+        target_files: List[str] = []
+
+        # 1. Search container bind mounts
+        for m in mounts:
+            if m.get("Type") == "bind":
+                src = m.get("Source", "")
+                if src and os.path.exists(src):
+                    if os.path.isfile(src) and any(x in src.lower() for x in ["caddyfile", ".conf", "nginx", "httpd", "apache"]):
+                        target_files.append(src)
+                    elif os.path.isdir(src):
+                        for root, _, files in os.walk(src):
+                            for f in files:
+                                fl = f.lower()
+                                if fl in ["caddyfile", "nginx.conf", "default.conf", "httpd.conf"] or fl.endswith(".conf"):
+                                    target_files.append(os.path.join(root, f))
+
+        # 2. Search Compose directory
+        if labels and isinstance(labels, dict):
+            compose_dir = labels.get("com.docker.compose.project.working_dir")
+            if compose_dir and os.path.isdir(compose_dir):
+                for f in ["Caddyfile", "caddy/Caddyfile", "nginx.conf", "nginx/nginx.conf"]:
+                    cand = os.path.join(compose_dir, f)
+                    if os.path.isfile(cand) and cand not in target_files:
+                        target_files.append(cand)
+
+        for tf in target_files[:10]:
+            try:
+                with open(tf, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+
+                # --- A. CADDYFILE PARSING ---
+                caddy_blocks = re.findall(r"([a-zA-Z0-9\-\.]+\.[a-z]{2,12})(?::\d+)?\s*\{([^}]+)\}", content, re.MULTILINE)
+                for domain, block in caddy_blocks:
+                    if any(x in domain.lower() for x in [".local", ".internal", "localhost", "caddy", "docker"]):
+                        continue
+                    if domain not in all_domains:
+                        all_domains.append(domain)
+                    proxy_matches = re.findall(r"(?:reverse_proxy|to)\s+(?:https?:\/\/)?([a-zA-Z0-9\-_]+)(?::(\d+))?", block)
+                    for target, port in proxy_matches:
+                        t_lower = target.lower()
+                        if t_lower not in ["http", "https", "unix", "localhost", "127.0.0.1"]:
+                            upstream_map[t_lower] = f"https://{domain}"
+                            if port:
+                                upstream_map[f"{t_lower}:{port}"] = f"https://{domain}"
+                                upstream_map[port] = f"https://{domain}"
+
+                # --- B. NGINX CONFIG PARSING ---
+                nginx_servers = re.findall(r"server\s*\{([^}]+)\}", content, re.MULTILINE | re.DOTALL)
+                for s_block in nginx_servers:
+                    server_names = re.findall(r"server_name\s+([^;]+);", s_block)
+                    proxy_passes = re.findall(r"proxy_pass\s+https?:\/\/([a-zA-Z0-9\-_]+)(?::(\d+))?", s_block)
+                    domains_in_server = []
+                    for sn in server_names:
+                        for part in sn.split():
+                            part = part.strip()
+                            if "." in part and not any(x in part.lower() for x in [".local", "localhost", "127.", "172."]):
+                                domains_in_server.append(part)
+                                if part not in all_domains:
+                                    all_domains.append(part)
+                    for domain in domains_in_server:
+                        for target, port in proxy_passes:
+                            t_lower = target.lower()
+                            if t_lower not in ["http", "https", "unix", "localhost", "127.0.0.1"]:
+                                upstream_map[t_lower] = f"https://{domain}"
+                                if port:
+                                    upstream_map[f"{t_lower}:{port}"] = f"https://{domain}"
+                                    upstream_map[port] = f"https://{domain}"
+
+                # --- C. APACHE CONFIG PARSING ---
+                apache_vhosts = re.findall(r"<VirtualHost[^>]*>(.*?)</VirtualHost>", content, re.MULTILINE | re.DOTALL | re.IGNORECASE)
+                for v_block in apache_vhosts:
+                    s_name = re.search(r"ServerName\s+([a-zA-Z0-9\-\.]+\.[a-z]{2,12})", v_block, re.IGNORECASE)
+                    proxy_passes = re.findall(r"ProxyPass(?:Reverse)?\s+\S+\s+https?:\/\/([a-zA-Z0-9\-_]+)(?::(\d+))?", v_block, re.IGNORECASE)
+                    if s_name:
+                        domain = s_name.group(1).strip()
+                        if domain not in all_domains:
+                            all_domains.append(domain)
+                        for target, port in proxy_passes:
+                            t_lower = target.lower()
+                            if t_lower not in ["http", "https", "unix", "localhost", "127.0.0.1"]:
+                                upstream_map[t_lower] = f"https://{domain}"
+                                if port:
+                                    upstream_map[f"{t_lower}:{port}"] = f"https://{domain}"
+                                    upstream_map[port] = f"https://{domain}"
+
+            except Exception:
+                continue
+
+        return upstream_map, all_domains
+
+    @staticmethod
+    def resolve_ingress_url(
+        c_name: str,
+        env_vars: List[str],
+        mounts: List[Dict[str, Any]],
+        server_ip: str,
+        labels: Dict[str, Any] = None,
+        global_upstream_map: Dict[str, str] = None,
+        all_discovered_domains: List[str] = None,
+        main_port: int = 0
+    ) -> str:
+        """Auto-detects ingress URL from environment variables, mounted Caddyfiles, Nginx, or Apache."""
+        c_lower = c_name.lower()
+        is_proxy = any(x in c_lower for x in ["caddy", "nginx", "apache", "httpd", "traefik", "reverse-proxy"])
+
         # 1. Inspect Environment Variables
+        checked_keys = [
+            "APP_URL", "SITE_URL", "PUBLIC_URL", "BASE_URL", "WEB_BASE_URL",
+            "DOMAIN", "VIRTUAL_HOST", "PUBLIC_HOST", "SERVER_URL", "API_URL",
+            "FRONTEND_URL", "LIVEKIT_PUBLIC_URL", "HOST_URL", "APPLICATION_URL",
+            "EXTERNAL_URL", "CADDY_DOMAIN"
+        ]
         for env in env_vars:
             if "=" in env:
                 k, v = env.split("=", 1)
                 k_up = k.upper().strip()
                 v_val = v.strip()
-                if any(x in k_up for x in ["APP_URL", "SITE_URL", "PUBLIC_URL", "DOMAIN", "VIRTUAL_HOST"]):
+                if any(x in k_up for x in checked_keys):
                     if "://" in v_val:
-                        return v_val
+                        if not any(x in v_val for x in ["127.0.0.1", "localhost", "172."]):
+                            return v_val
                     elif "." in v_val and not v_val.startswith("172.") and not v_val.startswith("127."):
                         return f"https://{v_val}"
 
-        # 2. Inspect Mounted Caddyfiles or Nginx files
-        for m in mounts:
-            if m.get("Type") == "bind":
-                src = m.get("Source", "")
-                if src and os.path.exists(src):
-                    target_files = []
-                    if os.path.isfile(src) and ("Caddyfile" in src or src.endswith(".conf")):
-                        target_files.append(src)
-                    elif os.path.isdir(src):
-                        for f in ["Caddyfile", "caddy/Caddyfile", "nginx.conf", "default.conf"]:
-                            cand = os.path.join(src, f)
-                            if os.path.isfile(cand):
-                                target_files.append(cand)
-                    for tf in target_files:
-                        try:
-                            with open(tf, "r", encoding="utf-8", errors="ignore") as f:
-                                content = f.read()
-                            # Search for public domain blocks
-                            matches = re.findall(r"([a-zA-Z0-9\-\.]+\.[a-z]{2,12})\s*\{", content)
-                            for domain in matches:
-                                if not any(x in domain for x in [".local", ".internal", "localhost", "caddy", "docker"]):
-                                    if any(x in c_name.lower() for x in ["ui", "frontend", "web", "caddy", "ingress", "gateway", "proxy"]):
-                                        return f"https://{domain}"
-                        except Exception:
-                            pass
+        # 2. Check global / node-wide proxy upstream mapping
+        if global_upstream_map:
+            if c_lower in global_upstream_map:
+                return global_upstream_map[c_lower]
+            for up_key, up_domain in global_upstream_map.items():
+                if up_key in c_lower or c_lower in up_key:
+                    return up_domain
+            if main_port and str(main_port) in global_upstream_map:
+                if any(x in c_lower for x in ["api", "web", "ui", "feed", "worker", "app", "srv", "service"]):
+                    return global_upstream_map[str(main_port)]
 
-        # 3. Inspect Caddyfile from Docker Compose working directory
-        if labels and isinstance(labels, dict):
-            compose_dir = labels.get("com.docker.compose.project.working_dir")
-            if compose_dir and os.path.isdir(compose_dir):
-                caddy_path = os.path.join(compose_dir, "Caddyfile")
-                if os.path.isfile(caddy_path):
-                    try:
-                        with open(caddy_path, "r", encoding="utf-8", errors="ignore") as f:
-                            content = f.read()
-                        matches = re.findall(r"([a-zA-Z0-9\-\.]+\.[a-z]{2,12})\s*\{", content)
-                        for domain in matches:
-                            if not any(x in domain for x in [".local", ".internal", "localhost", "caddy", "docker"]):
-                                if any(x in c_name.lower() for x in ["ui", "frontend", "web", "caddy"]):
-                                    return f"https://{domain}"
-                    except Exception:
-                        pass
+        # 3. If container IS the reverse proxy itself
+        if is_proxy:
+            local_map, local_domains = CodebaseDetector.extract_reverse_proxy_mappings(mounts, labels)
+            domains = local_domains or all_discovered_domains or []
+            if domains:
+                return f"https://{domains[0]} (Ingress Proxy)"
+            return "[Reverse Proxy Ingress]"
+
+        # 4. Check container's own bind mounts for Caddy/Nginx/Apache files
+        local_map, local_domains = CodebaseDetector.extract_reverse_proxy_mappings(mounts, labels)
+        if local_map:
+            if c_lower in local_map:
+                return local_map[c_lower]
+            for up_key, up_domain in local_map.items():
+                if up_key in c_lower or c_lower in up_key:
+                    return up_domain
 
         return "[INTERNAL]"
 
@@ -437,11 +557,11 @@ class AraAgent:
             return "database"
         if any(x in combined for x in ["redis", "memcached"]):
             return "cache"
-        if any(x in combined for x in ["caddy", "nginx", "traefik"]):
+        if any(x in combined for x in ["caddy", "nginx", "traefik", "apache", "httpd", "proxy", "ingress", "gateway"]):
             return "infra"
-        if any(x in combined for x in ["api", "orchestrator", "backend", "srv"]):
+        if any(x in combined for x in ["api", "orchestrator", "backend", "srv", "livekit"]):
             return "api"
-        if any(x in combined for x in ["ui", "frontend", "web", "app", "client"]):
+        if any(x in combined for x in ["ui", "frontend", "web", "app", "client", "feed"]):
             return "web"
         if port in (80, 443, 3000, 5000, 8000, 8080):
             return "web"
@@ -450,13 +570,33 @@ class AraAgent:
     def collect_payload(self) -> Dict[str, Any]:
         server_ip = self.metrics.get_public_ip()
         cpu_pct = self.metrics.get_cpu_percent()
-        mem_tot, mem_used, mem_pct = self.metrics.get_memory()
+        mem_tot_mb, mem_used_mb, mem_pct = self.metrics.get_memory()
+        mem_tot_bytes = mem_tot_mb * 1024 * 1024
+        mem_used_bytes = mem_used_mb * 1024 * 1024
         disk_info = self.metrics.get_disk_root()
-        load_avg = self.metrics.get_load_avg()
+        load_avg_str, load_avg_dict = self.metrics.get_load_avg_data()
         rx_rate, tx_rate = self.metrics.get_network_rates()
+        cpu_cores = os.cpu_count() or 1
 
         containers = self.docker.list_containers()
         services = []
+
+        # Pre-pass: Scan all container mounts & compose labels to build host-wide reverse proxy mapping
+        global_upstream_map: Dict[str, str] = {}
+        all_discovered_domains: List[str] = []
+        container_inspections: Dict[str, Dict[str, Any]] = {}
+
+        for c in containers:
+            cid = c.get("Id", "")[:12]
+            insp = self.docker.inspect_container(cid) or {}
+            container_inspections[cid] = insp
+            c_mounts = insp.get("Mounts", [])
+            c_labels = insp.get("Config", {}).get("Labels", {})
+            up_map, doms = CodebaseDetector.extract_reverse_proxy_mappings(c_mounts, c_labels)
+            global_upstream_map.update(up_map)
+            for d in doms:
+                if d not in all_discovered_domains:
+                    all_discovered_domains.append(d)
 
         for c in containers:
             cid = c.get("Id", "")[:12]
@@ -465,7 +605,7 @@ class AraAgent:
             img = c.get("Image", "")
 
             # Deep inspect for mounts, ports, env, labels
-            inspect_data = self.docker.inspect_container(cid) or {}
+            inspect_data = container_inspections.get(cid) or {}
             config = inspect_data.get("Config", {})
             env_vars = config.get("Env", [])
             labels = config.get("Labels", {})
@@ -485,7 +625,12 @@ class AraAgent:
 
             service_type = self.classify_service(c_name, img, main_port)
             git_repo, git_branch, repo_path = CodebaseDetector.resolve_git_info(mounts, labels)
-            access_url = CodebaseDetector.resolve_ingress_url(c_name, env_vars, mounts, server_ip, labels)
+            access_url = CodebaseDetector.resolve_ingress_url(
+                c_name, env_vars, mounts, server_ip, labels,
+                global_upstream_map=global_upstream_map,
+                all_discovered_domains=all_discovered_domains,
+                main_port=main_port
+            )
 
             # REAL LIVE LOGS (100 lines)
             logs = self.docker.get_logs(cid, tail=100)
@@ -546,6 +691,53 @@ class AraAgent:
                 "logs": logs,
             })
 
+        metrics_obj = {
+            "server_ip": server_ip,
+            "cpu_percent": cpu_pct,
+            "cpu_cores": cpu_cores,
+            "cpu_count": cpu_cores,
+            "memory_percent": mem_pct,
+            "memory_total_mb": mem_tot_mb,
+            "memory_used_mb": mem_used_mb,
+            "memory": {
+                "total_bytes": mem_tot_bytes,
+                "used_bytes": mem_used_bytes,
+                "total_mb": mem_tot_mb,
+                "used_mb": mem_used_mb,
+                "usage_percent": mem_pct,
+            },
+            "load_avg": load_avg_str,
+            "load_average": load_avg_dict,
+            "disk_total_gb": disk_info["disk_total_gb"],
+            "disk_used_gb": disk_info["disk_used_gb"],
+            "disk_free_gb": disk_info["disk_free_gb"],
+            "disk_percent": disk_info["disk_percent"],
+            "net_rx_kbps": rx_rate,
+            "net_tx_kbps": tx_rate,
+            "network": {
+                "rx_kbps": rx_rate,
+                "tx_kbps": tx_rate,
+                "rx_rate_human": f"{rx_rate} kbps",
+                "tx_rate_human": f"{tx_rate} kbps",
+            },
+            "server": {
+                "cpu_cores": cpu_cores,
+                "cpu_count": cpu_cores,
+                "load_average": load_avg_dict,
+                "memory": {
+                    "total_bytes": mem_tot_bytes,
+                    "used_bytes": mem_used_bytes,
+                    "usage_percent": mem_pct,
+                },
+                "network": {
+                    "rx_kbps": rx_rate,
+                    "tx_kbps": tx_rate,
+                    "rx_rate_human": f"{rx_rate} kbps",
+                    "tx_rate_human": f"{tx_rate} kbps",
+                }
+            }
+        }
+
         payload = {
             "node_name": self.node_name,
             "base_domain": self.base_domain,
@@ -554,18 +746,7 @@ class AraAgent:
             "enrollment": True,
             "containers_count": len(containers),
             "services_count": len(services),
-            "metrics": {
-                "server_ip": server_ip,
-                "cpu_percent": cpu_pct,
-                "memory_percent": mem_pct,
-                "disk_total_gb": disk_info["disk_total_gb"],
-                "disk_used_gb": disk_info["disk_used_gb"],
-                "disk_free_gb": disk_info["disk_free_gb"],
-                "disk_percent": disk_info["disk_percent"],
-                "load_avg": load_avg,
-                "net_rx_kbps": rx_rate,
-                "net_tx_kbps": tx_rate,
-            },
+            "metrics": metrics_obj,
             "services": services,
         }
         return payload

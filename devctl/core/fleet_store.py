@@ -195,7 +195,9 @@ class FleetStore:
         with self._lock:
             conn = self._get_conn()
             try:
-                cur = conn.execute("SELECT * FROM fleet_nodes ORDER BY last_seen DESC")
+                cur = conn.execute(
+                    "SELECT * FROM fleet_nodes ORDER BY CASE WHEN node_name = 'hub-vm' THEN 0 ELSE 1 END, node_name ASC"
+                )
                 rows = cur.fetchall()
                 return [self._enrich_node_row(r) for r in rows]
             finally:

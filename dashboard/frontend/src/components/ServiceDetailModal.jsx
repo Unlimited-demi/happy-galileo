@@ -161,10 +161,15 @@ export function ServiceDetailModal({ service, onClose, onCopy, onRestartSuccess,
     return () => clearInterval(interval);
   }, [autoRefreshLogs, activeTab, serviceName, logTail]);
 
-  // Scroll logs to bottom on initial load
+  // Scroll logs to bottom on initial load, or if user is already near bottom
   useEffect(() => {
     if (activeTab === 'logs' && logsViewportRef.current && !logFilter) {
-      logsViewportRef.current.scrollTop = logsViewportRef.current.scrollHeight;
+      const el = logsViewportRef.current;
+      const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      if (isNearBottom || !el.dataset.hasScrolled) {
+        el.scrollTop = el.scrollHeight;
+        el.dataset.hasScrolled = 'true';
+      }
     }
   }, [activeTab, logsText]);
 

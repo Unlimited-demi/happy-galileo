@@ -4,9 +4,17 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 
 export function KpiMetrics({ totalNodes, totalContainers, totalServices, openIncidentsCount, metrics }) {
-  const serverMetrics = metrics?.server || {};
-  const loadAvg = serverMetrics.load_average || {};
-  const memory = serverMetrics.memory || {};
+  const serverMetrics = metrics?.server || metrics || {};
+  let loadAvg = serverMetrics.load_average || metrics?.load_average;
+  if (!loadAvg || typeof loadAvg !== 'object' || (loadAvg['1min'] === undefined && loadAvg['5min'] === undefined)) {
+    if (typeof metrics?.load_avg === 'string' && metrics.load_avg.trim() && metrics.load_avg !== 'N/A') {
+      const parts = metrics.load_avg.trim().split(/\s+/).map(Number);
+      loadAvg = { '1min': parts[0] || 0, '5min': parts[1] || 0, '15min': parts[2] || 0 };
+    } else {
+      loadAvg = { '1min': 0, '5min': 0, '15min': 0 };
+    }
+  }
+  const memory = serverMetrics.memory || metrics?.memory || {};
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">

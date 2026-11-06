@@ -859,15 +859,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 token_hash = hashlib.sha256(fleet_key.encode("utf-8")).hexdigest() if fleet_key else None
                 FLEET_STORE.upsert_node(payload, client_ip=client_ip, token_hash=token_hash)
 
-                # Trigger asynchronous AI architectural description generation ONLY if description is missing
+                # Trigger asynchronous AI architectural description generation if missing or brief fallback
                 existing_desc = FLEET_STORE.get_node_description(node_name)
-                if not existing_desc:
+                if not existing_desc or "Operating " in existing_desc or len(existing_desc) < 180:
                     def _async_gen_desc(n_name, n_payload):
                         try:
                             from ai_ops.brain import BrainEngine
                             brain = BrainEngine()
                             desc = brain.generate_node_description(n_name, n_payload)
-                            if desc:
+                            if desc and len(desc) > 80:
                                 FLEET_STORE.update_node_description(n_name, desc)
                                 print(f"[ARA Fleet] Generated and saved AI description for node '{n_name}'", flush=True)
                         except Exception as e:
