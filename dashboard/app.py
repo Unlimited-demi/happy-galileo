@@ -564,7 +564,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     for node_data in FLEET_STORE.get_all_nodes():
                         if not isinstance(node_data, dict):
                             continue
-                        node_name = node_data.get("node_name", "satellite")
+                        node_name = node_data.get("node_name", "")
                         client_ip = node_data.get("client_ip", "")
                         for svc in (node_data.get("services") or []):
                             if isinstance(svc, dict) and (svc.get("service_name") == service_name or svc.get("container_name") == service_name):
@@ -573,12 +573,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                     lines = raw_logs.strip().splitlines()
                                     logs_text = "\n".join(lines[-tail:])
                                 else:
-                                    last_seen_str = time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(node_data.get('last_seen', time.time())))
-                                    logs_text = (
-                                        f"[{last_seen_str}] Connected to satellite node '{node_name}' ({client_ip}).\n"
-                                        f"Container '{service_name}' (ID: {svc.get('container_id', 'N/A')}) Status: {svc.get('status_detail', 'Active')}\n"
-                                        f"[No stdout/stderr stream received yet from satellite. Ensure container logs are enabled in ara-agent telemetry.]"
-                                    )
+                                    logs_text = ""
                                 break
                         if logs_text:
                             break
@@ -586,7 +581,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_json({
                     "service_name": service_name,
                     "tail": tail,
-                    "logs": logs_text or "[No logs recorded or container just started]",
+                    "logs": logs_text or "",
                     "timestamp": time.time(),
                 })
                 return
@@ -601,13 +596,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     for node_data in FLEET_STORE.get_all_nodes():
                         if not isinstance(node_data, dict):
                             continue
-                        node_name = node_data.get("node_name", "satellite")
+                        node_name = node_data.get("node_name", "")
                         client_ip = node_data.get("client_ip", "")
                         for svc in (node_data.get("services") or []):
                             if isinstance(svc, dict) and (svc.get("service_name") == service_name or svc.get("container_name") == service_name):
                                 git_repo = svc.get("git_repo") or ""
-                                git_branch = svc.get("git_branch") or "main"
-                                repo_url = f"https://github.com/{git_repo}" if git_repo and not git_repo.startswith("http") else git_repo
+                                git_branch = svc.get("git_branch") or ""
+                                repo_url = f"https://github.com/{git_repo}" if (git_repo and git_repo != "N/A" and not git_repo.startswith("http")) else (git_repo if git_repo != "N/A" else "")
                                 self._send_json({
                                     "service": {
                                         "id": (svc.get("container_id") or svc.get("full_id") or service_name)[:12],
@@ -615,36 +610,31 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                         "name": service_name,
                                         "node_name": node_name,
                                         "node_ip": client_ip,
-                                        "created": svc.get("created_at") or svc.get("status_detail", "Satellite Host Process"),
-                                        "image": svc.get("image") or f"{service_name}:latest",
+                                        "created": svc.get("created_at") or "",
+                                        "image": svc.get("image") or "",
                                         "cmd": svc.get("cmd") or [],
                                         "entrypoint": svc.get("entrypoint") or [],
                                         "state": {
-                                            "status": svc.get("status", "running"),
+                                            "status": svc.get("status", ""),
                                             "running": str(svc.get("status", "")).lower() in ("up", "running", "healthy"),
-                                            "started_at": svc.get("started_at") or svc.get("status_detail", "Active"),
-                                            "finished_at": "",
-                                            "exit_code": 0,
-                                            "oom_killed": False,
-                                            "error": "",
+                                            "started_at": svc.get("started_at") or "",
+                                            "finished_at": svc.get("finished_at") or "",
+                                            "exit_code": svc.get("exit_code"),
+                                            "oom_killed": svc.get("oom_killed", False),
+                                            "error": svc.get("error", ""),
                                         },
-                                        "restart_count": 0,
-                                        "restart_policy": "unless-stopped",
-                                        "networks": {"support_network": {"ip_address": client_ip, "gateway": "", "mac_address": ""}},
-                                        "ports": {f"{svc.get('port', 80)}/tcp": None},
-                                        "env": svc.get("env") or [
-                                            f"INGRESS_ENDPOINT={svc.get('access_url', '[INTERNAL]')}",
-                                            f"FLEET_NODE={node_name}",
-                                            "NETWORK=support_network",
-                                            "PROXY=Caddy (HTTPS/TLS)"
-                                        ],
+                                        "restart_count": svc.get("restart_count", 0),
+                                        "restart_policy": svc.get("restart_policy", ""),
+                                        "networks": svc.get("networks") or {},
+                                        "ports": svc.get("ports") or ({f"{svc.get('port')}/tcp": None} if svc.get('port') else {}),
+                                        "env": svc.get("env") or [],
                                         "mounts": svc.get("mounts") or [],
                                         "codebase": {
-                                            "repo_name": git_repo or "suburban-fiber-company/Support",
-                                            "git_branch": git_branch,
+                                            "repo_name": git_repo if git_repo else "N/A",
+                                            "git_branch": git_branch if git_branch else "N/A",
                                             "web_url": repo_url,
-                                            "workspace_dir": svc.get("repo_path", "/opt/Support"),
-                                            "compose_file": None,
+                                            "workspace_dir": svc.get("repo_path") or "N/A",
+                                            "compose_file": svc.get("compose_file") or None,
                                         },
                                         "is_remote": True,
                                     }

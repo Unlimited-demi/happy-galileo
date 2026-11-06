@@ -143,14 +143,14 @@ class SystemMetricsCollector:
             s.connect(("1.1.1.1", 80))
             ip = s.getsockname()[0]
             s.close()
-            if ip:
+            if ip and not ip.startswith("127."):
                 self._cached_ip = ip
                 self._last_ip_check = now
                 return ip
         except Exception:
             pass
 
-        return "127.0.0.1"
+        return ""
 
     def get_cpu_percent(self) -> float:
         try:
@@ -189,7 +189,7 @@ class SystemMetricsCollector:
             pct = round((used / total) * 100.0, 1) if total > 0 else 0.0
             return total, used, pct
         except Exception:
-            return 1000, 200, 20.0
+            return 0, 0, 0.0
 
     def get_disk_root(self) -> Dict[str, Any]:
         try:
@@ -207,10 +207,10 @@ class SystemMetricsCollector:
             }
         except Exception:
             return {
-                "disk_total_gb": 50.0,
-                "disk_used_gb": 15.0,
-                "disk_free_gb": 35.0,
-                "disk_percent": 30.0,
+                "disk_total_gb": 0.0,
+                "disk_used_gb": 0.0,
+                "disk_free_gb": 0.0,
+                "disk_percent": 0.0,
             }
 
     def get_load_avg(self) -> str:
@@ -219,7 +219,7 @@ class SystemMetricsCollector:
                 parts = f.read().split()[:3]
                 return f"{parts[0]} {parts[1]} {parts[2]}"
         except Exception:
-            return "0.10 0.15 0.12"
+            return "N/A"
 
     def get_network_rates(self) -> Tuple[float, float]:
         """Returns (rx_kbps, tx_kbps)."""
@@ -252,7 +252,7 @@ class SystemMetricsCollector:
             self._prev_tx_bytes = tx_total
             return rx_kbps, tx_kbps
         except Exception:
-            return 10.0, 25.0
+            return 0.0, 0.0
 
 
 class CodebaseDetector:
@@ -306,7 +306,7 @@ class CodebaseDetector:
 
                 return repo_url, branch, str(p)
 
-        return "N/A", "main", "N/A"
+        return "N/A", "N/A", "N/A"
 
     @staticmethod
     def resolve_ingress_url(c_name: str, env_vars: List[str], mounts: List[Dict[str, Any]], server_ip: str) -> str:
@@ -416,7 +416,7 @@ class AraAgent:
                     ports.append(pub)
                 elif priv:
                     ports.append(priv)
-            main_port = ports[0] if ports else 80
+            main_port = ports[0] if ports else 0
 
             service_type = self.classify_service(c_name, img, main_port)
             git_repo, git_branch, repo_path = CodebaseDetector.resolve_git_info(mounts)
@@ -432,16 +432,22 @@ class AraAgent:
                 "full_id": c.get("Id", ""),
                 "image": img,
                 "created_at": c.get("Created", ""),
-                "started_at": state.get("StartedAt", c.get("Status", "Up")),
-                "status": "up" if state.get("Running", True) else state.get("Status", "stopped"),
-                "status_detail": c.get("Status", "Running"),
+                "started_at": state.get("StartedAt", ""),
+                "status": "up" if state.get("Running", False) else state.get("Status", "stopped"),
+                "status_detail": c.get("Status", ""),
                 "port": main_port,
+                "ports": ports,
                 "service_type": service_type,
-                "repo_path": repo_path,
-                "git_repo": git_repo,
-                "git_branch": git_branch,
+                "repo_path": repo_path if repo_path != "N/A" else "",
+                "git_repo": git_repo if git_repo != "N/A" else "",
+                "git_branch": git_branch if git_branch != "N/A" else "",
                 "access_url": access_url,
-                "env": [e for e in env_vars if not any(s in e.upper() for s in ["PASS", "KEY", "SECRET", "TOKEN"])][:15],
+                "env": [e for e in env_vars if not any(s in e.upper() for s in ["PASS", "KEY", "SECRET", "TOKEN"])][:20],
+                "networks": inspect_data.get("NetworkSettings", {}).get("Networks", {}),
+                "restart_policy": inspect_data.get("HostConfig", {}).get("RestartPolicy", {}).get("Name", ""),
+                "restart_count": inspect_data.get("RestartCount", 0),
+                "exit_code": state.get("ExitCode"),
+                "mounts": [{"source": m.get("Source", ""), "destination": m.get("Destination", ""), "type": m.get("Type", "")} for m in mounts if isinstance(m, dict)],
                 "logs": logs,
             })
 
