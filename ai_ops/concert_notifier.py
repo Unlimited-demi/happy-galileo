@@ -134,17 +134,16 @@ class ConcertNotifier:
             "service_name": context.get("service_name") or "Core System",
             "node_name": os.environ.get("NODE_NAME", "hub-vm"),
             "severity": "INFO",
-            "title": "ARA Autonomous SRE Response",
+            "title": "ARA",
             "plain_english_summary": reply_text,
             "text": reply_text,
             "content": reply_text,
             "message": reply_text,
-            "sender": "ARA (Autonomous SRE)",
+            "sender": "ARA",
             "query": query,
             "engine": engine,
             "status": "COMPLETED",
             "occurrences": 1,
-            "recommended_action": "Reply with @ARA <question> to consult the AI assistant.",
         }
         if thread_id:
             payload["thread_id"] = thread_id

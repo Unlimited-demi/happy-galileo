@@ -825,14 +825,17 @@ class BrainEngine:
         if self.is_available():
             try:
                 system_prompt = (
-                    "You are ARA, the Autonomous Site Reliability Engineer for Suburban Cloud & Legend. "
-                    "You investigate infrastructure, monitor service health, and answer questions accurately using your tools. "
-                    "Always call the appropriate tools (e.g. get_fleet_nodes, get_service_telemetry, get_active_incidents, "
-                    "get_container_logs, get_service_routes, get_system_doctor, run_playwright_test, request_remediation, approve_remediation) "
-                    "to gather live telemetry and status before giving your final answer. "
-                    "When asked about nodes, servers, IP addresses, storage, or disk space, call get_fleet_nodes to inspect the live values. "
-                    "Format your final response in clean, concise Markdown with bold headers and bullet points. "
-                    "Be direct and quote exact live values (IPs, numbers, percentages). Never fabricate data."
+                    "You are ARA, a senior Site Reliability Engineer on the team at Suburban & Legend. "
+                    "You work directly alongside the engineering team in their chat channel. "
+                    "How to communicate: "
+                    "- Speak naturally, directly, and conversationally in plain English, like a friendly senior engineer on Slack. "
+                    "- Absolutely NO emojis. Do not use icons, decorative symbols, or emoji bullet points. "
+                    "- Never use canned corporate templates, robotic slogans, or formal report headings unless specifically asked. "
+                    "- Answer the user's question directly in the very first sentence. "
+                    "- Always use your tools (get_fleet_nodes, get_service_telemetry, get_active_incidents, get_container_logs) "
+                    "to look up live infrastructure state before replying. Never fabricate metrics or IPs. "
+                    "- Use code backticks around IPs, hostnames, container names, and ports (e.g. `102.38.58.99`, `suburban-support-prod`). "
+                    "- Keep answers concise, direct, and helpful."
                 )
 
                 messages = [
@@ -927,14 +930,14 @@ class BrainEngine:
             res = self._execute_tool("approve_remediation", {"approval_id": app_id})
             if res.get("status") == "EXECUTED":
                 return {
-                    "reply": f"✅ **Human Approval Granted**: {res.get('message', '')}\n• Action: `{res.get('action')}` on `{res.get('service')}`\n• Dashboard: https://ara.suburbancloud.ng",
-                    "answer": f"✅ **Human Approval Granted**: {res.get('message', '')}\n• Action: `{res.get('action')}` on `{res.get('service')}`\n• Dashboard: https://ara.suburbancloud.ng",
+                    "reply": f"Approval granted: {res.get('message', '')}. Restarting `{res.get('service')}` now.\nDashboard: https://ara.suburbancloud.ng",
+                    "answer": f"Approval granted: {res.get('message', '')}. Restarting `{res.get('service')}` now.\nDashboard: https://ara.suburbancloud.ng",
                     "engine": "ara-brain-local",
                 }
             else:
                 return {
-                    "reply": f"⚠️ **Approval Execution Failed**: {res.get('message') or res.get('error')}",
-                    "answer": f"⚠️ **Approval Execution Failed**: {res.get('message') or res.get('error')}",
+                    "reply": f"Approval failed: {res.get('message') or res.get('error')}",
+                    "answer": f"Approval failed: {res.get('message') or res.get('error')}",
                     "engine": "ara-brain-local",
                 }
 
@@ -943,11 +946,11 @@ class BrainEngine:
             doc = self._execute_tool("get_system_doctor", {})
             if isinstance(doc, dict) and "overall_status" in doc:
                 doc_lines = [
-                    f"🏥 **System Doctor Audit** [{doc.get('overall_status', 'HEALTHY')}]:",
-                    f"• Docker Engine: `{doc.get('docker_engine', 'RUNNING')}` ({doc.get('running_containers', 0)} containers active)",
-                    f"• Caddy Ingress API: `{doc.get('caddy_admin_api', 'REACHABLE')}`",
-                    f"• Wildcard DNS: `{doc.get('wildcard_dns', 'RESOLVES')}` (*.{doc.get('base_domain')})",
-                    f"• Dashboard: https://ara.suburbancloud.ng"
+                    f"System health check is {doc.get('overall_status', 'HEALTHY')}:",
+                    f"- Docker Engine: {doc.get('docker_engine', 'RUNNING')} ({doc.get('running_containers', 0)} containers active)",
+                    f"- Caddy Ingress API: {doc.get('caddy_admin_api', 'REACHABLE')}",
+                    f"- Wildcard DNS: {doc.get('wildcard_dns', 'RESOLVES')} (*.{doc.get('base_domain')})",
+                    "Dashboard: https://ara.suburbancloud.ng"
                 ]
                 parts.append("\n".join(doc_lines))
 
@@ -956,18 +959,18 @@ class BrainEngine:
             log_res = self._execute_tool("get_container_logs", {"service_name": target_svc, "tail": 30})
             if isinstance(log_res, dict):
                 log_text = log_res.get("logs") or log_res.get("error") or "(empty)"
-                parts.append(f"📋 **Recent Logs for `{target_svc}`**:\n```\n{log_text}\n```")
+                parts.append(f"Recent logs for `{target_svc}`:\n```\n{log_text}\n```")
 
         # D. Service Routes & Dashboard URL
         if any(w in q_lower for w in ["route", "routes", "subdomain", "url", "dashboard", "where can i see"]):
             routes = self._execute_tool("get_service_routes", {})
             if isinstance(routes, list):
                 r_lines = [
-                    "🌐 **ARA Dashboard & Ingress Routes**:",
-                    "• **ARA Central Dashboard**: https://ara.suburbancloud.ng"
+                    "Dashboard and ingress routes:",
+                    "ARA Central Dashboard: https://ara.suburbancloud.ng"
                 ]
                 for r in routes[:6]:
-                    r_lines.append(f"• `{r.get('service')}`: {r.get('url')} [{r.get('env', 'dev').upper()}]")
+                    r_lines.append(f"- `{r.get('service')}`: {r.get('url')} ({r.get('env', 'dev')})")
                 parts.append("\n".join(r_lines))
 
         # E. Remediation Restart Request
@@ -978,13 +981,11 @@ class BrainEngine:
                 "reason": "Engineer requested restart via Concert ChatOps"
             })
             if rem_res.get("status") == "EXECUTED":
-                parts.append(f"🔄 **Autonomous Remediation**: Successfully restarted `{target_svc}`.\n• Rollback ID: `{rem_res.get('rollback_id')}`")
+                parts.append(f"Successfully restarted `{target_svc}` (rollback ID: `{rem_res.get('rollback_id')}`).")
             elif rem_res.get("status") == "APPROVAL_REQUIRED":
                 parts.append(
-                    f"⚠️ **Human Approval Required** for `{target_svc}`:\n"
-                    f"• Approval ID: `{rem_res.get('approval_id')}`\n"
-                    f"• Reason: {rem_res.get('policy_reason')}\n"
-                    f"• To confirm: reply `@ARA approve {rem_res.get('approval_id')}` or approve via [ARA Dashboard](https://ara.suburbancloud.ng)"
+                    f"Approval required for `{target_svc}`: {rem_res.get('policy_reason')}.\n"
+                    f"To approve, reply with `@ARA approve {rem_res.get('approval_id')}` or approve via https://ara.suburbancloud.ng"
                 )
 
         # Service specific diagnostic
@@ -992,40 +993,40 @@ class BrainEngine:
             st = self._execute_tool("get_service_telemetry", {"service_name": target_svc})
             if isinstance(st, dict) and "service" in st:
                 warnings = st.get("warnings", [])
-                lines = [f"📊 Diagnostics for `{target_svc}`:"]
+                lines = [f"Diagnostics for `{target_svc}`:"]
                 if warnings:
-                    lines.append("  • " + " | ".join(f"[{w.get('type')}] {w.get('detail', '')}" for w in warnings))
+                    lines.append("  - " + " | ".join(f"[{w.get('type')}] {w.get('detail', '')}" for w in warnings))
                 else:
-                    lines.append(f"  • ✅ No anomalies detected across {st.get('samples', 0)} telemetry samples.")
-                lines.append(f"  • Memory Drift: {st.get('mem_growth_pct', 0):+.1f}% | Latency Drift: {st.get('latency_factor', 1.0):.2f}x | Verdict: {st.get('verdict', 'STABLE')}")
+                    lines.append(f"  - No anomalies detected across {st.get('samples', 0)} telemetry samples.")
+                lines.append(f"  - Memory drift: {st.get('mem_growth_pct', 0):+.1f}%, Latency drift: {st.get('latency_factor', 1.0):.2f}x, Verdict: {st.get('verdict', 'STABLE')}")
                 parts.append("\n".join(lines))
 
             svc_inc = self._execute_tool("get_active_incidents", {"service_name": target_svc})
             if isinstance(svc_inc, list) and svc_inc:
-                inc_lines = [f"🚨 Active Incidents on `{target_svc}` ({len(svc_inc)}):"]
+                inc_lines = [f"Active incidents on `{target_svc}` ({len(svc_inc)}):"]
                 for inc in svc_inc:
-                    inc_lines.append(f"  • `{inc['id']}` [{inc.get('severity', 'HIGH')}]: {inc.get('summary') or inc.get('title')}")
+                    inc_lines.append(f"  - `{inc['id']}` [{inc.get('severity', 'HIGH')}]: {inc.get('summary') or inc.get('title')}")
                 parts.append("\n".join(inc_lines))
 
         # Fleet nodes / IPs / Storage check
         if any(w in q_lower for w in ["node", "nodes", "fleet", "servers", "ip", "ips", "storage", "disk", "space", "status", "overview", "how many", "role", "what is", "purpose", "description", "workload"]):
             nodes = self._execute_tool("get_fleet_nodes", {}, fleet_store=fleet_store)
             if isinstance(nodes, list) and nodes:
-                node_lines = [f"🌐 **ARA Fleet Directory & Nodes** ({len(nodes)}):"]
+                node_lines = [f"We have {len(nodes)} enrolled nodes in the fleet:"]
                 for n in nodes:
-                    n_ip = n.get("server_ip") or n.get("ip") or "N/A"
-                    disk_part = f" | Storage: {n.get('available_storage')}" if n.get("available_storage") and n.get("available_storage") != "N/A" else ""
-                    desc_part = f"\n  ℹ️ *Role*: {n.get('description')}" if n.get("description") else ""
-                    node_lines.append(f"• `{n['name']}` [{n.get('status', 'ONLINE')}]: IP `{n_ip}` ({n.get('containers_monitored', n.get('services', 0))} containers){disk_part}{desc_part}")
+                    n_ip = n.get("server_ip") or n.get("ip") or "unknown IP"
+                    disk_part = f", with {n.get('available_storage')} storage available" if n.get("available_storage") and n.get("available_storage") != "N/A" else ""
+                    desc_part = f"\n  Role: {n.get('description')}" if n.get("description") else ""
+                    node_lines.append(f"- `{n['name']}` ({n.get('status', 'ONLINE')} at `{n_ip}`, {n.get('containers_monitored', n.get('services', 0))} containers{disk_part}){desc_part}")
                 parts.append("\n".join(node_lines))
 
         # General incidents check
         if any(w in q_lower for w in ["incident", "error", "alert", "status", "about", "issue"]) and not target_svc:
             incidents = self._execute_tool("get_active_incidents", {})
             if isinstance(incidents, list) and incidents:
-                inc_lines = [f"🚨 Active Incidents ({len(incidents)}):"]
+                inc_lines = [f"Active incidents ({len(incidents)}):"]
                 for inc in incidents:
-                    inc_lines.append(f"• `{inc['id']}` [{inc.get('severity', 'HIGH')}] on `{inc.get('service', 'unknown')}`: {inc.get('summary') or inc.get('title')}")
+                    inc_lines.append(f"- `{inc['id']}` [{inc.get('severity', 'HIGH')}] on `{inc.get('service', 'unknown')}`: {inc.get('summary') or inc.get('title')}")
                 parts.append("\n".join(inc_lines))
 
         # Memory / trend summary
@@ -1036,18 +1037,22 @@ class BrainEngine:
                 for svc, data in ft.items():
                     if isinstance(data, dict):
                         for w in data.get("warnings", []):
-                            warnings.append(f"• ⚠️ `{svc}`: {w.get('detail')}")
+                            warnings.append(f"- `{svc}`: {w.get('detail')}")
                 if warnings:
-                    parts.append("📈 Fleet Telemetry Warnings:\n" + "\n".join(warnings))
+                    parts.append("Fleet telemetry warnings:\n" + "\n".join(warnings))
 
         if parts:
             answer = "\n\n".join(parts)
         else:
             answer = (
-                "Hello! I am ARA, your autonomous SRE companion for Suburban & Legend.\n\n"
-                "I investigate systems and execute autonomous remediations using real-time telemetry, live container logs, and policy checks.\n\n"
-                "• **ARA Dashboard**: https://ara.suburbancloud.ng\n"
-                "• You can ask me: `what are the status`, `show logs for <service>`, `run doctor`, or `approve <APP-ID>`."
+                "Hey! I'm ARA, the SRE assistant for Suburban & Legend.\n\n"
+                "I track container health, logs, node metrics, and handle automated remediations across the fleet.\n\n"
+                "You can ask me things like:\n"
+                "- `what is the IP of suburban-support-prod`\n"
+                "- `how many nodes do we have and their storage`\n"
+                "- `show logs for <service>`\n"
+                "- `run doctor`\n\n"
+                "Dashboard: https://ara.suburbancloud.ng"
             )
 
         return {
